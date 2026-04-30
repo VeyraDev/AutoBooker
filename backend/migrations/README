@@ -1,0 +1,3 @@
+Alembic migrations.
+Generate first revision: alembic revision --autogenerate -m "init"
+Apply: alembic upgrade head
