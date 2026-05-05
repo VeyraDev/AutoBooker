@@ -47,7 +47,7 @@ export default function RegisterPage() {
       <div className="auth-wrapper">
         <div className="auth-panel">
           <p className="text-sm text-brand-100">AutoBooker</p>
-          <h2 className="mt-2 text-2xl font-semibold leading-tight">今天开始你的第一本书</h2>
+          <h2 className="mt-2 text-2xl font-medium leading-tight">今天开始你的第一本书</h2>
           <p className="mt-4 text-sm text-brand-100/95">
             只需一个邮箱账号，即可建立项目、管理结构并持续输出。
           </p>
@@ -58,7 +58,7 @@ export default function RegisterPage() {
           </ul>
         </div>
         <div className="flex flex-col justify-center">
-          <h1 className="text-2xl font-semibold text-ink mb-1">创建 AutoBooker 账号</h1>
+          <h1 className="text-2xl font-medium text-ink mb-1">创建 AutoBooker 账号</h1>
           <p className="text-sm text-slate-500 mb-6">用邮箱注册即可开始创作</p>
           <form onSubmit={onSubmit} className="auth-form">
             <div>

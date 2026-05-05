@@ -3,6 +3,9 @@ import {
   Coins,
   LogOut,
   Menu,
+  Moon,
+  Sparkles,
+  Sun,
   X,
   UserRound,
 } from "lucide-react";
@@ -23,6 +26,16 @@ export default function AppShellHeader() {
   const { user, logout } = useAuthStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [theme, setTheme] = useState<"frost" | "warm" | "dark">(() => {
+    if (typeof window === "undefined") return "frost";
+    return (window.localStorage.getItem("autoBookerTheme") as "frost" | "warm" | "dark") ?? "frost";
+  });
+
+  useEffect(() => {
+    document.body.classList.remove("theme-frost", "theme-warm", "theme-dark");
+    document.body.classList.add(`theme-${theme}`);
+    window.localStorage.setItem("autoBookerTheme", theme);
+  }, [theme]);
 
   useEffect(() => {
     function onScroll() {
@@ -65,10 +78,39 @@ export default function AppShellHeader() {
         </nav>
 
         <div className="flex shrink-0 items-center gap-2.5">
-          <button type="button" className="balance-pill hidden lg:inline-flex" aria-label="账户余额" title="账户余额">
-            <Coins className="h-4.5 w-4.5" />
+          <div className="theme-picker hidden sm:flex gap-2">
+            <button
+              type="button"
+              className={`theme-button ${theme === "frost" ? "theme-button-active" : ""}`}
+              onClick={() => setTheme("frost")}
+              aria-label="雾光主题"
+              title="雾光主题"
+            >
+              <Sparkles className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              className={`theme-button ${theme === "warm" ? "theme-button-active" : ""}`}
+              onClick={() => setTheme("warm")}
+              aria-label="暖杏主题"
+              title="暖杏主题"
+            >
+              <Sun className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              className={`theme-button ${theme === "dark" ? "theme-button-active" : ""}`}
+              onClick={() => setTheme("dark")}
+              aria-label="暗夜主题"
+              title="暗夜主题"
+            >
+              <Moon className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="balance-card hidden lg:inline-flex" aria-label="账户余额">
+            <Coins className="h-4 w-4 text-amber-400" />
             <span>98</span>
-          </button>
+          </div>
           <button type="button" className="icon-button icon-button-notice" aria-label="消息通知" title="消息通知">
             <Bell className="h-4.5 w-4.5" />
             <span className="icon-badge" aria-hidden>
@@ -95,7 +137,7 @@ export default function AppShellHeader() {
         </div>
       </div>
       {mobileMenuOpen && (
-        <nav id="mobile-app-nav" className="border-t border-slate-200/70 bg-white/92 px-4 py-4 backdrop-blur md:hidden" aria-label="移动端主导航">
+        <nav id="mobile-app-nav" className="border-t border-slate-200/70 bg-white px-4 py-4 md:hidden" aria-label="移动端主导航">
           <div className="grid grid-cols-2 gap-2">
             {navItems.map((item) => {
               return (

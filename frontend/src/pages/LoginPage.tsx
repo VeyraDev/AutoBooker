@@ -43,7 +43,7 @@ export default function LoginPage() {
     <div className="auth-shell page-transition-in">
       <div className="auth-wrapper auth-wrapper-single">
         <div className="flex flex-col justify-center">
-          <h1 className="text-2xl font-semibold text-ink mb-1">欢迎回到 AutoBooker</h1>
+          <h1 className="text-2xl font-medium text-ink mb-1">欢迎回到 AutoBooker</h1>
           <p className="text-sm text-slate-500 mb-6">登录以继续创作你的下一本书</p>
           <form onSubmit={onSubmit} className="auth-form">
             <div>

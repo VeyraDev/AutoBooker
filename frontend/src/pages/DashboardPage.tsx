@@ -53,20 +53,20 @@ export default function DashboardPage() {
         <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="metric-card">
             <p className="text-xs text-slate-500">书稿总数</p>
-            <p className="mt-1 text-2xl font-semibold text-ink">{totalBooks}</p>
+            <p className="mt-1 text-2xl font-medium text-ink">{totalBooks}</p>
           </div>
           <div className="metric-card">
             <p className="text-xs text-slate-500">进行中</p>
-            <p className="mt-1 text-2xl font-semibold text-brand-700">{activeBooks}</p>
+            <p className="mt-1 text-2xl font-medium text-brand-700">{activeBooks}</p>
           </div>
           <div className="metric-card">
             <p className="text-xs text-slate-500">已完成</p>
-            <p className="mt-1 text-2xl font-semibold text-emerald-600">{completedBooks}</p>
+            <p className="mt-1 text-2xl font-medium text-emerald-600">{completedBooks}</p>
           </div>
         </section>
 
         {isLoading && (
-          <div className="book-grid">
+          <div className="book-list">
             <BookCardSkeleton />
             <BookCardSkeleton />
             <BookCardSkeleton />
@@ -93,7 +93,7 @@ export default function DashboardPage() {
         )}
 
         {!isLoading && !isError && recentBooks.length > 0 && (
-          <div className="book-grid">
+          <div className="book-list">
             {recentBooks.map((book) => (
               <BookCard key={book.id} book={book} />
             ))}

@@ -55,7 +55,7 @@ export default function NewBookDialog({ open, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
       <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="text-lg font-semibold text-ink mb-4">新建书稿</h2>
+        <h2 className="text-lg font-medium text-ink mb-4">新建书稿</h2>
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
             <label className="block text-sm text-slate-600 mb-1">书名</label>

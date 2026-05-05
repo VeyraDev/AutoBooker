@@ -41,7 +41,7 @@ export default function HomePage() {
 
       <div className="surface-panel">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold tracking-tight text-ink">最近更新</h2>
+          <h2 className="text-xl font-medium tracking-tight text-ink">最近更新</h2>
           <Link
             to="/app/books"
             className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"

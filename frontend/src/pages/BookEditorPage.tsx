@@ -66,7 +66,7 @@ export default function BookEditorPage() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="editor-topbar">
           <div className="min-w-0">
-            <h1 className="truncate text-lg font-semibold text-ink">{book.title}</h1>
+            <h1 className="truncate text-lg font-medium text-ink">{book.title}</h1>
             <p className="mt-1 text-xs text-slate-500">
               {typeLabel[book.book_type]} · {statusLabel[book.status]}
             </p>
@@ -93,9 +93,9 @@ export default function BookEditorPage() {
             </button>
             {!catalogCollapsed && (
               <div className="space-y-2 text-sm">
-                <p className="rounded-md bg-brand-50 px-2 py-1 text-brand-700">章节 1：引言</p>
-                <p className="rounded-md px-2 py-1 text-slate-600 hover:bg-slate-100">章节 2：核心方法</p>
-                <p className="rounded-md px-2 py-1 text-slate-600 hover:bg-slate-100">章节 3：实践案例</p>
+                <p className="rounded bg-brand-50 px-2 py-1 text-brand-700">章节 1：引言</p>
+                <p className="rounded px-2 py-1 text-slate-600 hover:bg-slate-100">章节 2：核心方法</p>
+                <p className="rounded px-2 py-1 text-slate-600 hover:bg-slate-100">章节 3：实践案例</p>
               </div>
             )}
           </aside>
