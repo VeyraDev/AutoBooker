@@ -4,6 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routers import auth as auth_router
 from app.routers import books as books_router
+from app.routers import chapters as chapters_router
+from app.routers import outline as outline_router
+from app.routers import references as references_router
 
 app = FastAPI(title="AutoBooker API", version="0.1.0")
 
@@ -17,6 +20,9 @@ app.add_middleware(
 
 app.include_router(auth_router.router)
 app.include_router(books_router.router)
+app.include_router(references_router.router)
+app.include_router(outline_router.router)
+app.include_router(chapters_router.router)
 
 
 @app.get("/health", tags=["meta"])

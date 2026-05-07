@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 
 import { createBook } from "@/api/books";
 import type { BookType } from "@/types/book";
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export default function NewBookDialog({ open, onClose }: Props) {
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [title, setTitle] = useState("");
   const [bookType, setBookType] = useState<BookType>("nonfiction");
@@ -24,13 +26,14 @@ export default function NewBookDialog({ open, onClose }: Props) {
         book_type: bookType,
         discipline: bookType === "academic" && discipline ? discipline : null,
       }),
-    onSuccess: () => {
+    onSuccess: (book) => {
       toast.success("已创建");
       qc.invalidateQueries({ queryKey: ["books"] });
       setTitle("");
       setDiscipline("");
       setBookType("nonfiction");
       onClose();
+      navigate(`/app/books/${book.id}`);
     },
     onError: (err) => {
       const msg =

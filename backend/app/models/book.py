@@ -37,6 +37,7 @@ class Book(Base):
     title = Column(String(500), nullable=False)
     book_type = Column(Enum(BookType, name="book_type"), nullable=False)
     discipline = Column(String(100))
+    target_audience = Column(String(500))
     citation_style = Column(Enum(CitationStyle, name="citation_style"))
     target_words = Column(Integer, default=80000)
     status = Column(Enum(BookStatus, name="book_status"), default=BookStatus.setup, nullable=False)

@@ -8,6 +8,9 @@ export type BookStatus =
   | "review_ready"
   | "completed";
 
+/** Backend chapter row status (generation pipeline). */
+export type ChapterGenStatus = "pending" | "generating" | "done";
+
 export type CitationStyle = "apa" | "mla" | "chicago" | "gb_t7714";
 
 export interface Book {
@@ -17,6 +20,7 @@ export interface Book {
   cover_url?: string | null;
   book_type: BookType;
   discipline: string | null;
+  target_audience?: string | null;
   citation_style: CitationStyle | null;
   target_words: number | null;
   status: BookStatus;
@@ -29,6 +33,17 @@ export interface BookCreatePayload {
   title: string;
   book_type: BookType;
   discipline?: string | null;
+  target_audience?: string | null;
   citation_style?: CitationStyle | null;
   target_words?: number;
+}
+
+export interface BookUpdatePayload {
+  title?: string;
+  discipline?: string | null;
+  target_audience?: string | null;
+  citation_style?: CitationStyle | null;
+  target_words?: number | null;
+  status?: BookStatus;
+  ai_model?: string | null;
 }

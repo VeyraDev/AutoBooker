@@ -11,7 +11,26 @@
 
 - Node.js 18+ / npm
 - Python 3.11+（推荐）
-- PostgreSQL 数据库（默认配置可在 `backend/app/config.py` 中修改）
+- **PostgreSQL + pgvector 扩展**（本地推荐 Docker 镜像 `pgvector/pgvector:pg16`，迁移脚本会执行 `CREATE EXTENSION vector`）
+- 阿里云百炼 **DashScope API Key**（`.env` 中 `DASHSCOPE_API_KEY`）
+
+### 后端 Phase 2 相关环境变量（节选）
+
+见 `backend/.env.example`：`DASHSCOPE_*`、`EMBEDDING_*`、`CHAT_MODEL`、`UPLOAD_DIR`。
+
+### Phase 2 API（后端已实现，前端未接）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/books/{id}/references/upload` | 上传 PDF/DOCX，后台解析并向量化 |
+| GET | `/books/{id}/references` | 参考资料列表 |
+| POST | `/books/{id}/references/search` | RAG 检索（调试） |
+| POST | `/books/{id}/outline` | 生成大纲并写入 `chapters` |
+| GET/PUT | `/books/{id}/outline` | 读取/保存大纲；`PUT` 可 `confirm_start_writing` |
+| GET/PUT | `/books/{id}/chapters/{n}` | 读取/更新章节 |
+| POST | `/books/{id}/chapters/{n}/generate` | SSE 流式生成章节正文 |
+
+更多说明见 `backend/PHASE2_NOTES.md`。
 
 ## 后端启动
 

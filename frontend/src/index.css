@@ -160,6 +160,10 @@ body.theme-dark {
   .btn-secondary:hover {
     background: var(--button-hover-bg);
   }
+  /** 写作页「下一章」：与白色卡片区分 */
+  .btn-next-chapter {
+    @apply inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-gradient-to-b from-violet-50 to-violet-100/95 px-3 py-2 font-medium text-violet-900 shadow-sm transition hover:border-violet-400 hover:from-violet-100 hover:to-violet-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2;
+  }
   .input {
     @apply block w-full rounded border px-3 py-2 text-sm placeholder-slate-400 focus:outline-none focus:ring-1;
     border-color: var(--border-subtle);
@@ -250,9 +254,8 @@ body.theme-dark {
     background: color-mix(in srgb, var(--bg-elevated) 84%, transparent);
   }
   .app-brand-mark {
-    @apply inline-flex h-11 w-11 items-center justify-center rounded-lg text-base font-medium text-white;
-    background: var(--brand-color);
-    box-shadow: 0 8px 18px rgba(53, 99, 233, 0.28);
+    @apply inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200/90 bg-slate-800 text-base font-medium text-white shadow-sm;
+    box-shadow: 0 8px 22px rgba(24, 32, 48, 0.14);
   }
   .app-brand-title {
     @apply hidden text-xl font-medium sm:inline;
@@ -404,8 +407,7 @@ body.theme-dark {
     transform: translateY(-2px);
   }
   .book-icon-block {
-    @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-[4px] text-sm font-medium text-white;
-    background: var(--brand-color);
+    @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-[4px] border border-slate-200/80 bg-slate-800 text-sm font-medium text-white shadow-sm;
   }
   .book-status-badge {
     @apply inline-flex rounded-[4px] px-2 py-1 text-xs font-medium;
@@ -449,11 +451,126 @@ body.theme-dark {
   .editor-shell {
     @apply flex min-h-[calc(100vh-8.5rem)] gap-3;
   }
-  .editor-toolbar {
-    @apply sticky top-[5.25rem] flex h-fit flex-col gap-2 rounded-lg border border-slate-200 bg-white p-2;
+  /* 编辑页：四区布局（顶栏 / 左工具 / 目录 / 中央 + 右侧面板） */
+  .editor-page-root {
+    @apply w-full;
   }
-  .editor-topbar {
-    @apply mb-3 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3;
+  .editor-workspace-row {
+    @apply min-h-0 items-stretch;
+  }
+  .editor-topbar-compact {
+    @apply flex h-11 shrink-0 items-center gap-2 rounded-xl border px-4 shadow-sm backdrop-blur-md;
+    border-color: var(--glass-border);
+    background: color-mix(in srgb, white 88%, transparent);
+  }
+  .editor-side-tools {
+    @apply sticky top-4 z-[8] flex max-h-[calc(100vh-5rem)] w-16 shrink-0 flex-col items-center gap-2 self-start overflow-y-auto rounded-xl border py-3 shadow-sm backdrop-blur-md;
+    border-color: var(--glass-border);
+    background: color-mix(in srgb, white 88%, transparent);
+  }
+  .editor-side-tool-btn {
+    @apply relative flex h-11 w-11 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300;
+  }
+  .editor-side-tool-btn-active {
+    @apply bg-violet-50 text-violet-700;
+    box-shadow: inset 4px 0 0 0 rgb(139 92 246);
+  }
+  /* 用视口高度约束目录栏；仅靠 max-height:100% 在 flex 父级下常为 auto，导致内部无法滚动 */
+  .outline-panel {
+    @apply flex min-h-0 w-[280px] shrink-0 flex-col overflow-hidden rounded-xl border p-3 shadow-sm backdrop-blur-md;
+    border-color: var(--glass-border);
+    background: color-mix(in srgb, white 90%, transparent);
+    max-height: min(100%, calc(100vh - 9rem));
+  }
+  .outline-panel-scroll {
+    @apply min-h-0 flex-1 basis-0 space-y-2 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-0.5;
+  }
+  .outline-panel-collapsed {
+    @apply w-14 shrink-0 flex-col items-stretch overflow-hidden py-3;
+  }
+  .outline-divider {
+    @apply my-3 text-center text-[11px] tracking-wide text-slate-400;
+  }
+  .outline-setup-row {
+    @apply flex w-full items-center justify-between rounded-lg border border-transparent px-2 py-2.5 text-left transition-colors hover:border-slate-200 hover:bg-slate-50/80;
+  }
+  .outline-item {
+    @apply relative flex flex-col gap-1 rounded-lg border border-transparent px-2 py-2 pl-3 text-left transition-colors;
+  }
+  .outline-item:hover {
+    @apply border-slate-100 bg-slate-50/60;
+  }
+  .outline-item-active {
+    @apply border-violet-100 bg-violet-50/70;
+    box-shadow: inset 4px 0 0 0 rgb(139 92 246);
+  }
+  .outline-status-done {
+    @apply border-l-4 border-l-emerald-400/80;
+  }
+  .outline-status-generating {
+    @apply border-l-4 border-l-violet-400;
+    animation: outlinePulse 1.4s ease-in-out infinite;
+  }
+  .outline-status-pending {
+    @apply border-l-4 border-l-slate-200 opacity-90;
+  }
+  @keyframes outlinePulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.65;
+    }
+  }
+  .outline-item-main {
+    @apply w-full text-left;
+  }
+  .outline-item-actions {
+    @apply flex shrink-0 items-center gap-0.5 self-start pt-0.5;
+  }
+  .outline-drag {
+    @apply mt-0.5 inline-flex shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600;
+  }
+  .right-panel {
+    @apply relative flex w-[280px] shrink-0 flex-col overflow-hidden rounded-xl border shadow-sm backdrop-blur-md;
+    border-color: var(--glass-border);
+    background: color-mix(in srgb, white 90%, transparent);
+  }
+  .right-panel-header {
+    @apply flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2.5;
+    border-color: color-mix(in srgb, var(--border-subtle) 55%, transparent);
+  }
+  .right-panel-inner {
+    @apply min-h-0 flex-1 overflow-y-auto p-4;
+  }
+  .editor-panel-fab {
+    @apply fixed bottom-8 right-6 z-30 flex h-12 w-12 items-center justify-center rounded-full text-white shadow-lg transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2;
+    background: linear-gradient(135deg, var(--button-bg-primary), var(--button-bg-hover));
+    box-shadow: 0 16px 34px rgba(18, 28, 48, 0.28);
+  }
+  .tiptap-content {
+    @apply max-w-none text-[15px] leading-relaxed text-slate-800 break-words;
+    word-break: normal;
+  }
+  .tiptap-content p {
+    @apply my-2;
+  }
+  .tiptap-content h1 {
+    @apply mt-6 text-2xl font-semibold tracking-tight text-ink;
+  }
+  .tiptap-content h2 {
+    @apply mt-5 text-xl font-semibold text-ink;
+  }
+  .tiptap-content h3 {
+    @apply mt-4 text-lg font-semibold text-slate-800;
+  }
+  .tiptap-content ul,
+  .tiptap-content ol {
+    @apply my-2 pl-5;
+  }
+  .tiptap-bubble {
+    @apply z-20;
   }
   .editor-workspace {
     @apply flex min-h-[600px] gap-3;

@@ -1,13 +1,16 @@
+import re
+from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.book import BookCreate, BookOut, BookUpdate
-from app.services import book_service
+from app.services import book_service, export_service
 
 router = APIRouter(prefix="/books", tags=["books"])
 
@@ -51,3 +54,19 @@ def delete_book(
     book = book_service.get_book_or_404(book_id, user, db)
     book_service.delete_book(book, db)
     return None
+
+
+@router.get("/{book_id}/export")
+def export_book(
+    book_id: UUID,
+    format: str = Query(
+        "markdown",
+        description="导出格式：markdown / md / docx",
+    ),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    body, filename, media_type = export_service.export_book_bytes(book_id, format, user, db)
+    ascii_name = re.sub(r'[^\x20-\x7E]', "_", filename) or "export"
+    cd = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+    return Response(content=body, media_type=media_type, headers={"Content-Disposition": cd})

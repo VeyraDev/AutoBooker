@@ -97,7 +97,7 @@ export default function LandingPage() {
         <section className="mx-auto w-full max-w-[92rem] px-6 py-16 sm:px-8">
           <div className="surface-panel flex flex-col justify-between gap-5 md:flex-row md:items-center">
             <div className="flex items-center gap-3">
-              <BookOpen className="h-9 w-9 rounded-lg bg-brand-50 p-2 text-brand" />
+              <BookOpen className="h-9 w-9 rounded-lg border border-slate-200/90 bg-slate-800 p-2 text-white shadow-sm" />
               <div>
                 <p className="text-lg font-medium text-ink">准备好创建你的下一本书了吗？</p>
                 <p className="text-sm text-slate-500">从项目建立到章节编辑，立即进入统一工作台。</p>
