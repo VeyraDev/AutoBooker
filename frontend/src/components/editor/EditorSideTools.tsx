@@ -25,12 +25,12 @@ export default function EditorSideTools({
   outlineChapterCount = 0,
 }: Props) {
   return (
-    <aside className="editor-side-tools" aria-label="左侧工具栏">
+    <aside className="editor-side-tools editor-side-tools-static" aria-label="左侧工具栏">
       <div className="flex flex-col items-center gap-0.5">
         <button
           type="button"
-          title="目录"
-          aria-label="打开目录"
+          title={outlineOpen ? "隐藏目录" : "显示目录"}
+          aria-label={outlineOpen ? "隐藏目录" : "显示目录"}
           aria-expanded={outlineOpen}
           aria-pressed={outlineOpen}
           className={`editor-side-tool-btn relative ${outlineOpen ? "editor-side-tool-btn-active" : ""}`}

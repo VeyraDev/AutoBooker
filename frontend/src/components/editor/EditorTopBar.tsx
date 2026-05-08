@@ -101,7 +101,7 @@ export default function EditorTopBar({
           : null;
 
   return (
-    <header className="editor-topbar-compact">
+    <header className="editor-topbar-compact editor-topbar-compact--dense">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <button type="button" className="icon-button shrink-0" title="返回" onClick={onBack} aria-label="返回">
           <ChevronLeft className="h-5 w-5" />
