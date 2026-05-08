@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -38,3 +39,12 @@ class ChapterReorderItem(BaseModel):
 
 class ChapterReorderIn(BaseModel):
     items: list[ChapterReorderItem]
+
+
+class SelectionEditIn(BaseModel):
+    mode: Literal["polish", "expand", "shrink"]
+    text: str = Field(..., min_length=1, max_length=32000)
+
+
+class SelectionEditOut(BaseModel):
+    text: str

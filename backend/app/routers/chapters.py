@@ -19,11 +19,14 @@ from app.database import SessionLocal, get_db
 from app.models.chapter import Chapter, ChapterStatus
 from app.models.user import User
 from app.routers.auth import get_current_user
+from app.llm.client import LLMClient
 from app.schemas.chapter import (
     ChapterCreateIn,
     ChapterOut,
     ChapterReorderIn,
     ChapterUpdate,
+    SelectionEditIn,
+    SelectionEditOut,
 )
 from app.services import book_service
 from app.services.memory_service import build_book_memory, extract_chapter_memory
@@ -282,3 +285,37 @@ async def generate_chapter_stream(
             "Connection": "keep-alive",
         },
     )
+
+
+@router.post(
+    "/{book_id}/chapters/{chapter_index}/edit-selection",
+    response_model=SelectionEditOut,
+)
+def edit_selection(
+    book_id: UUID,
+    chapter_index: int,
+    body: SelectionEditIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """润色 / 扩写 / 缩写选中文本（非流式）。"""
+    book = book_service.get_book_or_404(book_id, user, db)
+    _get_chapter(book_id, chapter_index, db)
+
+    prompts = {
+        "polish": "请润色以下文字，保持原意，使表达更流畅专业。只输出改写后的正文，不要解释。",
+        "expand": "请扩写以下文字，增加必要细节与衔接，不要改变核心观点。只输出扩写结果。",
+        "shrink": "请缩写以下文字，保留关键信息。只输出缩写结果。",
+    }
+    system = "你是专业中文编辑，只输出改写结果，不要加引号、标题或前言。"
+    user_msg = f"{prompts[body.mode]}\n\n---\n{body.text.strip()}"
+    client = LLMClient()
+    chat_model = _chat_model_for_book(book)
+    out = client.chat_completion(
+        [{"role": "system", "content": system}, {"role": "user", "content": user_msg}],
+        model=chat_model,
+        max_tokens=4096,
+        temperature=0.45,
+        provider="writer",
+    )
+    return SelectionEditOut(text=out.strip())

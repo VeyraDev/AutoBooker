@@ -3,32 +3,28 @@ import axios from "axios";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
-import { ChevronRight, Sparkles, X } from "lucide-react";
+import { BookOpen, ChevronRight, Sparkles, X } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { exportBook, getBook, updateBook } from "@/api/books";
-import {
-  createChapter,
-  deleteChapter,
-  getChapter,
-  reorderChapters,
-  updateChapter,
-} from "@/api/chapters";
+import { createChapter, deleteChapter, getChapter, reorderChapters, updateChapter } from "@/api/chapters";
 import { generateOutline, getOutline, putOutline } from "@/api/outline";
 import AddChapterDialog from "@/components/editor/AddChapterDialog";
-import ChapterTiptapEditor, {
-  type ChapterEditorHandle,
-} from "@/components/editor/ChapterTiptapEditor";
+import ChapterReferenceDrawer from "@/components/editor/ChapterReferenceDrawer";
+import ChapterTiptapEditor, { type ChapterEditorHandle } from "@/components/editor/ChapterTiptapEditor";
 import EditorSideTools, { type EditorTool } from "@/components/editor/EditorSideTools";
 import EditorTopBar from "@/components/editor/EditorTopBar";
+import OutlineChapterListEditor from "@/components/editor/OutlineChapterListEditor";
+import OutlineDrawer from "@/components/editor/OutlineDrawer";
 import OutlineNavBody from "@/components/editor/OutlineNavBody";
 import type { OutlineSelection } from "@/components/editor/OutlineNavBody";
-import OutlineReviewPanel from "@/components/editor/OutlineReviewPanel";
+import PlanningWizard from "@/components/editor/PlanningWizard";
 import RightPanel from "@/components/editor/RightPanel";
-import SetupView from "@/components/editor/SetupView";
+import { topicKey } from "@/components/editor/SetupView";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { useChapterStream } from "@/hooks/useChapterStream";
-import { outlineConfirmed, phaseOf } from "@/lib/bookStatus";
+import { useDailyWordDelta } from "@/hooks/useDailyWordDelta";
+import { phaseOf } from "@/lib/bookStatus";
 import type { Chapter } from "@/types/chapter";
 import type { OutlineChapter } from "@/types/outline";
 
@@ -45,23 +41,27 @@ export default function BookEditorPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
 
-  const [selection, setSelection] = useState<OutlineSelection>({ type: "setup" });
+  const [selection, setSelection] = useState<OutlineSelection>({ type: "chapter", index: 1 });
   const [tool, setTool] = useState<EditorTool>("edit");
   const [panelCollapsed, setPanelCollapsed] = useState(true);
-  /** 左侧目录栏：工具栏切换显示；可点标题栏 × 关闭 */
   const [outlineSidebarOpen, setOutlineSidebarOpen] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [outlineBusy, setOutlineBusy] = useState(false);
   const [streamingIndex, setStreamingIndex] = useState<number | null>(null);
   const [autoGenerating, setAutoGenerating] = useState(false);
-  /** 写作态章节顶栏：本章大纲默认一行，点击展开详情 */
+  const [autoGenSlot, setAutoGenSlot] = useState<{ current: number; total: number } | null>(null);
   const [chapterOutlineExpanded, setChapterOutlineExpanded] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [outlineDrawerOpen, setOutlineDrawerOpen] = useState(false);
+  const [refsDrawerOpen, setRefsDrawerOpen] = useState(false);
+  const [dailyWordsTick, setDailyWordsTick] = useState(0);
 
   const editorRef = useRef<ChapterEditorHandle>(null);
   const streamPlainRef = useRef("");
   const autoGenAbortRef = useRef(false);
   const { start: startStream } = useChapterStream();
   const { status: saveStatus, savedAt, scheduleSave } = useAutoSave();
+  const { recordChars } = useDailyWordDelta(bookId);
 
   const bookQuery = useQuery({
     queryKey: ["book", bookId],
@@ -86,7 +86,7 @@ export default function BookEditorPage() {
   const chapterDetailQuery = useQuery({
     queryKey: ["chapter", bookId, chapterIndex],
     queryFn: () => getChapter(bookId!, chapterIndex!),
-    enabled: !!bookId && chapterIndex != null && phase === "WRITING",
+    enabled: !!bookId && chapterIndex != null && (phase === "WRITING" || phase === "COMPLETED"),
   });
 
   const chapterDetail = chapterDetailQuery.data;
@@ -97,13 +97,28 @@ export default function BookEditorPage() {
   );
 
   useEffect(() => {
+    if ((phase !== "WRITING" && phase !== "COMPLETED") || chapters.length === 0) return;
+    const ok =
+      selection.type === "chapter" && chapters.some((c) => c.index === selection.index);
+    if (!ok) {
+      setSelection({ type: "chapter", index: chapters[0].index });
+    }
+  }, [phase, chapters, selection]);
+
+  useEffect(() => {
     setChapterOutlineExpanded(false);
   }, [chapterIndex]);
 
-  const currentWords = useMemo(
-    () => chapters.reduce((s, c) => s + (c.word_count ?? 0), 0),
-    [chapters],
-  );
+  useEffect(() => {
+    if (!focusMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFocusMode(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focusMode]);
+
+  const currentWords = useMemo(() => chapters.reduce((s, c) => s + (c.word_count ?? 0), 0), [chapters]);
 
   const targetWords = book?.target_words ?? 80000;
 
@@ -144,6 +159,19 @@ export default function BookEditorPage() {
   }, [selectedMeta]);
 
   const allDone = chapters.length > 0 && chapters.every((c) => c.status === "done");
+
+  const todayWords = useMemo(() => {
+    if (!bookId) return 0;
+    try {
+      const key = `autobooker_daily_chars_${new Date().toISOString().slice(0, 10)}`;
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return 0;
+      const map = JSON.parse(raw) as Record<string, number>;
+      return map[bookId] ?? 0;
+    } catch {
+      return 0;
+    }
+  }, [bookId, dailyWordsTick]);
 
   function appendStreamToken(t: string) {
     streamPlainRef.current += t;
@@ -196,34 +224,22 @@ export default function BookEditorPage() {
     onSuccess: (b) => qc.setQueryData(["book", bookId], b),
   });
 
-  async function handleGenerateOutline(payload: { topic_override?: string | null; target_audience?: string | null }) {
-    if (!bookId) return;
+  async function handleGenerateOutline(payload: {
+    topic_override?: string | null;
+    target_audience?: string | null;
+  }): Promise<boolean> {
+    if (!bookId) return false;
     setOutlineBusy(true);
     try {
       await generateOutline(bookId, payload);
       await invalidateAll();
-      setSelection({ type: "outline_preview" });
       toast.success("大纲已生成");
+      return true;
     } catch (e) {
       const ax = axios.isAxiosError(e) ? e : null;
-      fetch("http://127.0.0.1:7569/ingest/48306f0f-bede-4e99-ab8b-2ecb30de09e8", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "7c6f39" },
-        body: JSON.stringify({
-          sessionId: "7c6f39",
-          location: "BookEditorPage.tsx:handleGenerateOutline",
-          message: "generateOutline client error",
-          data: {
-            code: ax?.code,
-            status: ax?.response?.status,
-            isTimeout: ax?.code === "ECONNABORTED",
-            detail: typeof ax?.response?.data === "object" ? JSON.stringify(ax?.response?.data) : String(ax?.response?.data ?? ""),
-          },
-          timestamp: Date.now(),
-          hypothesisId: "H7",
-        }),
-      }).catch(() => {});
+      console.warn("generateOutline failed", ax?.response?.status, ax?.response?.data);
       toast.error("大纲生成失败");
+      return false;
     } finally {
       setOutlineBusy(false);
       await qc.invalidateQueries({ queryKey: ["book", bookId] });
@@ -241,9 +257,13 @@ export default function BookEditorPage() {
         c.status === "pending" &&
         !chapterHasBody(qc.getQueryData<Chapter>(["chapter", bookId!, c.index])),
     );
+    const total = pending.length;
+    let cur = 0;
 
     for (const ch of pending) {
       if (autoGenAbortRef.current) break;
+      cur += 1;
+      setAutoGenSlot({ current: cur, total });
       setStreamingIndex(ch.index);
       setSelection({ type: "chapter", index: ch.index });
 
@@ -262,7 +282,7 @@ export default function BookEditorPage() {
             },
             onError: (e) => {
               setStreamingIndex(null);
-              toast.error(`第${ch.index}章生成失败：${e.message}`);
+              toast.error(`第 ${ch.index} 章生成失败，已跳过：${e.message}`);
               resolve();
             },
           });
@@ -273,6 +293,7 @@ export default function BookEditorPage() {
     }
 
     setAutoGenerating(false);
+    setAutoGenSlot(null);
   }
 
   async function handleStartWriting() {
@@ -306,7 +327,11 @@ export default function BookEditorPage() {
     await deleteChapter(bookId, idx);
     await invalidateAll();
     setSelection((prev) => {
-      if (prev.type === "chapter" && prev.index === idx) return { type: "setup" };
+      if (prev.type === "chapter" && prev.index === idx) {
+        const rest = chapters.filter((c) => c.index !== idx);
+        const next = rest.sort((a, b) => a.index - b.index)[0];
+        return next ? { type: "chapter", index: next.index } : { type: "chapter", index: 1 };
+      }
       return prev;
     });
     toast.success("已删除");
@@ -343,7 +368,7 @@ export default function BookEditorPage() {
       .then(async (ch) => {
         await invalidateAll();
         setSelection({ type: "chapter", index: ch.index });
-        if (phase === "WRITING" && mode === "ai") {
+        if ((phase === "WRITING" || phase === "COMPLETED") && mode === "ai") {
           setStreamingIndex(ch.index);
           requestAnimationFrame(() => {
             streamPlainRef.current = "";
@@ -405,8 +430,14 @@ export default function BookEditorPage() {
 
   const outlineGeneratingUi = outlineBusy || book.status === "outline_generating";
 
+  const autoGenLabel =
+    autoGenerating && autoGenSlot ? `自动生成中 ${autoGenSlot.current}/${autoGenSlot.total} 章` : null;
+
   const auxPanelTrigger =
-    typeof document !== "undefined" && panelCollapsed
+    typeof document !== "undefined" &&
+    panelCollapsed &&
+    (phase === "WRITING" || phase === "COMPLETED") &&
+    !focusMode
       ? createPortal(
           <button
             type="button"
@@ -421,131 +452,113 @@ export default function BookEditorPage() {
         )
       : null;
 
+  if (phase === "SETUP") {
+    return (
+      <>
+        <PlanningWizard
+          book={book}
+          bookId={bookId}
+          outline={outline}
+          outlineGeneratingUi={outlineGeneratingUi}
+          onPatchBook={(b) => qc.setQueryData(["book", bookId], b)}
+          onGenerateOutline={handleGenerateOutline}
+          onStartWriting={() => handleStartWriting()}
+          onOutlinePatched={() => void invalidateAll()}
+          onReorder={handleReorder}
+          onDeleteChapter={(idx) => void handleDeleteChapter(idx)}
+          dragDisabled={dragDisabled}
+        />
+      </>
+    );
+  }
+
   return (
     <>
-    <section className="page-transition-in">
-      <div className="editor-page-outer p-4 sm:p-5">
-        <div className="editor-page-root flex flex-col gap-2">
-          <div className="editor-topbar-sticky">
-            <div className="flex shrink-0 items-start gap-3">
-              <div className="min-w-0 flex-1">
-                <EditorTopBar
-                  title={book.title}
-                  currentWords={currentWords}
-                  targetWords={targetWords}
-                  aiModel={book.ai_model}
-                  onTitleSave={(t) => titleMutation.mutate(t)}
-                  onModelChange={(m) => modelMutation.mutate(m)}
-                  autoSaveStatus={saveStatus}
-                  savedAt={savedAt}
-                  onBack={() => navigate("/app/books")}
-                  onExport={handleExport}
-                />
-              </div>
-              {autoGenerating ? (
-                <button
-                  type="button"
-                  className="btn-secondary mt-1 h-8 shrink-0 px-3 text-xs"
-                  onClick={() => {
-                    autoGenAbortRef.current = true;
-                    setAutoGenerating(false);
-                  }}
-                >
-                  停止自动生成
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="editor-workspace-row relative flex gap-2 items-start">
-            <div className="editor-side-sticky flex shrink-0 items-start gap-3">
-              <EditorSideTools
-                active={tool}
-                outlineOpen={outlineSidebarOpen}
-                onOutlineToggle={() => setOutlineSidebarOpen((v) => !v)}
-                outlineChapterCount={chapters.length}
-                onChange={(t) => {
-                  setTool(t);
-                  setPanelCollapsed(false);
+      <section className="page-transition-in">
+        <div className="editor-page-outer p-4 sm:p-5">
+          <div className="editor-page-root flex flex-col gap-2">
+            <div className="editor-topbar-sticky">
+              <EditorTopBar
+                title={book.title}
+                currentWords={currentWords}
+                targetWords={targetWords}
+                aiModel={book.ai_model}
+                onTitleSave={(t) => titleMutation.mutate(t)}
+                onModelChange={(m) => modelMutation.mutate(m)}
+                autoSaveStatus={saveStatus}
+                savedAt={savedAt}
+                onBack={() => navigate("/app/books")}
+                onExport={handleExport}
+                focusMode={focusMode}
+                onToggleFocus={() => setFocusMode((v) => !v)}
+                onOpenOutlineDrawer={() => setOutlineDrawerOpen(true)}
+                autoGenerateLabel={autoGenLabel}
+                onStopAutoGenerate={() => {
+                  autoGenAbortRef.current = true;
+                  setAutoGenerating(false);
+                  setAutoGenSlot(null);
                 }}
               />
-
-              {outlineSidebarOpen ? (
-                <aside className="editor-outline-sidebar" aria-label="目录栏">
-                  <div className="editor-outline-sidebar-header">
-                    <span className="text-sm font-semibold text-ink">目录</span>
-                    <button
-                      type="button"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-                      title="隐藏目录"
-                      aria-label="隐藏目录"
-                      onClick={() => setOutlineSidebarOpen(false)}
-                    >
-                      <X className="h-4 w-4" aria-hidden />
-                    </button>
-                  </div>
-                  <div className="editor-outline-sidebar-body">
-                    <OutlineNavBody
-                      chapters={chapters}
-                      selection={selection}
-                      onSelect={setSelection}
-                      onReorder={handleReorder}
-                      onRename={handleRenameChapter}
-                      onRegenerate={handleRegenerateChapter}
-                      onDelete={handleDeleteChapter}
-                      onAddChapter={() => setAddOpen(true)}
-                      dragDisabled={dragDisabled}
-                      showOutlinePreviewNav={phase === "SETUP" && chapters.length > 0}
-                    />
-                  </div>
-                </aside>
-              ) : null}
             </div>
 
-            <main className="editor-center-natural card min-w-0 flex-1 border border-slate-200/90 bg-white/85 shadow-[0_18px_40px_rgba(20,30,50,0.06)] backdrop-blur-md p-4 sm:p-5">
-                {phase === "SETUP" && (
-                  <>
-                    {chapters.length === 0 ? (
-                      <SetupView
-                        book={book}
-                        onBookPatched={(b) => qc.setQueryData(["book", bookId], b)}
-                        onGenerateOutline={handleGenerateOutline}
-                        generating={outlineGeneratingUi}
-                        outlineLocked={false}
-                      />
-                    ) : outline && selection.type === "outline_preview" ? (
-                      <OutlineReviewPanel
-                        bookId={bookId}
-                        targetAudience={book.target_audience}
-                        outline={outline}
-                        generating={outlineGeneratingUi}
-                        onOutlinePatched={() => void invalidateAll()}
-                        onStartWriting={() => void handleStartWriting()}
-                        onRegenerateOutline={handleGenerateOutline}
-                        onDeleteChapter={handleDeleteChapter}
-                      />
-                    ) : outline ? (
-                      <SetupView
-                        book={book}
-                        onBookPatched={(b) => qc.setQueryData(["book", bookId], b)}
-                        onGenerateOutline={handleGenerateOutline}
-                        generating={outlineGeneratingUi}
-                        outlineLocked={false}
-                      />
-                    ) : null}
-                  </>
-                )}
+            <div className="editor-workspace-row relative flex gap-2 items-start">
+              {!focusMode ? (
+                <div className="editor-side-sticky flex shrink-0 items-start gap-3">
+                  <EditorSideTools
+                    active={tool}
+                    outlineOpen={outlineSidebarOpen}
+                    onOutlineToggle={() => setOutlineSidebarOpen((v) => !v)}
+                    outlineChapterCount={chapters.length}
+                    onChange={(t) => {
+                      setTool(t);
+                      setPanelCollapsed(false);
+                    }}
+                  />
 
-                {phase === "WRITING" && selection.type === "chapter" && (
+                  {outlineSidebarOpen ? (
+                    <aside className="editor-outline-sidebar" aria-label="目录栏">
+                      <div className="editor-outline-sidebar-header">
+                        <span className="text-sm font-semibold text-ink">目录</span>
+                        <button
+                          type="button"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                          title="隐藏目录"
+                          aria-label="隐藏目录"
+                          onClick={() => setOutlineSidebarOpen(false)}
+                        >
+                          <X className="h-4 w-4" aria-hidden />
+                        </button>
+                      </div>
+                      <div className="editor-outline-sidebar-body">
+                        <OutlineNavBody
+                          chapters={chapters}
+                          selection={selection}
+                          onSelect={setSelection}
+                          onReorder={handleReorder}
+                          onRename={handleRenameChapter}
+                          onRegenerate={handleRegenerateChapter}
+                          onDelete={handleDeleteChapter}
+                          onAddChapter={() => setAddOpen(true)}
+                          dragDisabled={dragDisabled}
+                          showOutlinePreviewNav={false}
+                          writingMode
+                          streamingChapterIndex={streamingIndex}
+                        />
+                      </div>
+                    </aside>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <main className="editor-center-natural card min-w-0 flex-1 border border-slate-200/90 bg-white/85 shadow-[0_18px_40px_rgba(20,30,50,0.06)] backdrop-blur-md p-4 sm:p-5">
+                {selection.type === "chapter" && (
                   <>
-                    {chapterDetailQuery.isLoading && (
-                      <p className="text-sm text-slate-500">加载章节正文…</p>
-                    )}
+                    {chapterDetailQuery.isLoading && <p className="text-sm text-slate-500">加载章节正文…</p>}
                     {chapterDetail && !chapterDetailQuery.isLoading && (
                       <>
                         {selectedMeta && (
                           <div className="mb-5 border-b border-slate-100 pb-4">
-                            <div className="flex items-center gap-3">
+                            <div className="flex flex-wrap items-center gap-3">
                               <button
                                 type="button"
                                 className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1 text-left hover:bg-slate-50/80"
@@ -560,6 +573,15 @@ export default function BookEditorPage() {
                                 {!chapterOutlineExpanded && (
                                   <span className="truncate text-sm text-slate-600">{chapterOutlinePreview}</span>
                                 )}
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                                title="本章参考资料片段"
+                                onClick={() => setRefsDrawerOpen(true)}
+                              >
+                                <BookOpen className="h-3.5 w-3.5" />
+                                参考资料
                               </button>
                               {autoGenerating && streamingIndex === chapterIndex && (
                                 <span className="animate-pulse text-xs text-violet-500">AI 生成中…</span>
@@ -595,13 +617,20 @@ export default function BookEditorPage() {
                           </div>
                         )}
 
-                        {streamingIndex === chapterIndex || chapterHasBody(chapterDetail) || autoGenerating ? (
+                        {streamingIndex === chapterIndex ||
+                        chapterHasBody(chapterDetail) ||
+                        autoGenerating ||
+                        chapterDetail.status === "generating" ? (
                           <ChapterTiptapEditor
                             ref={editorRef}
                             key={chapterDetail.id}
                             chapter={chapterDetail}
                             readOnly={streamingIndex === chapterIndex}
-                            onChange={(p) =>
+                            bookId={bookId}
+                            chapterIndex={chapterIndex!}
+                            onChange={(p) => {
+                              recordChars(p.characters);
+                              setDailyWordsTick((x) => x + 1);
                               scheduleSave(async () => {
                                 const prev = (chapterDetail.content ?? {}) as Record<string, unknown>;
                                 await updateChapter(bookId!, chapterIndex!, {
@@ -612,25 +641,12 @@ export default function BookEditorPage() {
                                   },
                                 });
                                 await invalidateAll();
-                              })
-                            }
+                              });
+                            }}
                           />
                         ) : (
-                          <div className="flex min-h-[300px] items-center justify-center text-sm text-slate-400">
-                            {autoGenerating ? (
-                              "等待自动生成…"
-                            ) : (
-                              <div className="text-center">
-                                <p className="mb-4">本章暂无正文</p>
-                                <button
-                                  type="button"
-                                  className="btn-primary text-sm"
-                                  onClick={() => void handleRegenerateChapter(chapterIndex!)}
-                                >
-                                  手动生成本章
-                                </button>
-                              </div>
-                            )}
+                          <div className="flex min-h-[200px] items-center justify-center text-sm text-slate-400">
+                            {autoGenerating ? "等待自动生成…" : "加载本章…"}
                           </div>
                         )}
 
@@ -645,36 +661,89 @@ export default function BookEditorPage() {
                     )}
                   </>
                 )}
+              </main>
 
-                {phase === "WRITING" && selection.type === "setup" && (
-                  <SetupView
-                    book={book}
-                    onBookPatched={(b) => qc.setQueryData(["book", bookId], b)}
-                    onGenerateOutline={handleGenerateOutline}
-                    generating={outlineGeneratingUi}
-                    outlineLocked={outlineConfirmed(book)}
+              {!focusMode && !panelCollapsed ? (
+                <div className="editor-side-sticky shrink-0">
+                  <RightPanel
+                    tool={tool}
+                    onClose={() => setPanelCollapsed(true)}
+                    activeChapter={selectedMeta}
+                    autoSaveStatus={saveStatus}
+                    savedAt={savedAt}
                   />
-                )}
-            </main>
-
-            {!panelCollapsed ? (
-              <div className="editor-side-sticky shrink-0">
-                <RightPanel
-                  tool={tool}
-                  onClose={() => setPanelCollapsed(true)}
-                  activeChapter={selectedMeta}
-                  autoSaveStatus={saveStatus}
-                  savedAt={savedAt}
-                />
-              </div>
-            ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
 
-        <AddChapterDialog open={addOpen} onClose={() => setAddOpen(false)} onChoose={handleAddChapterChoice} />
-      </div>
-    </section>
-    {auxPanelTrigger}
+          <AddChapterDialog open={addOpen} onClose={() => setAddOpen(false)} onChoose={handleAddChapterChoice} />
+        </div>
+      </section>
+
+      {outline && (
+        <OutlineDrawer open={outlineDrawerOpen} onClose={() => setOutlineDrawerOpen(false)}>
+          <div className="mx-auto grid max-w-5xl gap-6 lg:grid-cols-[260px_1fr]">
+            <aside className="card h-fit border border-slate-200/80 bg-white/80 p-4 text-sm shadow-sm">
+              <h3 className="font-semibold text-ink">书稿设定摘要</h3>
+              <dl className="mt-3 space-y-2 text-slate-600">
+                <div>
+                  <dt className="text-xs text-slate-400">目标读者</dt>
+                  <dd>{book.target_audience?.trim() || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-slate-400">主题要点</dt>
+                  <dd className="whitespace-pre-wrap text-xs leading-relaxed">
+                    {typeof window !== "undefined" ? window.localStorage.getItem(topicKey(bookId))?.trim() || "—" : "—"}
+                  </dd>
+                </div>
+              </dl>
+            </aside>
+            <div className="min-w-0">
+              <div className="mb-4 flex justify-end">
+                <button
+                  type="button"
+                  className="btn-secondary text-sm"
+                  disabled={outlineGeneratingUi}
+                  onClick={() =>
+                    void handleGenerateOutline({
+                      topic_override: typeof window !== "undefined"
+                        ? window.localStorage.getItem(topicKey(bookId))?.trim() || null
+                        : null,
+                      target_audience: book.target_audience?.trim() || null,
+                    })
+                  }
+                >
+                  {outlineGeneratingUi ? "生成中…" : "重新生成大纲"}
+                </button>
+              </div>
+              <OutlineChapterListEditor
+                bookId={bookId}
+                outline={outline}
+                onOutlinePatched={() => void invalidateAll()}
+                onDeleteChapter={(idx) => void handleDeleteChapter(idx)}
+                onReorder={handleReorder}
+                dragDisabled={dragDisabled}
+              />
+            </div>
+          </div>
+        </OutlineDrawer>
+      )}
+
+      <ChapterReferenceDrawer
+        open={refsDrawerOpen}
+        bookId={bookId}
+        chapterTitle={selectedMeta?.title ?? ""}
+        onClose={() => setRefsDrawerOpen(false)}
+      />
+
+      {(phase === "WRITING" || phase === "COMPLETED") && todayWords > 0 ? (
+        <div className="fixed bottom-24 right-6 z-[25] rounded-full border border-slate-200 bg-white/95 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-md backdrop-blur-sm sm:right-10">
+          今日 +{todayWords.toLocaleString()} 字
+        </div>
+      ) : null}
+
+      {auxPanelTrigger}
     </>
   );
 }

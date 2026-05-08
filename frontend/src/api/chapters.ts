@@ -32,3 +32,17 @@ export async function reorderChapters(bookId: string, items: ChapterReorderItem[
   const { data } = await client.patch<Chapter[]>(`/books/${bookId}/chapters/reorder`, { items });
   return data;
 }
+
+export type SelectionEditMode = "polish" | "expand" | "shrink";
+
+export async function editChapterSelection(
+  bookId: string,
+  chapterIndex: number,
+  body: { mode: SelectionEditMode; text: string },
+): Promise<{ text: string }> {
+  const { data } = await client.post<{ text: string }>(
+    `/books/${bookId}/chapters/${chapterIndex}/edit-selection`,
+    body,
+  );
+  return data;
+}

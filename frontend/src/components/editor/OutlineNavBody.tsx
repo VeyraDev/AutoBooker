@@ -18,8 +18,11 @@ export type OutlineNavBodyProps = {
   onDelete: (chapterIndex: number) => void;
   onAddChapter: () => void;
   dragDisabled?: boolean;
-  /** SETUP 且已有章节时显示「大纲展示」入口 */
   showOutlinePreviewNav?: boolean;
+  /** 仅显示章节树（写作模式） */
+  writingMode?: boolean;
+  /** 当前流式生成中的章节 index，用于目录脉冲态 */
+  streamingChapterIndex?: number | null;
 };
 
 export default function OutlineNavBody({
@@ -28,6 +31,8 @@ export default function OutlineNavBody({
   onSelect,
   onAddChapter,
   showOutlinePreviewNav,
+  writingMode,
+  streamingChapterIndex,
 }: OutlineNavBodyProps) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
 
@@ -45,42 +50,48 @@ export default function OutlineNavBody({
   const outlinePreviewActive = selection.type === "outline_preview";
 
   return (
-    <div className="toc-root">
-      <button
-        type="button"
-        className={`toc-setup-row ${setupActive ? "toc-active" : ""}`}
-        onClick={() => onSelect({ type: "setup" })}
-      >
-        <Settings className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-        <span>书稿设定</span>
-      </button>
+    <div className="toc-root toc-root-writing">
+      {!writingMode ? (
+        <>
+          <button
+            type="button"
+            className={`toc-setup-row ${setupActive ? "toc-active" : ""}`}
+            onClick={() => onSelect({ type: "setup" })}
+          >
+            <Settings className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+            <span>书稿设定</span>
+          </button>
 
-      {showOutlinePreviewNav ? (
-        <button
-          type="button"
-          className={`toc-setup-row ${outlinePreviewActive ? "toc-active" : ""}`}
-          onClick={() => onSelect({ type: "outline_preview" })}
-        >
-          <ListTree className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-          <span>大纲展示</span>
-        </button>
-      ) : null}
-
-      <div className="toc-divider">── 大纲与章节 ──</div>
+          {showOutlinePreviewNav ? (
+            <button
+              type="button"
+              className={`toc-setup-row ${outlinePreviewActive ? "toc-active" : ""}`}
+              onClick={() => onSelect({ type: "outline_preview" })}
+            >
+              <ListTree className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+              <span>大纲展示</span>
+            </button>
+          ) : null}
+          <div className="toc-divider">── 大纲与章节 ──</div>
+        </>
+      ) : (
+        <div className="toc-divider toc-divider-tight">章节</div>
+      )}
 
       <div className="toc-list">
         {chapters.length === 0 ? (
-          <p className="toc-empty">暂无章节，请先生成大纲</p>
+          <p className="toc-empty">暂无章节</p>
         ) : (
           chapters.map((ch) => {
             const isCollapsed = collapsed.has(ch.index);
             const chapterActive = selection.type === "chapter" && selection.index === ch.index;
             const hasSections = ch.sections && ch.sections.length > 0;
 
+            const streamingHere = streamingChapterIndex != null && streamingChapterIndex === ch.index;
             const statusClass =
               ch.status === "done"
                 ? "toc-ch-done"
-                : ch.status === "generating"
+                : ch.status === "generating" || streamingHere
                   ? "toc-ch-generating"
                   : "toc-ch-pending";
 
@@ -100,7 +111,9 @@ export default function OutlineNavBody({
                     {isCollapsed ? "▶" : "▼"}
                   </button>
                   <span className="toc-chapter-title">{ch.title}</span>
-                  {ch.status === "generating" && <span className="toc-generating-dot" title="生成中" />}
+                  {(ch.status === "generating" || streamingHere) && (
+                    <span className="toc-generating-dot" title="生成中" />
+                  )}
                 </div>
 
                 {!isCollapsed &&

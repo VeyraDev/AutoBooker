@@ -427,11 +427,27 @@ body.theme-dark {
     @apply mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500;
   }
   .book-card-progress-track {
-    @apply h-2 w-full overflow-hidden rounded-[4px] bg-slate-100;
+    @apply h-2 w-full overflow-hidden rounded-[4px] bg-slate-200/90;
   }
   .book-card-progress-fill {
     @apply h-full rounded-[4px] transition-all duration-300;
-    background: var(--brand-color);
+    background: linear-gradient(90deg, #335dff, #6366f1 55%, #8b5cf6);
+  }
+
+  .book-card-wrapper--hero .book-card--hero {
+    transform: scale(1.02);
+    border-color: color-mix(in srgb, var(--brand-color) 55%, white);
+    box-shadow:
+      0 22px 56px rgba(51, 93, 255, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  }
+
+  .metric-card-trend .sparkline {
+    display: block;
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.45));
+    box-shadow: inset 0 -2px 0 rgba(99, 102, 241, 0.35);
   }
   .book-card-foot {
     @apply flex min-w-[180px] flex-col items-end gap-1 text-sm text-slate-400;
@@ -492,7 +508,7 @@ body.theme-dark {
     top: calc(40px + 6px + 12px);
   }
   .editor-center-natural {
-    min-height: calc(100vh - 168px);
+    min-height: 0;
   }
   .editor-workspace-row {
     @apply items-start;
@@ -510,7 +526,7 @@ body.theme-dark {
     overflow-y: auto;
   }
   .editor-side-sticky .editor-outline-sidebar {
-    max-height: calc(100vh - 104px);
+    max-height: calc(100vh - var(--editor-sticky-top, 104px));
   }
   .editor-side-sticky .right-panel {
     height: auto;
@@ -567,8 +583,10 @@ body.theme-dark {
     min-height: 0;
     flex: 1;
     flex-direction: column;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
     padding: 4px 6px 6px;
+    max-height: calc(100vh - var(--editor-sticky-top, 104px));
   }
 
   /* 用视口高度约束目录栏；仅靠 max-height:100% 在 flex 父级下常为 auto，导致内部无法滚动 */
@@ -739,6 +757,14 @@ body.theme-dark {
     margin: 6px 0;
     letter-spacing: 0.05em;
     flex-shrink: 0;
+  }
+  .toc-divider-tight {
+    text-align: left;
+    padding-left: 4px;
+    margin: 4px 0 6px;
+    color: #94a3b8;
+    font-size: 11px;
+    letter-spacing: 0.06em;
   }
 
   .toc-list {

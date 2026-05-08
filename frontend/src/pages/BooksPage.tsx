@@ -4,6 +4,7 @@ import { LayoutGrid, List, Plus } from "lucide-react";
 
 import { listBooks } from "@/api/books";
 import { BookCard, BookCardSkeleton } from "@/components/books/BookCard";
+import { getTodayWordsTotal } from "@/hooks/useDailyWordDelta";
 import NewBookDialog from "@/components/common/NewBookDialog";
 import { statusLabel, typeLabel } from "@/pages/bookView";
 import type { Book } from "@/types/book";
@@ -41,6 +42,11 @@ export default function BooksPage() {
   const totalBooks = data?.length ?? 0;
   const activeBooks = data?.filter((book) => book.status !== "completed").length ?? 0;
   const completedBooks = data?.filter((book) => book.status === "completed").length ?? 0;
+
+  const todayWordsTotal = useMemo(() => {
+    if (typeof window === "undefined") return 0;
+    return getTodayWordsTotal();
+  }, [data]);
   const filteredBooks = useMemo(() => {
     if (!data) {
       return [];
@@ -79,7 +85,7 @@ export default function BooksPage() {
         </button>
       </div>
 
-      <div className="mb-7 grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="mb-7 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="metric-card">
           <p className="text-xs text-slate-500">书稿总数</p>
           <p className="mt-1 text-2xl font-medium text-ink">{totalBooks}</p>
@@ -91,6 +97,13 @@ export default function BooksPage() {
         <div className="metric-card">
           <p className="text-xs text-slate-500">已完成</p>
           <p className="mt-1 text-2xl font-medium text-emerald-600">{completedBooks}</p>
+        </div>
+        <div className="metric-card metric-card-trend">
+          <p className="text-xs text-slate-500">今日码字（本地）</p>
+          <p className="mt-1 text-2xl font-medium text-violet-700">{todayWordsTotal.toLocaleString()}</p>
+          <p className="mt-2 h-6 overflow-hidden opacity-90">
+            <span className="sparkline" aria-hidden />
+          </p>
         </div>
       </div>
 
@@ -174,8 +187,13 @@ export default function BooksPage() {
 
       {!isLoading && !isError && filteredBooks.length > 0 && (
         <div className={viewMode === "grid" ? "book-grid" : "book-list"}>
-          {filteredBooks.map((book) => (
-            <BookCard key={book.id} book={book} view={viewMode} />
+          {filteredBooks.map((book, i) => (
+            <BookCard
+              key={book.id}
+              book={book}
+              view={viewMode}
+              isHero={sortBy === "updated_desc" && statusFilter === "all" && typeFilter === "all" && i === 0}
+            />
           ))}
         </div>
       )}

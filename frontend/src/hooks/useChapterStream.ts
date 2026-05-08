@@ -76,9 +76,12 @@ export function useChapterStream() {
       try {
         const reader = await openGenerateStream(bookId, chapterIndex, ac.signal);
         await parseSSEStream(reader, (obj) => {
+          if ("error" in obj && obj.error != null) {
+            cb.onError(new Error(String(obj.error)));
+            return;
+          }
           if (typeof obj.token === "string") cb.onToken(obj.token);
           if (obj.done === true) cb.onDone();
-          if (typeof obj.error === "string") cb.onError(new Error(String(obj.error)));
         });
       } catch (e) {
         if ((e as Error).name === "AbortError") return;

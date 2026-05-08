@@ -1,6 +1,7 @@
-import { ChevronLeft, ChevronDown } from "lucide-react";
+import { ChevronLeft, ChevronDown, Focus, ListTree } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import { Link } from "react-router-dom";
 import toast from "react-hot-toast";
 
 const MODEL_OPTIONS = ["qwen-max", "qwen-turbo", "qwen-plus"];
@@ -19,6 +20,12 @@ export type EditorTopBarProps = {
   onBack: () => void;
   /** markdown：.md；docx：Word */
   onExport?: (format: "markdown" | "docx") => void;
+  /** 专注模式：极简顶栏 */
+  focusMode?: boolean;
+  onToggleFocus?: () => void;
+  onOpenOutlineDrawer?: () => void;
+  autoGenerateLabel?: string | null;
+  onStopAutoGenerate?: () => void;
 };
 
 export default function EditorTopBar({
@@ -32,6 +39,11 @@ export default function EditorTopBar({
   savedAt,
   onBack,
   onExport,
+  focusMode,
+  onToggleFocus,
+  onOpenOutlineDrawer,
+  autoGenerateLabel,
+  onStopAutoGenerate,
 }: EditorTopBarProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
@@ -100,52 +112,122 @@ export default function EditorTopBar({
           ? "保存失败"
           : null;
 
-  return (
-    <header className="editor-topbar-compact editor-topbar-compact--dense">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <button type="button" className="icon-button shrink-0" title="返回" onClick={onBack} aria-label="返回">
-          <ChevronLeft className="h-5 w-5" />
+  if (focusMode) {
+    return (
+      <header className="editor-topbar-compact editor-topbar-compact--dense flex flex-wrap items-center justify-between gap-2 border-b border-slate-100/80 bg-white/90 px-3 py-2">
+        <span className="min-w-0 truncate text-base font-medium text-ink">{title || "未命名书稿"}</span>
+        <span className="shrink-0 text-xs tabular-nums text-slate-600">{currentWords.toLocaleString()} 字</span>
+        <button type="button" className="btn-secondary h-9 px-3 text-xs" onClick={onToggleFocus}>
+          退出专注
         </button>
-        {editing ? (
-          <input
-            className="input max-w-md py-1 text-base font-medium"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commitTitle}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitTitle();
-              if (e.key === "Escape") {
-                setDraft(title);
-                setEditing(false);
-              }
-            }}
-            autoFocus
-          />
-        ) : (
+      </header>
+    );
+  }
+
+  return (
+    <header className="editor-topbar-compact editor-topbar-compact--dense flex-col gap-2 sm:flex-row">
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <nav className="hidden text-[11px] text-slate-500 sm:block">
+          <Link to="/app/books" className="hover:text-brand-700">
+            图书管理
+          </Link>
+          <span className="mx-1 text-slate-300">/</span>
           <button
             type="button"
-            className="truncate text-left text-lg font-medium text-ink hover:text-brand-700"
-            title="点击重命名"
-            onClick={() => setEditing(true)}
+            className="font-medium text-slate-700 hover:text-brand-700"
+            onClick={() => onOpenOutlineDrawer?.()}
+            title="查看与编辑大纲"
           >
-            {title || "未命名书稿"}
+            {title || "未命名"}
           </button>
-        )}
-      </div>
-
-      <div className="hidden min-w-0 flex-[2] items-center gap-3 px-4 md:flex">
-        <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200">
-          <div
-            className="h-full rounded-full bg-gradient-to-r from-brand-500 to-violet-500 transition-[width]"
-            style={{ width: `${pct}%` }}
-          />
+          <span className="mx-1 text-slate-300">/</span>
+          <span className="text-slate-600">写作</span>
+        </nav>
+        <div className="flex min-w-0 items-center gap-2">
+          <button type="button" className="icon-button h-9 w-9 shrink-0" title="返回" onClick={onBack} aria-label="返回">
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          {editing ? (
+            <input
+              className="input max-w-md py-1 text-base font-medium"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitTitle();
+                if (e.key === "Escape") {
+                  setDraft(title);
+                  setEditing(false);
+                }
+              }}
+              autoFocus
+            />
+          ) : (
+            <button
+              type="button"
+              className="truncate text-left text-lg font-medium text-ink hover:text-brand-700"
+              title="点击重命名"
+              onClick={() => setEditing(true)}
+            >
+              {title || "未命名书稿"}
+            </button>
+          )}
+          {onOpenOutlineDrawer ? (
+            <button
+              type="button"
+              className="icon-button h-9 w-9 shrink-0"
+              title="大纲"
+              aria-label="大纲"
+              onClick={() => onOpenOutlineDrawer()}
+            >
+              <ListTree className="h-4 w-4" />
+            </button>
+          ) : null}
+          {onToggleFocus ? (
+            <button
+              type="button"
+              className="icon-button h-9 w-9 shrink-0"
+              title="专注模式"
+              aria-label="专注模式"
+              onClick={onToggleFocus}
+            >
+              <Focus className="h-4 w-4" />
+            </button>
+          ) : null}
         </div>
-        <span className="shrink-0 text-xs tabular-nums text-slate-600">
-          {currentWords.toLocaleString()} / {targetWords.toLocaleString()} 字
-        </span>
       </div>
 
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex min-w-0 flex-[2] flex-col gap-1 px-0 sm:px-4">
+        {autoGenerateLabel ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-800 ring-1 ring-violet-200">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-600" />
+              </span>
+              {autoGenerateLabel}
+            </span>
+            {onStopAutoGenerate ? (
+              <button type="button" className="btn-secondary h-7 px-2 text-[11px]" onClick={onStopAutoGenerate}>
+                停止
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="flex items-center gap-3">
+          <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-200">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-brand-500 to-violet-500 transition-[width]"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <span className="shrink-0 text-xs tabular-nums text-slate-600">
+            {currentWords.toLocaleString()} / {targetWords.toLocaleString()} 字
+          </span>
+        </div>
+      </div>
+
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
         <div className="relative">
           <select
             className="input h-10 cursor-pointer appearance-none py-1 pl-3 pr-8 text-sm"
@@ -177,16 +259,8 @@ export default function EditorTopBar({
             exportOpen &&
             createPortal(
               <>
-                <div
-                  className="fixed inset-0 z-[200] bg-transparent"
-                  aria-hidden
-                  onClick={() => setExportOpen(false)}
-                />
-                <div
-                  role="menu"
-                  style={exportMenuStyle}
-                  className="z-[210] rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
-                >
+                <div className="fixed inset-0 z-[200] bg-transparent" aria-hidden onClick={() => setExportOpen(false)} />
+                <div role="menu" style={exportMenuStyle} className="z-[210] rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
                   <button
                     type="button"
                     role="menuitem"

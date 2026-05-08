@@ -18,10 +18,24 @@ function buildUpdatedLabel(book: Book) {
   return `更新于 ${parsed.toLocaleDateString()}`;
 }
 
-export function BookCard({ book, view = "list" }: { book: Book; view?: "grid" | "list" }) {
+export function BookCard({
+  book,
+  view = "list",
+  isHero,
+}: {
+  book: Book;
+  view?: "grid" | "list";
+  /** 最近更新列表首位：主入口高亮 */
+  isHero?: boolean;
+}) {
   return (
-    <Link to={`/app/books/${book.id}`} className="book-card-wrapper block" aria-label={`打开书稿 ${book.title}`} title={book.title}>
-      <article className={`book-card ${view === "list" ? "book-card-list" : ""}`}>
+    <Link
+      to={`/app/books/${book.id}`}
+      className={`book-card-wrapper block${isHero ? " book-card-wrapper--hero" : ""}`}
+      aria-label={`打开书稿 ${book.title}`}
+      title={book.title}
+    >
+      <article className={`book-card ${view === "list" ? "book-card-list" : ""}${isHero ? " book-card--hero" : ""}`}>
         <div className="book-card-body">
           <span className="book-icon-block" aria-hidden>
             {book.title.slice(0, 1).toUpperCase()}

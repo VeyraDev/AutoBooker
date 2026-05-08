@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
 import { listReferences, uploadReference } from "@/api/references";
 import { updateBook } from "@/api/books";
-import type { Book, CitationStyle } from "@/types/book";
+import type { Book, BookType, CitationStyle } from "@/types/book";
 import type { ReferenceFile } from "@/types/reference";
 
 const CITATION_OPTIONS: { value: CitationStyle; label: string }[] = [
@@ -13,24 +13,47 @@ const CITATION_OPTIONS: { value: CitationStyle; label: string }[] = [
   { value: "gb_t7714", label: "GB/T 7714" },
 ];
 
-const topicKey = (bookId: string) => `autobooker_topic_brief_${bookId}`;
-const audienceKey = (bookId: string) => `autobooker_target_audience_${bookId}`;
+const BOOK_TYPE_LABEL: Record<BookType, string> = {
+  nonfiction: "非虚构",
+  academic: "学术",
+};
+
+export const TOPIC_INSPIRATION_PRESETS: { id: string; label: string; text: string }[] = [
+  {
+    id: "tech",
+    label: "技术专著",
+    text:
+      "面向具备一定基础的开发者；侧重原理阐述与工程实践结合；每章包含架构示意图与可运行示例；语气严谨、条理清晰；适当引用官方文档与开源实现。",
+  },
+  {
+    id: "science",
+    label: "科普文风",
+    text:
+      "面向大众读者；避免堆砌术语，用类比与故事引入概念；章节短小精炼；配图建议；保持好奇与启发式语气；结尾给出延伸阅读。",
+  },
+  {
+    id: "business",
+    label: "商业读物",
+    text:
+      "面向管理者与创业者；强调案例与可落地方法论；每章有关键框架图或清单；数据与趋势支撑观点；语气务实、结论先行。",
+  },
+];
+
+export const topicKey = (bookId: string) => `autobooker_topic_brief_${bookId}`;
+export const audienceKey = (bookId: string) => `autobooker_target_audience_${bookId}`;
+
+export type SetupViewActions = {
+  saveMeta: () => Promise<void>;
+};
 
 type Props = {
   book: Book;
   onBookPatched: (b: Book) => void;
-  onGenerateOutline: (payload: { topic_override?: string | null; target_audience?: string | null }) => Promise<void>;
-  generating: boolean;
-  outlineLocked: boolean;
+  /** 供策划向导 FAB 在生成大纲前调用保存 */
+  onRegisterActions?: (actions: SetupViewActions) => void;
 };
 
-export default function SetupView({
-  book,
-  onBookPatched,
-  onGenerateOutline,
-  generating,
-  outlineLocked,
-}: Props) {
+export default function SetupView({ book, onBookPatched, onRegisterActions }: Props) {
   const [targetAudience, setTargetAudience] = useState("");
   const [discipline, setDiscipline] = useState(book.discipline ?? "");
   const [citation, setCitation] = useState<CitationStyle | "">(book.citation_style ?? "");
@@ -64,7 +87,7 @@ export default function SetupView({
     const tw = parseInt(targetWords, 10);
     if (Number.isNaN(tw) || tw < 1000) {
       toast.error("目标字数需为 ≥1000 的数字");
-      return;
+      throw new Error("invalid_target_words");
     }
     const next = await updateBook(book.id, {
       discipline: discipline.trim() || null,
@@ -75,6 +98,16 @@ export default function SetupView({
     onBookPatched(next);
     toast.success("书稿设定已保存");
   }
+
+  const saveMetaRef = useRef(saveMeta);
+  saveMetaRef.current = saveMeta;
+  useEffect(() => {
+    onRegisterActions?.({
+      saveMeta: async () => {
+        await saveMetaRef.current();
+      },
+    });
+  }, [book.id, onRegisterActions]);
 
   const [files, setFiles] = useState<ReferenceFile[]>([]);
 
@@ -104,123 +137,138 @@ export default function SetupView({
     await refreshRefs();
   }
 
+  function applyPreset(text: string) {
+    setTopicBrief((prev) => (prev.trim() ? `${prev.trim()}\n\n${text}` : text));
+  }
+
+  const parsingCount = files.filter((f) => f.parse_status === "processing" || f.parse_status === "pending").length;
+
   return (
-    <div className="setup-view space-y-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">书稿设定</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          补充写作参数与参考资料；已进入写作阶段后仍可在此保存「目标读者」等字段。
-        </p>
-      </div>
+    <div className="setup-view flex flex-col gap-8">
+      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-ink">基础信息</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="text-sm">
+            <span className="text-slate-600">书名</span>
+            <p className="mt-1 font-medium text-ink">{book.title || "未命名"}</p>
+          </div>
+          <div className="text-sm">
+            <span className="text-slate-600">类型</span>
+            <p className="mt-1 font-medium text-ink">{BOOK_TYPE_LABEL[book.book_type]}</p>
+          </div>
+        </div>
+      </section>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <label className="block text-sm">
-          <span className="text-slate-600">目标读者</span>
-          <input
-            className="input mt-1"
-            value={targetAudience}
-            onChange={(e) => setTargetAudience(e.target.value)}
-            placeholder="例如：企业管理者、研究生…"
-          />
-        </label>
-        <label className="block text-sm">
-          <span className="text-slate-600">学科领域</span>
-          <input className="input mt-1" value={discipline} onChange={(e) => setDiscipline(e.target.value)} />
-        </label>
-        <label className="block text-sm">
-          <span className="text-slate-600">引用格式</span>
-          <select
-            className="input mt-1"
-            value={citation}
-            onChange={(e) => setCitation(e.target.value as CitationStyle | "")}
-          >
-            <option value="">无需引用</option>
-            {CITATION_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block text-sm">
-          <span className="text-slate-600">目标字数</span>
-          <input className="input mt-1" type="number" min={1000} value={targetWords} onChange={(e) => setTargetWords(e.target.value)} />
-        </label>
-      </div>
+      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-ink">写作参数</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <label className="block text-sm">
+            <span className="text-slate-600">目标读者</span>
+            <input
+              className="input mt-1"
+              value={targetAudience}
+              onChange={(e) => setTargetAudience(e.target.value)}
+              placeholder="例如：企业管理者、研究生…"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="text-slate-600">学科领域</span>
+            <input className="input mt-1" value={discipline} onChange={(e) => setDiscipline(e.target.value)} />
+          </label>
+          <label className="block text-sm">
+            <span className="text-slate-600">引用格式</span>
+            <select
+              className="input mt-1"
+              value={citation}
+              onChange={(e) => setCitation(e.target.value as CitationStyle | "")}
+            >
+              <option value="">无需引用</option>
+              {CITATION_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm">
+            <span className="text-slate-600">目标字数</span>
+            <input className="input mt-1" type="number" min={1000} value={targetWords} onChange={(e) => setTargetWords(e.target.value)} />
+          </label>
+        </div>
+      </section>
 
-      <label className="block text-sm">
-        <span className="text-slate-600">写作需求 / 主题要点（可选，提交到大纲生成）</span>
+      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-ink">主题要点</h3>
+        <p className="mt-1 text-xs text-slate-500">将用于生成大纲；可先保存设定再生成。</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {TOPIC_INSPIRATION_PRESETS.map((p) => (
+            <button key={p.id} type="button" className="btn-secondary h-8 px-3 text-xs" onClick={() => applyPreset(p.text)}>
+              {p.label}
+            </button>
+          ))}
+        </div>
         <textarea
-          className="input mt-1 min-h-[120px]"
+          className="input mt-3 min-h-[140px]"
           value={topicBrief}
           onChange={(e) => setTopicBrief(e.target.value)}
           placeholder="希望全书覆盖哪些论点、案例类型、语气风格等…"
         />
-      </label>
+      </section>
 
       <div className="flex flex-wrap gap-2">
-        <button type="button" className="btn-secondary" onClick={() => saveMeta()}>
+        <button type="button" className="btn-secondary" onClick={() => void saveMeta()}>
           保存设定
         </button>
       </div>
 
-      <div
-        className="rounded-xl border border-dashed border-slate-300 bg-white/70 p-6 text-center"
-        onDragOver={(e) => {
-          e.preventDefault();
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          onDropUpload(e.dataTransfer.files);
-        }}
-      >
-        <p className="text-sm text-slate-600">拖拽 PDF / DOCX 到此处，或</p>
-        <label className="btn-secondary mt-3 inline-flex cursor-pointer">
-          选择文件
-          <input
-            type="file"
-            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            className="hidden"
-            multiple
-            onChange={(e) => onDropUpload(e.target.files)}
-          />
-        </label>
-        <ul className="mt-4 space-y-1 text-left text-xs text-slate-500">
-          {files.map((f) => (
-            <li key={f.id} className="flex justify-between gap-2">
-              <span className="truncate">{f.filename}</span>
-              <span className="shrink-0">{f.parse_status}</span>
-            </li>
-          ))}
-          {files.length === 0 ? <li>暂无参考资料</li> : null}
-        </ul>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={generating || outlineLocked}
-            onClick={() =>
-              onGenerateOutline({
-                topic_override: topicBrief.trim() || null,
-                target_audience: targetAudience.trim() || null,
-              })
-            }
-          >
-            {generating ? "大纲生成中…" : outlineLocked ? "已定稿 · 不可重新生成大纲" : "生成大纲"}
-          </button>
+      <details className="card group border border-slate-200/80 bg-white/70 p-5 shadow-sm">
+        <summary className="cursor-pointer list-none text-sm font-semibold text-ink [&::-webkit-details-marker]:hidden">
+          参考文献 <span className="font-normal text-slate-500">（{files.length} 个文件）</span>
+        </summary>
+        <p className="mt-2 text-xs text-slate-500">上传 PDF / DOCX，解析完成后可用于写作检索。</p>
+        <div
+          className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white/70 p-6 text-center"
+          onDragOver={(e) => {
+            e.preventDefault();
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            onDropUpload(e.dataTransfer.files);
+          }}
+        >
+          <p className="text-sm text-slate-600">拖拽 PDF / DOCX 到此处，或</p>
+          <label className="btn-secondary mt-3 inline-flex cursor-pointer">
+            选择文件
+            <input
+              type="file"
+              accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              className="hidden"
+              multiple
+              onChange={(e) => onDropUpload(e.target.files)}
+            />
+          </label>
         </div>
-        {outlineLocked ? (
-          <p className="text-xs leading-relaxed text-slate-500">
-            已进入写作阶段：左侧目录可切换章节；点「书稿设定」仍可查看本页。大纲生成按钮已锁定（后端状态）；章节正文进度请以大目录旁的状态为准（待撰写 / 生成中 /
-            正文已完成）。
-          </p>
-        ) : (
-          <p className="text-xs text-slate-400">生成大纲会使用上方的主题要点与目标读者（请先保存设定）。</p>
-        )}
-      </div>
+        <ul className="mt-4 space-y-2 text-left text-sm">
+          {files.length === 0 ? (
+            <li className="text-slate-400">暂无参考资料</li>
+          ) : (
+            files.map((f) => (
+              <li key={f.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white/80 px-3 py-2">
+                <span className="min-w-0 truncate font-medium text-slate-800">{f.filename}</span>
+                <span className="shrink-0 text-xs text-slate-500">
+                  {f.parse_status === "done"
+                    ? "已解析"
+                    : f.parse_status === "failed"
+                      ? "解析失败"
+                      : parsingCount > 0 && (f.parse_status === "processing" || f.parse_status === "pending")
+                        ? "解析中…"
+                        : f.parse_status}
+                </span>
+              </li>
+            ))
+          )}
+        </ul>
+      </details>
     </div>
   );
 }
