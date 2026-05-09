@@ -18,9 +18,10 @@ export type EditorTopBarProps = {
   savedAt: Date | null;
   onBack: () => void;
   onExport?: (format: "markdown" | "docx") => void;
-  /** 自动生成进行中时显示「暂停生成」，点击后立刻消失并由父级中止 */
+  /** 批量生成进行中：按钮为「暂停生成」；否则为「全部生成」（始终占位） */
   autoGenerating?: boolean;
   onPauseGeneration?: () => void;
+  onStartBatchGeneration?: () => void;
 };
 
 export default function EditorTopBar({
@@ -36,17 +37,13 @@ export default function EditorTopBar({
   onExport,
   autoGenerating,
   onPauseGeneration,
+  onStartBatchGeneration,
 }: EditorTopBarProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const [exportOpen, setExportOpen] = useState(false);
-  const [pauseHidden, setPauseHidden] = useState(false);
   const exportTriggerRef = useRef<HTMLButtonElement>(null);
   const [exportMenuStyle, setExportMenuStyle] = useState<CSSProperties>({});
-
-  useEffect(() => {
-    if (!autoGenerating) setPauseHidden(false);
-  }, [autoGenerating]);
 
   const positionExportMenu = useCallback(() => {
     const el = exportTriggerRef.current;
@@ -109,15 +106,14 @@ export default function EditorTopBar({
           ? "保存失败"
           : null;
 
-  const showPause = Boolean(autoGenerating && onPauseGeneration && !pauseHidden);
-
-  function handlePause() {
-    setPauseHidden(true);
-    onPauseGeneration?.();
-  }
+  const showBatchCtl = Boolean(onPauseGeneration && onStartBatchGeneration);
 
   return (
-    <header className="editor-topbar-row flex w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-slate-200/80 bg-white/90 px-3 py-2 shadow-sm backdrop-blur-md">
+    <div
+      className="editor-topbar-row flex w-full flex-wrap items-center gap-x-3 gap-y-2 border-0 bg-transparent px-3 py-2 sm:px-4"
+      role="toolbar"
+      aria-label="书稿编辑工具栏"
+    >
       {/* 返回 */}
       <button type="button" className="icon-button h-9 w-9 shrink-0" title="返回" onClick={onBack} aria-label="返回">
         <ChevronLeft className="h-5 w-5" />
@@ -237,16 +233,20 @@ export default function EditorTopBar({
         <span className="hidden w-14 shrink-0 sm:inline" aria-hidden />
       )}
 
-      {/* 暂停生成 */}
-      {showPause ? (
+      {/* 批量：未在跑时为「全部生成」，跑时为「暂停生成」 */}
+      {showBatchCtl ? (
         <button
           type="button"
           className="shrink-0 rounded-lg border border-slate-200/90 bg-slate-50/90 px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-100"
-          onClick={handlePause}
+          title={autoGenerating ? "中止当前已连续生成" : "依次生成仍为待生成的章节"}
+          onClick={() => {
+            if (autoGenerating) onPauseGeneration?.();
+            else onStartBatchGeneration?.();
+          }}
         >
-          暂停生成
+          {autoGenerating ? "暂停生成" : "全部生成"}
         </button>
       ) : null}
-    </header>
+    </div>
   );
 }

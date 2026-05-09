@@ -9,8 +9,10 @@ import {
 } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ListTree, Plus, Settings } from "lucide-react";
+import { ListTree, Loader2, Play, Plus, RotateCcw, Settings } from "lucide-react";
+
 import type { ChapterGenMode } from "@/lib/chapterGenMode";
+import { chapterStreamPrimaryIntent } from "@/lib/chapterStreamPrimaryIntent";
 import { useState, type MouseEvent } from "react";
 
 import type { OutlineChapter } from "@/types/outline";
@@ -26,7 +28,9 @@ export type OutlineNavBodyProps = {
   onSelect: (s: OutlineSelection) => void;
   onReorder: (items: { chapter_id: string; new_index: number }[]) => void;
   onRename: (chapterIndex: number, title: string) => void;
-  onRegenerate: (chapterIndex: number) => void;
+  /** 正文条同源逻辑：本章主生成按钮 */
+  onChapterStreamPrimary: (chapterIndex: number) => void;
+  chapterBodyByIndex?: Record<number, boolean>;
   onDelete: (chapterIndex: number) => void;
   onAddChapter: () => void;
   dragDisabled?: boolean;
@@ -36,15 +40,8 @@ export type OutlineNavBodyProps = {
   /** 写作：打开全屏大纲 */
   onOpenGlobalOutline?: () => void;
   chapterGenMode?: ChapterGenMode;
-  /** 当前全书自动生成是否在跑（含手动模式下点击「全部生成」） */
+  /** 全书批量是否在跑（与顶栏批量按钮一致） */
   autoGenerating?: boolean;
-  autoGenSlot?: { current: number; total: number } | null;
-  autoGenPaused?: boolean;
-  onPauseGeneration?: () => void;
-  onResumeGeneration?: () => void;
-  /** 仍为 pending 的章节数（用于手动模式展示「全部生成」） */
-  pendingChapterCount?: number;
-  onGenerateAllRemaining?: () => void;
 };
 
 function SortableChapterBlock({
@@ -56,7 +53,11 @@ function SortableChapterBlock({
   toggleCollapse,
   onSelect,
   onRename,
-  onRegenerate,
+  onChapterStreamPrimary,
+  streamingChapterIndex,
+  hasChapterBody,
+  chapterGenMode,
+  autoGenerating,
   onDelete,
   dragDisabled,
   editingIndex,
@@ -72,7 +73,11 @@ function SortableChapterBlock({
   toggleCollapse: (idx: number, e: MouseEvent) => void;
   onSelect: (s: OutlineSelection) => void;
   onRename: (chapterIndex: number, title: string) => void;
-  onRegenerate: (chapterIndex: number) => void;
+  onChapterStreamPrimary: (chapterIndex: number) => void;
+  streamingChapterIndex: number | null;
+  hasChapterBody: boolean;
+  chapterGenMode: ChapterGenMode;
+  autoGenerating: boolean;
   onDelete: (chapterIndex: number) => void;
   dragDisabled: boolean;
   editingIndex: number | null;
@@ -95,6 +100,13 @@ function SortableChapterBlock({
         : "toc-ch-pending";
 
   const editing = editingIndex === ch.index;
+
+  const streamIntent = chapterStreamPrimaryIntent(ch, {
+    streamingChapterIndex,
+    chapterGenMode,
+    autoGenerating,
+    hasBody: hasChapterBody,
+  });
 
   return (
     <div ref={setNodeRef} style={style} className={`toc-chapter-group ${statusClass}`}>
@@ -165,14 +177,43 @@ function SortableChapterBlock({
           </button>
           <button
             type="button"
-            className="toc-row-icon"
-            title="重新生成本章"
+            className="toc-row-icon toc-row-icon--stream"
+            title={
+              streamIntent === "generate"
+                ? "生成本章"
+                : streamIntent === "regenerate"
+                  ? "重新生成"
+                  : streamIntent === "busy"
+                    ? "生成中…"
+                    : "等待中"
+            }
+            aria-label={
+              streamIntent === "generate"
+                ? "生成本章"
+                : streamIntent === "regenerate"
+                  ? "重新生成"
+                  : streamIntent === "busy"
+                    ? "生成中"
+                    : "等待生成"
+            }
+            disabled={streamIntent === "busy" || streamIntent === "waiting"}
             onClick={(e) => {
               e.stopPropagation();
-              onRegenerate(ch.index);
+              if (streamIntent === "busy" || streamIntent === "waiting") return;
+              onChapterStreamPrimary(ch.index);
             }}
           >
-            ↺
+            {streamIntent === "busy" ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-violet-500" aria-hidden />
+            ) : streamIntent === "waiting" ? (
+              <span className="text-xs font-semibold tracking-tight text-slate-400" aria-hidden>
+                ⋯
+              </span>
+            ) : streamIntent === "generate" ? (
+              <Play className="h-3.5 w-3.5 shrink-0 fill-current text-emerald-600" aria-hidden />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5 shrink-0 text-slate-600" aria-hidden />
+            )}
           </button>
           <button
             type="button"
@@ -210,21 +251,16 @@ export default function OutlineNavBody({
   onSelect,
   onReorder,
   onRename,
-  onRegenerate,
+  onChapterStreamPrimary,
+  chapterBodyByIndex = {},
   onDelete,
   onAddChapter,
   showOutlinePreviewNav,
   writingMode,
-  streamingChapterIndex,
+  streamingChapterIndex = null,
   onOpenGlobalOutline,
   chapterGenMode = "auto",
   autoGenerating = false,
-  autoGenSlot,
-  autoGenPaused,
-  onPauseGeneration,
-  onResumeGeneration,
-  pendingChapterCount = 0,
-  onGenerateAllRemaining,
   dragDisabled = false,
 }: OutlineNavBodyProps) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
@@ -261,21 +297,11 @@ export default function OutlineNavBody({
   const setupActive = selection.type === "setup";
   const outlinePreviewActive = selection.type === "outline_preview";
 
-  const genPct =
-    autoGenSlot && autoGenSlot.total > 0
-      ? Math.round((autoGenSlot.current / autoGenSlot.total) * 100)
-      : 0;
-
   const chapterIds = chapters.map((c) => c.id);
-
-  const showAutoRunning = chapterGenMode === "auto" && (autoGenerating || autoGenPaused);
-  const showManualIdleStrip = chapterGenMode === "manual" && !autoGenerating && pendingChapterCount > 0;
-  const showManualRunning = chapterGenMode === "manual" && autoGenerating;
-  const showGenStrip = showAutoRunning || showManualIdleStrip || showManualRunning;
 
   const writingStickyTop =
     writingMode && onOpenGlobalOutline ? (
-      <div className="toc-writing-strip -mx-1 border-b border-slate-100/90 bg-[color-mix(in_srgb,white_94%,transparent)] px-1 pb-2 pt-0">
+      <div className="toc-writing-strip -mx-1 border-b border-slate-200/35 bg-[var(--bg-page)] px-1 pb-2 pt-0">
         <div className="toc-writing-header">
           <button type="button" className="toc-writing-header-btn" onClick={() => onOpenGlobalOutline()}>
             <ListTree className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
@@ -287,40 +313,6 @@ export default function OutlineNavBody({
           </button>
         </div>
         <div className="toc-divider toc-divider-tight mt-1">章节</div>
-
-        {showGenStrip ? (
-          <div className="toc-gen-strip mt-2">
-            <div className="toc-gen-strip-label">
-              {showManualIdleStrip
-                ? `待自动生成 ${pendingChapterCount} 章`
-                : autoGenPaused
-                  ? "已暂停"
-                  : autoGenSlot
-                    ? `${chapterGenMode === "manual" ? "全部生成中" : "自动生成中"} ${autoGenSlot.current}/${autoGenSlot.total} 章`
-                    : chapterGenMode === "manual"
-                      ? "批量生成"
-                      : "自动生成"}
-            </div>
-            <div className="toc-gen-bar">
-              <div className="toc-gen-bar-fill" style={{ width: `${genPct}%` }} />
-            </div>
-            <div className="toc-gen-actions">
-              {showManualIdleStrip ? (
-                <button type="button" className="toc-gen-pause-btn font-medium text-violet-800" onClick={() => onGenerateAllRemaining?.()}>
-                  全部生成
-                </button>
-              ) : autoGenPaused ? (
-                <button type="button" className="toc-gen-pause-btn" onClick={() => onResumeGeneration?.()}>
-                  ▶ 继续生成
-                </button>
-              ) : (
-                <button type="button" className="toc-gen-pause-btn" onClick={() => onPauseGeneration?.()}>
-                  ■ 停止
-                </button>
-              )}
-            </div>
-          </div>
-        ) : null}
 
         <div className="toc-divider toc-divider-line mt-2" aria-hidden />
       </div>
@@ -348,7 +340,11 @@ export default function OutlineNavBody({
                 toggleCollapse={toggleCollapse}
                 onSelect={onSelect}
                 onRename={onRename}
-                onRegenerate={onRegenerate}
+                onChapterStreamPrimary={onChapterStreamPrimary}
+                streamingChapterIndex={streamingChapterIndex}
+                hasChapterBody={chapterBodyByIndex[ch.index] ?? false}
+                chapterGenMode={chapterGenMode}
+                autoGenerating={autoGenerating}
                 onDelete={onDelete}
                 dragDisabled={dragDisabled}
                 editingIndex={editingIndex}

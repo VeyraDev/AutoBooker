@@ -211,7 +211,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="flex min-h-0 flex-1 flex-col border-0 bg-transparent p-0 pt-1 shadow-none">
       <BubbleMenu
         editor={editor}
         tippyOptions={{ duration: 120 }}

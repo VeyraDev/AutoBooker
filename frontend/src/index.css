@@ -264,7 +264,7 @@ body.theme-dark {
   }
   /* 编辑页无全局顶栏：写作区贴底 viewport，去掉主区域底 padding（策划向导在组件内自备下边距） */
   .app-shell-main.app-shell-main--editor {
-    @apply flex flex-col px-3 pb-0 pt-3 sm:px-4 sm:pb-0 sm:pt-4;
+    @apply flex flex-col px-0 pb-0 pt-0 sm:px-0 sm:pb-0 sm:pt-0;
     flex: 0 1 auto;
     min-height: auto;
     overflow: visible;
@@ -587,6 +587,49 @@ body.theme-dark {
     position: sticky;
     top: 0;
     z-index: 25;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 62%, transparent);
+    background-color: var(--bg-page);
+  }
+
+  /* 写作主区：与 body/侧栏同色，取消「白纸卡片」浮在灰底上的层次 */
+  .editor-writing-shell--wps-board {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: min-content;
+    background-color: var(--bg-page);
+  }
+
+  .editor-wps-main-surface {
+    background-color: var(--bg-page);
+  }
+
+  .app-shell-page--editor .editor-outline-sidebar {
+    border-radius: 0;
+    border: none;
+    border-right: 1px solid color-mix(in srgb, var(--border-subtle) 55%, transparent);
+    box-shadow: none;
+    background-color: var(--bg-page);
+    backdrop-filter: none;
+  }
+
+  .app-shell-page--editor .editor-outline-sidebar-header {
+    background-color: var(--bg-page);
+  }
+
+  .app-shell-page--editor .right-panel {
+    border-radius: 0;
+    border: none;
+    border-left: 1px solid color-mix(in srgb, var(--border-subtle) 55%, transparent);
+    box-shadow: none;
+    background-color: var(--bg-page);
+    backdrop-filter: none;
+  }
+
+  .app-shell-page--editor .editor-chapter-nav-strip {
+    background-color: var(--bg-page);
+    border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 50%, transparent);
+    backdrop-filter: none;
   }
 
   .app-shell-page--editor .editor-wps-body {
@@ -669,7 +712,7 @@ body.theme-dark {
   /* 仅由内层 .toc-scroll-writing 滚动；外层再 overflow:auto 会出现双滚动条 */
   .app-shell-page--editor .editor-page-document-scroll .editor-outline-rail-wrap {
     position: sticky;
-    top: 0.75rem;
+    top: 0;
     align-self: flex-start;
     max-height: none;
     overflow: visible;
@@ -730,7 +773,7 @@ body.theme-dark {
 
   .app-shell-page--editor .editor-page-document-scroll .editor-side-sticky {
     position: sticky;
-    top: 0.75rem;
+    top: 0;
     align-self: flex-start;
     height: auto;
     max-height: calc(100dvh - 1.5rem);
@@ -767,7 +810,10 @@ body.theme-dark {
     padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
     padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
     padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
-    box-shadow: 0 -4px 24px rgba(16, 24, 40, 0.08);
+    background-color: var(--bg-page);
+    border-top: 1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent);
+    box-shadow: none;
+    backdrop-filter: none;
   }
 
   .app-shell-page--editor .editor-page-document-scroll .editor-global-footer > .editor-global-footer-inner {

@@ -21,6 +21,7 @@ import PlanningWizard from "@/components/editor/PlanningWizard";
 import RightPanel, { AuxPanelFab, type RightPanelTab } from "@/components/editor/RightPanel";
 import { topicKey } from "@/components/editor/SetupView";
 import { getChapterGenMode, setChapterGenMode, type ChapterGenMode } from "@/lib/chapterGenMode";
+import { chapterStreamPrimaryIntent } from "@/lib/chapterStreamPrimaryIntent";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { useChapterStream } from "@/hooks/useChapterStream";
 import { useDailyWordDelta } from "@/hooks/useDailyWordDelta";
@@ -67,8 +68,6 @@ export default function BookEditorPage() {
   const [outlineBusy, setOutlineBusy] = useState(false);
   const [streamingIndex, setStreamingIndex] = useState<number | null>(null);
   const [autoGenerating, setAutoGenerating] = useState(false);
-  const [autoGenSlot, setAutoGenSlot] = useState<{ current: number; total: number } | null>(null);
-  const [autoGenPaused, setAutoGenPaused] = useState(false);
   const [outlineDrawerOpen, setOutlineDrawerOpen] = useState(false);
   const [dailyWordsTick, setDailyWordsTick] = useState(0);
   const [panelTab, setPanelTab] = useState<RightPanelTab>("detail");
@@ -226,25 +225,43 @@ export default function BookEditorPage() {
     return sorted[i - 1]?.index ?? null;
   }, [chapters, selectedMeta]);
 
-  const pendingChapterCount = useMemo(() => chapters.filter((c) => c.status === "pending").length, [chapters]);
+  const chapterBodyByIndex = useMemo(() => {
+    const map: Record<number, boolean> = {};
+    if (!bookId) return map;
+    for (const ch of chapters) {
+      map[ch.index] = chapterHasBody(qc.getQueryData<Chapter>(["chapter", bookId, ch.index]));
+    }
+    return map;
+  }, [bookId, chapters, qc, outlineQuery.dataUpdatedAt, chapterDetailQuery.dataUpdatedAt, streamingIndex]);
 
   const chapterNavPrimary = useMemo(() => {
     if (chapterIndex == null || !selectedMeta) return null;
-    const streamingHere = streamingIndex === chapterIndex;
-    if (selectedMeta.status === "done") {
-      return { label: "↺ 重新生成" as const, disabled: false };
-    }
-    if (streamingHere || selectedMeta.status === "generating") {
-      return { label: "生成中…" as const, disabled: true };
-    }
-    if (selectedMeta.status === "pending") {
-      if (chapterGenMode === "auto" && autoGenerating && streamingIndex != null && streamingIndex !== chapterIndex) {
-        return { label: "等待中" as const, disabled: true };
-      }
-      return { label: "▶ 生成本章" as const, disabled: false };
-    }
-    return { label: "↺ 重新生成" as const, disabled: false };
-  }, [chapterIndex, selectedMeta, streamingIndex, chapterGenMode, autoGenerating]);
+    const hasBody = chapterHasBody(chapterDetail);
+    const intent = chapterStreamPrimaryIntent(selectedMeta, {
+      streamingChapterIndex: streamingIndex,
+      chapterGenMode,
+      autoGenerating,
+      hasBody,
+    });
+    if (intent === "generate") return { intent, label: "▶ 生成本章" as const, disabled: false };
+    if (intent === "regenerate") return { intent, label: "↺ 重新生成" as const, disabled: false };
+    if (intent === "busy") return { intent, label: "生成中…" as const, disabled: true };
+    return { intent, label: "等待中" as const, disabled: true };
+  }, [chapterIndex, selectedMeta, streamingIndex, chapterGenMode, autoGenerating, chapterDetail]);
+
+  function handleChapterStreamPrimary(idx: number) {
+    const meta = chapters.find((c) => c.index === idx);
+    if (!meta) return;
+    const hasBody = chapterBodyByIndex[idx] ?? false;
+    const intent = chapterStreamPrimaryIntent(meta, {
+      streamingChapterIndex: streamingIndex,
+      chapterGenMode,
+      autoGenerating,
+      hasBody,
+    });
+    if (intent === "generate") void handleStreamChapter(idx, "generate");
+    else if (intent === "regenerate") void handleStreamChapter(idx, "regenerate");
+  }
 
   const todayWords = useMemo(() => {
     if (!bookId) return 0;
@@ -362,22 +379,21 @@ export default function BookEditorPage() {
 
   async function startAutoGenerate(chaptersToGenerate: OutlineChapter[]) {
     if (autoGenerating) return;
-    setAutoGenPaused(false);
-    setAutoGenerating(true);
     autoGenAbortRef.current = false;
-
     const pending = chaptersToGenerate.filter(
       (c) =>
         c.status === "pending" &&
         !chapterHasBody(qc.getQueryData<Chapter>(["chapter", bookId!, c.index])),
     );
-    const total = pending.length;
-    let cur = 0;
+    if (pending.length === 0) {
+      toast("暂无待生成的章节");
+      return;
+    }
+
+    setAutoGenerating(true);
 
     for (const ch of pending) {
       if (autoGenAbortRef.current) break;
-      cur += 1;
-      setAutoGenSlot({ current: cur, total });
       setStreamingIndex(ch.index);
       setSelection({ type: "chapter", index: ch.index });
 
@@ -416,21 +432,13 @@ export default function BookEditorPage() {
       await new Promise((r) => setTimeout(r, 500));
     }
 
-    const wasAborted = autoGenAbortRef.current;
     autoGenAbortRef.current = false;
     setAutoGenerating(false);
-    if (wasAborted) {
-      setAutoGenPaused(true);
-    } else {
-      setAutoGenPaused(false);
-      setAutoGenSlot(null);
-    }
   }
 
   async function resumeAutoGenerate() {
     if (!bookId || autoGenerating) return;
     const nextOutline = await getOutline(bookId);
-    setAutoGenPaused(false);
     autoGenAbortRef.current = false;
     await startAutoGenerate(nextOutline.chapters);
   }
@@ -611,32 +619,29 @@ export default function BookEditorPage() {
 
   return (
     <>
-      {/* WPS 式：顶栏 sticky + 中部双栏 + 整页文档滚动 + 固定字数页脚 */}
-      <section className="editor-writing-shell editor-page-document-scroll flex flex-col gap-2 px-4 pt-4 sm:px-5 sm:pt-5">
+      {/* WPS 式：顶栏 + 目录 + 正文同色底板无缝拼合；整页文档滚动 + 固定字数页脚 */}
+      <section className="editor-writing-shell editor-writing-shell--wps-board editor-page-document-scroll flex w-full min-w-0 flex-col gap-0 overflow-x-hidden">
         <header className="editor-wps-topbar">
-          <div className="editor-page-outer editor-page-outer--header overflow-visible">
-            <div className="editor-topbar-sticky">
-              <EditorTopBar
-                title={book.title}
-                currentWords={currentWords}
-                targetWords={targetWords}
-                aiModel={book.ai_model}
-                onTitleSave={(t) => titleMutation.mutate(t)}
-                onModelChange={(m) => modelMutation.mutate(m)}
-                autoSaveStatus={saveStatus}
-                savedAt={savedAt}
-                onBack={() => navigate("/app/books")}
-                onExport={handleExport}
-                autoGenerating={autoGenerating}
-                onPauseGeneration={() => {
-                  autoGenAbortRef.current = true;
-                }}
-              />
-            </div>
-          </div>
+          <EditorTopBar
+            title={book.title}
+            currentWords={currentWords}
+            targetWords={targetWords}
+            aiModel={book.ai_model}
+            onTitleSave={(t) => titleMutation.mutate(t)}
+            onModelChange={(m) => modelMutation.mutate(m)}
+            autoSaveStatus={saveStatus}
+            savedAt={savedAt}
+            onBack={() => navigate("/app/books")}
+            onExport={handleExport}
+            autoGenerating={autoGenerating}
+            onPauseGeneration={() => {
+              autoGenAbortRef.current = true;
+            }}
+            onStartBatchGeneration={() => void resumeAutoGenerate()}
+          />
         </header>
 
-        <div className="editor-wps-body editor-workspace-split relative flex items-start gap-2 overflow-visible">
+        <div className="editor-wps-body editor-workspace-split relative flex min-w-0 items-start gap-0 overflow-visible">
               <div
                 className={`editor-outline-rail-wrap relative flex min-h-0 shrink-0 flex-col ${
                   outlineRailExpanded ? "w-[280px]" : "w-1"
@@ -688,7 +693,8 @@ export default function BookEditorPage() {
                         onSelect={setSelection}
                         onReorder={handleReorder}
                         onRename={handleRenameChapter}
-                        onRegenerate={(idx) => void handleStreamChapter(idx, "regenerate")}
+                        onChapterStreamPrimary={handleChapterStreamPrimary}
+                        chapterBodyByIndex={chapterBodyByIndex}
                         onDelete={handleDeleteChapter}
                         onAddChapter={() => setAddOpen(true)}
                         dragDisabled={dragDisabled}
@@ -698,24 +704,16 @@ export default function BookEditorPage() {
                         onOpenGlobalOutline={() => setOutlineDrawerOpen(true)}
                         chapterGenMode={chapterGenMode}
                         autoGenerating={autoGenerating}
-                        autoGenSlot={autoGenSlot}
-                        autoGenPaused={autoGenPaused}
-                        pendingChapterCount={pendingChapterCount}
-                        onPauseGeneration={() => {
-                          autoGenAbortRef.current = true;
-                        }}
-                        onResumeGeneration={() => void resumeAutoGenerate()}
-                        onGenerateAllRemaining={() => void resumeAutoGenerate()}
                       />
                     </div>
                   </aside>
                 )}
               </div>
 
-              <main className="editor-wps-editor-panel editor-center-natural card flex min-w-0 flex-1 flex-col overflow-visible rounded-2xl border border-slate-200/90 bg-white/85 p-0 shadow-[0_18px_40px_rgba(20,30,50,0.06)] backdrop-blur-md">
+              <main className="editor-wps-editor-panel editor-center-natural editor-wps-main-surface flex min-w-0 flex-1 flex-col overflow-visible p-0">
                 <div
                   ref={editorMainScrollRef}
-                  className="editor-main-scroll flex min-w-0 flex-col overflow-visible px-4 pb-4 pt-0 sm:px-5 sm:pb-6"
+                  className="editor-main-scroll flex min-w-0 flex-col overflow-visible px-4 pb-6 pt-0 sm:px-6 sm:pb-8"
                 >
                   {selection.type === "chapter" && (
                     <>
@@ -749,9 +747,9 @@ export default function BookEditorPage() {
                                   disabled={chapterNavPrimary?.disabled}
                                   onClick={() => {
                                     if (!chapterNavPrimary || chapterNavPrimary.disabled || chapterIndex == null) return;
-                                    if (chapterNavPrimary.label === "↺ 重新生成") {
+                                    if (chapterNavPrimary.intent === "regenerate") {
                                       void handleStreamChapter(chapterIndex, "regenerate");
-                                    } else if (chapterNavPrimary.label === "▶ 生成本章") {
+                                    } else if (chapterNavPrimary.intent === "generate") {
                                       void handleStreamChapter(chapterIndex, "generate");
                                     }
                                   }}
@@ -777,37 +775,35 @@ export default function BookEditorPage() {
                             </>
                           ) : null}
 
-                          <div className="flex w-full shrink-0 flex-col">
-                            <ChapterTiptapEditor
-                              ref={editorRef}
-                              key={chapterDetail.id}
-                              chapter={chapterDetail}
-                              readOnly={streamingIndex === chapterIndex}
-                              bookId={bookId}
-                              chapterIndex={chapterIndex!}
-                              onOpenAssistantPanel={(sel) => {
-                                setPanelCollapsed(false);
-                                setPanelTab("ai");
-                                setAssistantSeed(sel);
-                              }}
-                              onChange={(p) => {
-                                setLiveChapterChars(p.characters);
-                                recordChars(p.characters);
-                                setDailyWordsTick((x) => x + 1);
-                                scheduleSave(async () => {
-                                  const prev = (chapterDetail.content ?? {}) as Record<string, unknown>;
-                                  await updateChapter(bookId!, chapterIndex!, {
-                                    content: {
-                                      ...prev,
-                                      tiptap_json: p.json,
-                                      text: p.text,
-                                    },
-                                  });
-                                  await invalidateAll();
+                          <ChapterTiptapEditor
+                            ref={editorRef}
+                            key={chapterDetail.id}
+                            chapter={chapterDetail}
+                            readOnly={streamingIndex === chapterIndex}
+                            bookId={bookId}
+                            chapterIndex={chapterIndex!}
+                            onOpenAssistantPanel={(sel) => {
+                              setPanelCollapsed(false);
+                              setPanelTab("ai");
+                              setAssistantSeed(sel);
+                            }}
+                            onChange={(p) => {
+                              setLiveChapterChars(p.characters);
+                              recordChars(p.characters);
+                              setDailyWordsTick((x) => x + 1);
+                              scheduleSave(async () => {
+                                const prev = (chapterDetail.content ?? {}) as Record<string, unknown>;
+                                await updateChapter(bookId!, chapterIndex!, {
+                                  content: {
+                                    ...prev,
+                                    tiptap_json: p.json,
+                                    text: p.text,
+                                  },
                                 });
-                              }}
-                            />
-                          </div>
+                                await invalidateAll();
+                              });
+                            }}
+                          />
 
                           {selectedMeta && chapterIndex != null ? (
                             <div className="mt-10 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-6 text-sm">
