@@ -182,6 +182,8 @@ def generate_outline(
             estimated_words=total_est,
             chapters=outs,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         _agent_ndjson(
             "outline.py:generate_outline",
@@ -192,7 +194,10 @@ def generate_outline(
         logger.exception("outline generation failed")
         book.status = BookStatus.setup
         db.commit()
-        raise
+        detail = f"{type(e).__name__}: {str(e)}"
+        if len(detail) > 2000:
+            detail = detail[:2000] + "…"
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=detail) from e
 
 
 @router.put("/{book_id}/outline", response_model=OutlineBookResponse)

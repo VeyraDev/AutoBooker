@@ -2,7 +2,7 @@ import { BubbleMenu, EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import CharacterCount from "@tiptap/extension-character-count";
-import { Bold, Italic, Loader2 } from "lucide-react";
+import { Bold, Loader2, MoreHorizontal } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 
@@ -20,6 +20,8 @@ export type ChapterEditorHandle = {
   clear: () => void;
   applyPlainMarkdown: (raw: string) => void;
   getSerialized: () => { json: Record<string, unknown>; text: string } | null;
+  insertReferenceQuote: (body: string, filename: string) => void;
+  focusEditor: () => void;
 };
 
 type Props = {
@@ -28,6 +30,7 @@ type Props = {
   bookId: string;
   chapterIndex: number;
   onChange: (payload: { json: Record<string, unknown>; text: string; characters: number }) => void;
+  onOpenAssistantPanel?: (selectedPlain: string) => void;
 };
 
 function initialContent(ch: Chapter): string | Record<string, unknown> {
@@ -44,10 +47,11 @@ function initialContent(ch: Chapter): string | Record<string, unknown> {
 }
 
 const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function ChapterTiptapEditor(
-  { chapter, readOnly, bookId, chapterIndex, onChange },
+  { chapter, readOnly, bookId, chapterIndex, onChange, onOpenAssistantPanel },
   ref,
 ) {
   const [aiBusy, setAiBusy] = useState<SelectionEditMode | null>(null);
+  const [headingMenuOpen, setHeadingMenuOpen] = useState(false);
 
   const extensions = useMemo(
     () => [
@@ -68,7 +72,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     content: initialContent(chapter),
     editorProps: {
       attributes: {
-        class: "tiptap-content focus:outline-none min-h-[min(420px,45vh)] px-1 py-2",
+        class: "tiptap-content focus:outline-none min-h-[min(400px,52vh)] px-1 py-2",
       },
     },
     onUpdate: ({ editor: ed }) => {
@@ -118,6 +122,26 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
           text: editor.getText(),
         };
       },
+      insertReferenceQuote: (body: string, filename: string) => {
+        if (!editor || !body.trim()) return;
+        editor
+          .chain()
+          .focus()
+          .insertContent({
+            type: "blockquote",
+            content: [
+              { type: "paragraph", content: [{ type: "text", text: body.trim() }] },
+              {
+                type: "paragraph",
+                content: [{ type: "text", text: `—— ${filename}`, marks: [{ type: "italic" }] }],
+              },
+            ],
+          })
+          .run();
+      },
+      focusEditor: () => {
+        editor?.chain().focus().run();
+      },
     }),
     [editor],
   );
@@ -150,8 +174,44 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     return <div className="text-sm text-slate-500">编辑器加载中…</div>;
   }
 
+  function applyHeadingLevel(level: 0 | 1 | 2 | 3) {
+    if (!editor || readOnly) return;
+    const { from, to, empty } = editor.state.selection;
+    if (level === 0) {
+      if (!empty) {
+        const text = editor.state.doc.textBetween(from, to, "\n");
+        editor
+          .chain()
+          .focus()
+          .deleteRange({ from, to })
+          .insertContentAt(from, { type: "paragraph", content: text ? [{ type: "text", text }] : [] })
+          .run();
+      } else {
+        editor.chain().focus().setParagraph().run();
+      }
+      setHeadingMenuOpen(false);
+      return;
+    }
+    if (!empty) {
+      const text = editor.state.doc.textBetween(from, to, "\n");
+      editor
+        .chain()
+        .focus()
+        .deleteRange({ from, to })
+        .insertContentAt(from, {
+          type: "heading",
+          attrs: { level },
+          content: text ? [{ type: "text", text }] : [],
+        })
+        .run();
+    } else {
+      editor.chain().focus().toggleHeading({ level }).run();
+    }
+    setHeadingMenuOpen(false);
+  }
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <BubbleMenu
         editor={editor}
         tippyOptions={{ duration: 120 }}
@@ -165,14 +225,35 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
         >
           <Bold className="h-4 w-4" />
         </button>
-        <button
-          type="button"
-          className={`rounded px-2 py-1 text-xs font-semibold ${editor.isActive("italic") ? "bg-violet-100 text-violet-800" : "text-slate-700"}`}
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-          title="斜体"
-        >
-          <Italic className="h-4 w-4" />
-        </button>
+        <div className="relative">
+          <button
+            type="button"
+            className={`rounded px-2 py-1 text-xs font-semibold ${editor.isActive("heading") ? "bg-violet-100 text-violet-800" : "text-slate-700"}`}
+            title="标题"
+            onClick={() => setHeadingMenuOpen((v) => !v)}
+          >
+            H
+          </button>
+          {headingMenuOpen ? (
+            <>
+              <div className="fixed inset-0 z-[150]" aria-hidden onClick={() => setHeadingMenuOpen(false)} />
+              <div className="absolute left-0 top-full z-[160] mt-1 min-w-[10rem] rounded-lg border border-slate-200 bg-white py-1 text-xs shadow-lg">
+                <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => applyHeadingLevel(1)}>
+                  H1　章标题
+                </button>
+                <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => applyHeadingLevel(2)}>
+                  H2　节标题
+                </button>
+                <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => applyHeadingLevel(3)}>
+                  H3　小节标题
+                </button>
+                <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => applyHeadingLevel(0)}>
+                  ¶　正文
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
         <span className="mx-0.5 w-px self-stretch bg-slate-200" />
         <button
           type="button"
@@ -201,11 +282,21 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
         >
           {aiBusy === "shrink" ? <Loader2 className="h-4 w-4 animate-spin" /> : "缩写"}
         </button>
+        <button
+          type="button"
+          disabled={readOnly}
+          className="rounded px-2 py-1 text-xs font-medium text-slate-700 hover:bg-violet-50 disabled:opacity-50"
+          title="AI 助手"
+          onClick={() => {
+            const { from, to, empty } = editor.state.selection;
+            const selected = empty ? "" : editor.state.doc.textBetween(from, to, "\n");
+            onOpenAssistantPanel?.(selected);
+          }}
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </button>
       </BubbleMenu>
       <EditorContent editor={editor} />
-      <p className="mt-3 text-right text-[11px] text-slate-400">
-        {editor.storage.characterCount?.characters() ?? editor.getText().length} 字
-      </p>
     </div>
   );
 });

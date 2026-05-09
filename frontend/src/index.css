@@ -50,6 +50,14 @@ body,
   height: 100%;
 }
 
+/* 保证 Outlet / 编辑页能拿到剩余高度，flex 子项 min-height:0 才能正确形成中间滚动区 */
+#root {
+  display: flex;
+  min-height: 100%;
+  min-height: 100dvh;
+  flex-direction: column;
+}
+
 body {
   background-color: var(--bg-page);
   color: var(--text-primary);
@@ -68,6 +76,11 @@ body::before {
   background: radial-gradient(circle at top right, rgba(79, 117, 255, 0.14), transparent 22%),
     radial-gradient(circle at left bottom, rgba(104, 179, 255, 0.08), transparent 18%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(241, 244, 250, 0.92));
+}
+
+/* 书稿页（策划 Step1/2 + 写作）：禁用固定渐变层，避免与纯色底板叠加产生滚动色差条带 */
+body:has(.app-shell-page--editor)::before {
+  opacity: 0 !important;
 }
 
 body.theme-frost {
@@ -235,15 +248,46 @@ body.theme-dark {
     line-height: var(--line-relaxed);
   }
   .app-shell-page {
-    @apply min-h-full;
-    background: var(--bg-page);
+    @apply flex min-h-full min-h-0 flex-1 flex-col;
+    background-color: var(--bg-page);
+  }
+  /* 编辑页：高度至少一屏，并可随正文超出视口（整页由浏览器滚动） */
+  .app-shell-page.app-shell-page--editor {
+    flex: 0 1 auto;
+    width: 100%;
+    min-height: 100dvh;
+    flex-direction: column;
+    background-color: var(--bg-page);
   }
   .app-shell-main {
     @apply mx-auto w-full max-w-[92rem] px-6 pb-16 pt-10 sm:px-8 sm:pt-12;
   }
-  /* 编辑页无全局顶栏：收紧与视口/底板之间的留白（覆盖 .app-shell-main 的 px/pb/pt） */
+  /* 编辑页无全局顶栏：写作区贴底 viewport，去掉主区域底 padding（策划向导在组件内自备下边距） */
   .app-shell-main.app-shell-main--editor {
-    @apply px-3 pb-8 pt-3 sm:px-4 sm:pb-10 sm:pt-4;
+    @apply flex flex-col px-3 pb-0 pt-3 sm:px-4 sm:pb-0 sm:pt-4;
+    flex: 0 1 auto;
+    min-height: auto;
+    overflow: visible;
+    background-color: var(--bg-page);
+  }
+  .page-transition-in--editor {
+    flex: 0 1 auto;
+    min-height: min-content;
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+    background-color: var(--bg-page);
+    isolation: isolate;
+  }
+
+  /* 策划 Step1/Step2：高度随内容伸展；勿用 flex-1 以免长页面底板高度不够 */
+  .planning-setup-shell {
+    width: 100%;
+    min-height: 100dvh;
+    flex-shrink: 0;
+    padding-bottom: 2rem;
+    background-color: var(--bg-page);
+    isolation: isolate;
   }
   .app-header {
     @apply sticky top-0 z-20 border-b backdrop-blur-xl;
@@ -382,6 +426,9 @@ body.theme-dark {
   .book-card-wrapper {
     animation: floatUp 420ms var(--easing-standard) both;
   }
+  .book-card-link {
+    @apply block text-inherit no-underline;
+  }
   .book-grid > .book-card-wrapper:nth-child(1) {
     animation-delay: 40ms;
   }
@@ -476,6 +523,16 @@ body.theme-dark {
     @apply w-full;
     overflow: visible !important;
   }
+  .app-shell-page--editor .editor-page-root {
+    display: flex !important;
+    flex: 1 1 0;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden !important;
+  }
+  .app-shell-page--editor .editor-page-outer--header {
+    flex-shrink: 0;
+  }
   .editor-page-outer {
     border: 1px solid var(--glass-border);
     border-radius: 20px;
@@ -502,7 +559,9 @@ body.theme-dark {
     z-index: 10;
   }
   .app-shell-page--editor .editor-topbar-sticky {
-    top: 0;
+    position: relative;
+    top: auto;
+    flex-shrink: 0;
   }
   .app-shell-page--editor .editor-side-sticky {
     top: calc(40px + 6px + 12px);
@@ -513,6 +572,238 @@ body.theme-dark {
   .editor-workspace-row {
     @apply items-start;
     align-items: flex-start !important;
+  }
+  /* WPS 式：顶栏 / 中部 / 全局页脚；中部 flex-1 贴满顶栏下至页脚上沿 */
+  .app-shell-page--editor .editor-writing-shell {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .app-shell-page--editor .editor-wps-topbar {
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 25;
+  }
+
+  .app-shell-page--editor .editor-wps-body {
+    align-items: stretch !important;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .app-shell-page--editor .editor-wps-body .editor-outline-rail-wrap {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    align-self: stretch;
+    overflow: hidden;
+  }
+  .app-shell-page--editor .editor-wps-body .editor-outline-sidebar {
+    height: 100%;
+    max-height: none !important;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+  /* 写作目录：真实滚动发生在内层 .toc-scroll-writing；外层若再 overflow:auto 会形成双层滚动条且易失效 */
+  .app-shell-page--editor .editor-wps-body .editor-outline-sidebar--workspace-split .editor-outline-sidebar-body {
+    max-height: none !important;
+    overflow-x: hidden !important;
+    overflow-y: hidden !important;
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .app-shell-page--editor .editor-wps-body .editor-side-sticky {
+    position: relative;
+    top: auto;
+    align-self: stretch;
+    height: auto;
+    max-height: none;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .app-shell-page--editor .editor-wps-body .editor-side-sticky .right-panel {
+    flex: 1 1 0;
+    min-height: 0;
+    max-height: none !important;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .app-shell-page--editor .editor-wps-body .editor-outline-rail-collapsed-host {
+    min-height: 0;
+    align-self: stretch;
+    height: 100%;
+  }
+  .app-shell-page--editor .editor-wps-body .editor-outline-rail-collapsed {
+    min-height: 100%;
+    flex: 1 1 0;
+    align-self: stretch;
+  }
+
+  /* ── 写作页：整页滚动（window / 文档根滚动），正文列随页面延伸 ── */
+  .app-shell-page--editor .editor-writing-shell.editor-page-document-scroll {
+    flex: 0 1 auto;
+    min-height: auto;
+    overflow: visible;
+    padding-bottom: max(5.5rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  .app-shell-page--editor .editor-page-document-scroll .editor-wps-body {
+    align-items: flex-start !important;
+    flex: 0 1 auto;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  /* 仅由内层 .toc-scroll-writing 滚动；外层再 overflow:auto 会出现双滚动条 */
+  .app-shell-page--editor .editor-page-document-scroll .editor-outline-rail-wrap {
+    position: sticky;
+    top: 0.75rem;
+    align-self: flex-start;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .app-shell-page--editor .editor-page-document-scroll .editor-outline-sidebar {
+    height: auto;
+    max-height: none !important;
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+
+  .app-shell-page--editor
+    .editor-page-document-scroll
+    .editor-outline-sidebar--workspace-split
+    .editor-outline-sidebar-body {
+    max-height: none !important;
+    overflow-x: hidden !important;
+    overflow-y: hidden !important;
+    /* 父级高度为 auto 时 flex:1 会塌成 0，目录改为随内容增高 */
+    flex: 0 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  /* 写作目录内层：解除 height:100% + flex:1 在无定高父级下的塌缩 */
+  .app-shell-page--editor .editor-page-document-scroll .toc-root-writing-layout {
+    flex: 0 1 auto;
+    height: auto;
+    min-height: 0;
+  }
+
+  .app-shell-page--editor .editor-page-document-scroll .toc-scroll-writing {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: calc(100dvh - 6rem);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-shell-page--editor .editor-page-document-scroll .editor-outline-rail-collapsed-host {
+    align-self: flex-start;
+    height: auto;
+    min-height: min(70vh, 520px);
+    max-height: calc(100dvh - 2rem);
+    overflow: visible;
+  }
+
+  .app-shell-page--editor .editor-page-document-scroll .editor-outline-rail-collapsed {
+    align-self: stretch;
+    min-height: min(70vh, 520px);
+  }
+
+  .app-shell-page--editor .editor-page-document-scroll .editor-side-sticky {
+    position: sticky;
+    top: 0.75rem;
+    align-self: flex-start;
+    height: auto;
+    max-height: calc(100dvh - 1.5rem);
+    overflow: visible;
+  }
+
+  .app-shell-page--editor .editor-page-document-scroll .editor-side-sticky .right-panel {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: min(100%, calc(100dvh - 3rem)) !important;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-shell-page--editor .editor-page-document-scroll .editor-wps-editor-panel {
+    flex: 1 1 auto;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .app-shell-page--editor .editor-page-document-scroll .editor-center-natural {
+    min-height: auto;
+  }
+
+  .app-shell-page--editor .editor-page-document-scroll .editor-global-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    margin: 0;
+    z-index: 40;
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+    padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -4px 24px rgba(16, 24, 40, 0.08);
+  }
+
+  .app-shell-page--editor .editor-page-document-scroll .editor-global-footer > .editor-global-footer-inner {
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+    max-width: 92rem;
+    padding-left: 0.25rem;
+    padding-right: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  @media (min-width: 640px) {
+    .app-shell-page--editor .editor-page-document-scroll .editor-global-footer > .editor-global-footer-inner {
+      padding-left: 0.5rem;
+      padding-right: 0.5rem;
+    }
+  }
+
+  /* 编辑区：占满中部剩余宽度，正文在内部整列滚动（WPS 中央文档区） */
+  .app-shell-page--editor .editor-wps-editor-panel {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 0;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* 全局页脚：横跨目录+正文下方，贴浏览器底（在 shell 内贴主区域底） */
+  .app-shell-page--editor .editor-global-footer {
+    flex-shrink: 0;
+    z-index: 20;
   }
   .editor-side-tools-static {
     position: static !important;
@@ -587,6 +878,166 @@ body.theme-dark {
     overflow-y: auto;
     padding: 4px 6px 6px;
     max-height: calc(100vh - var(--editor-sticky-top, 104px));
+  }
+
+  .editor-outline-sidebar--natural-scroll {
+    max-height: none;
+    overflow: visible;
+  }
+  .editor-outline-sidebar--natural-scroll .editor-outline-sidebar-body {
+    overflow: visible;
+    max-height: none;
+  }
+
+  .editor-outline-rail-wrap {
+    flex-shrink: 0;
+    transition: width 200ms cubic-bezier(0.22, 0.8, 0.36, 1);
+  }
+
+  .editor-outline-rail-collapsed {
+    width: 4px;
+    align-self: stretch;
+    min-height: min(70vh, 520px);
+    border-radius: 999px;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    background: color-mix(in srgb, var(--brand-color, #4f75ff) 42%, transparent);
+    transition:
+      width 200ms cubic-bezier(0.22, 0.8, 0.36, 1),
+      background 160ms ease;
+  }
+
+  .editor-outline-rail-collapsed:hover {
+    width: 16px;
+    background: color-mix(in srgb, var(--brand-color, #4f75ff) 58%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-color, #4f75ff) 45%, transparent);
+  }
+
+  .editor-outline-rail-collapsed::after {
+    content: "›";
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    font-size: 14px;
+    color: white;
+  }
+
+  .editor-outline-rail-collapsed:hover::after {
+    display: flex;
+  }
+
+  .editor-outline-sidebar--expanded {
+    position: relative;
+  }
+
+  .editor-outline-rail-handle {
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    z-index: 2;
+    translate: 0 -50%;
+    width: 16px;
+    height: 56px;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+    background: color-mix(in srgb, white 92%, transparent);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 11px;
+    color: #64748b;
+    transition:
+      opacity 120ms ease,
+      background 120ms ease;
+    opacity: 0;
+  }
+
+  .editor-outline-sidebar--expanded:hover .editor-outline-rail-handle {
+    display: flex;
+    opacity: 1;
+  }
+
+  .editor-chapter-nav-strip {
+    position: sticky;
+    top: 0;
+    z-index: 12;
+    margin: 0 0 0.75rem 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.45rem 0 0.65rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 55%, transparent);
+    background: color-mix(in srgb, white 94%, transparent);
+    backdrop-filter: blur(10px);
+  }
+
+  @media (min-width: 640px) {
+    .editor-chapter-nav-strip {
+      margin-bottom: 1rem;
+    }
+  }
+
+  .editor-status-bar,
+  .editor-global-footer {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 5px 12px 6px;
+    border-top: 1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent);
+    font-size: 11px;
+    line-height: 1.25;
+    color: var(--text-tertiary);
+    background: color-mix(in srgb, white 92%, transparent);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.55);
+  }
+
+  .editor-status-bar strong,
+  .editor-global-footer strong {
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .right-panel-tab-bar {
+    display: flex;
+    flex-shrink: 0;
+    gap: 2px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 55%, transparent);
+    padding: 6px 8px;
+  }
+
+  .right-panel-tab {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    font-size: 16px;
+    cursor: pointer;
+    transition:
+      background 120ms ease,
+      color 120ms ease;
+  }
+
+  .right-panel-tab:hover {
+    background: #f8fafc;
+    color: #334155;
+  }
+
+  .right-panel-tab-active {
+    background: color-mix(in srgb, var(--brand-500, #8b5cf6) 12%, transparent);
+    color: #5b21b6;
   }
 
   /* 用视口高度约束目录栏；仅靠 max-height:100% 在 flex 父级下常为 auto，导致内部无法滚动 */
@@ -908,22 +1359,206 @@ body.theme-dark {
     background: #fafafa;
   }
 
+  .toc-writing-header {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .toc-writing-header-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #475569;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .toc-writing-header-btn:hover {
+    background: #f1f5f9;
+    color: #1e293b;
+  }
+
+  .toc-writing-header-btn-primary {
+    color: #5b21b6;
+  }
+
+  .toc-gen-strip {
+    flex-shrink: 0;
+    margin: 6px 0 4px;
+    padding: 8px 6px;
+    border-radius: 6px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+  }
+
+  .toc-gen-strip-label {
+    font-size: 11px;
+    color: #64748b;
+    margin-bottom: 6px;
+  }
+
+  .toc-gen-bar {
+    height: 4px;
+    border-radius: 4px;
+    background: #e2e8f0;
+    overflow: hidden;
+  }
+
+  .toc-gen-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #a78bfa, #7c3aed);
+    transition: width 200ms ease;
+  }
+
+  .toc-gen-actions {
+    margin-top: 8px;
+  }
+
+  .toc-gen-pause-btn {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid #e2e8f0;
+    background: white;
+    color: #475569;
+    cursor: pointer;
+  }
+
+  .toc-gen-pause-btn:hover {
+    background: #f1f5f9;
+  }
+
+  .toc-divider-line {
+    height: 1px;
+    margin: 6px 0 8px;
+    background: #e5e7eb;
+    font-size: 0;
+    letter-spacing: 0;
+  }
+
+  .toc-row-actions {
+    display: none;
+    align-items: center;
+    gap: 1px;
+    margin-left: 4px;
+  }
+
+  .toc-chapter-row:hover .toc-row-actions,
+  .toc-chapter-row.group\/row:focus-within .toc-row-actions {
+    display: flex;
+  }
+
+  .toc-row-icon {
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    border-radius: 3px;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0;
+    color: #64748b;
+    cursor: pointer;
+  }
+
+  .toc-row-icon:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+  }
+
+  .toc-title-input {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 1px 4px;
+    border: 1px solid #c4b5fd;
+    border-radius: 3px;
+  }
+
+  .toc-root-writing-layout {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .toc-scroll-writing {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .toc-writing-strip {
+    flex-shrink: 0;
+  }
+
+  .toc-root-writing .toc-list {
+    overflow: visible;
+  }
+
   /* ───────────────────────────────────────────
      大纲预览面板（OutlineReviewPanel）
   ─────────────────────────────────────────── */
   .outline-review-root {
     display: flex;
     flex-direction: column;
-    height: 100%;
-    min-height: 0;
+    width: 100%;
+    min-height: min-content;
+  }
+
+  .planning-wizard {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 100%;
+    padding-bottom: max(3rem, env(safe-area-inset-bottom, 0px));
+    background-color: var(--bg-page);
+    margin-left: -0.75rem;
+    margin-right: -0.75rem;
+    padding-left: calc(0.75rem + 1rem);
+    padding-right: calc(0.75rem + 1rem);
+    isolation: isolate;
+  }
+
+  @media (min-width: 640px) {
+    .planning-wizard {
+      margin-left: -1rem;
+      margin-right: -1rem;
+      padding-left: calc(1rem + 1.5rem);
+      padding-right: calc(1rem + 1.5rem);
+    }
   }
 
   .outline-review-body {
     display: flex;
-    flex: 1;
+    flex: 1 1 auto;
+    width: 100%;
     min-height: 0;
     gap: 24px;
-    overflow: hidden;
+    overflow: visible;
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+
+  .outline-review-aside {
+    flex-shrink: 0;
   }
 
   .outline-review-body-single {
@@ -934,10 +1569,11 @@ body.theme-dark {
     max-width: 100%;
   }
 
+  /* 抽屉自身承担纵向滚动，主栏不再单独 overflow，避免嵌套导致滚不动 */
   .outline-review-main {
     flex: 1;
     min-width: 0;
-    overflow-y: auto;
+    max-width: 100%;
     padding-right: 4px;
   }
 

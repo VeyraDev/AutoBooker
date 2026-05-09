@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
@@ -114,15 +115,22 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
   async function refreshRefs() {
     const list = await listReferences(book.id);
     setFiles(list);
+    return list;
   }
 
   useEffect(() => {
-    refreshRefs().catch(() => {});
-    const id = window.setInterval(() => {
-      refreshRefs().catch(() => {});
-    }, 4000);
-    return () => window.clearInterval(id);
+    void refreshRefs().catch(() => {});
   }, [book.id]);
+
+  const parsingActive = files.some((f) => f.parse_status === "pending" || f.parse_status === "processing");
+
+  useEffect(() => {
+    if (!parsingActive) return;
+    const id = window.setInterval(() => {
+      void refreshRefs().catch(() => {});
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [book.id, parsingActive]);
 
   async function onDropUpload(fileList: FileList | null) {
     if (!fileList?.length) return;
@@ -140,8 +148,6 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
   function applyPreset(text: string) {
     setTopicBrief((prev) => (prev.trim() ? `${prev.trim()}\n\n${text}` : text));
   }
-
-  const parsingCount = files.filter((f) => f.parse_status === "processing" || f.parse_status === "pending").length;
 
   return (
     <div className="setup-view flex flex-col gap-8">
@@ -221,10 +227,10 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
         </button>
       </div>
 
-      <details className="card group border border-slate-200/80 bg-white/70 p-5 shadow-sm">
-        <summary className="cursor-pointer list-none text-sm font-semibold text-ink [&::-webkit-details-marker]:hidden">
+      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-ink">
           参考文献 <span className="font-normal text-slate-500">（{files.length} 个文件）</span>
-        </summary>
+        </h3>
         <p className="mt-2 text-xs text-slate-500">上传 PDF / DOCX，解析完成后可用于写作检索。</p>
         <div
           className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white/70 p-6 text-center"
@@ -255,20 +261,54 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
             files.map((f) => (
               <li key={f.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white/80 px-3 py-2">
                 <span className="min-w-0 truncate font-medium text-slate-800">{f.filename}</span>
-                <span className="shrink-0 text-xs text-slate-500">
-                  {f.parse_status === "done"
-                    ? "已解析"
-                    : f.parse_status === "failed"
-                      ? "解析失败"
-                      : parsingCount > 0 && (f.parse_status === "processing" || f.parse_status === "pending")
-                        ? "解析中…"
-                        : f.parse_status}
+                <span className="flex shrink-0 flex-wrap items-center gap-2 text-xs">
+                  {f.parse_status === "pending" || f.parse_status === "processing" ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-500" aria-hidden />
+                      <span className="text-slate-600">解析中…</span>
+                    </>
+                  ) : f.parse_status === "done" ? (
+                    <span className="text-emerald-600">
+                      ✓ 已解析
+                      {typeof f.chunk_count === "number" ? ` · ${f.chunk_count} 条片段` : null}
+                    </span>
+                  ) : f.parse_status === "failed" ? (
+                    <>
+                      <span className="max-w-[200px] text-red-600" title={f.error_message ?? ""}>
+                        ✗ 解析失败{f.error_message ? ` · ${f.error_message.slice(0, 80)}` : ""}
+                      </span>
+                      <label className="cursor-pointer text-brand-700 hover:underline">
+                        重新上传
+                        <input
+                          type="file"
+                          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            if (!file) return;
+                            void (async () => {
+                              try {
+                                await uploadReference(book.id, file);
+                                toast.success(`已上传 ${file.name}`);
+                                await refreshRefs();
+                              } catch {
+                                toast.error("上传失败");
+                              }
+                            })();
+                          }}
+                        />
+                      </label>
+                    </>
+                  ) : (
+                    <span className="text-slate-500">{f.parse_status}</span>
+                  )}
                 </span>
               </li>
             ))
           )}
         </ul>
-      </details>
+      </section>
     </div>
   );
 }

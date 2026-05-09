@@ -21,6 +21,7 @@ class ReferenceFileOut(BaseModel):
     error_message: str | None
     parsed_at: datetime | None
     created_at: datetime
+    chunk_count: int = 0
 
     class Config:
         from_attributes = True
@@ -39,5 +40,11 @@ class ReferenceSearchIn(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
 
 
+class ReferenceSearchHit(BaseModel):
+    content: str
+    filename: str
+
+
 class ReferenceSearchOut(BaseModel):
     snippets: list[str]
+    hits: list[ReferenceSearchHit] = []

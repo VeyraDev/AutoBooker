@@ -58,6 +58,8 @@ export type ChapterStreamCallbacks = {
   onToken: (token: string) => void;
   onDone: () => void;
   onError: (err: Error) => void;
+  /** 请求被中止（例如切换章节） */
+  onAbort?: () => void;
 };
 
 export function useChapterStream() {
@@ -84,7 +86,10 @@ export function useChapterStream() {
           if (obj.done === true) cb.onDone();
         });
       } catch (e) {
-        if ((e as Error).name === "AbortError") return;
+        if ((e as Error).name === "AbortError") {
+          cb.onAbort?.();
+          return;
+        }
         cb.onError(e instanceof Error ? e : new Error(String(e)));
       }
     },

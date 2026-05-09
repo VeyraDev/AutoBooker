@@ -1,7 +1,6 @@
-import { ChevronLeft, ChevronDown, Focus, ListTree } from "lucide-react";
+import { ChevronLeft, ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "react-router-dom";
 import toast from "react-hot-toast";
 
 const MODEL_OPTIONS = ["qwen-max", "qwen-turbo", "qwen-plus"];
@@ -18,14 +17,10 @@ export type EditorTopBarProps = {
   autoSaveStatus: AutoSaveUi;
   savedAt: Date | null;
   onBack: () => void;
-  /** markdown：.md；docx：Word */
   onExport?: (format: "markdown" | "docx") => void;
-  /** 专注模式：极简顶栏 */
-  focusMode?: boolean;
-  onToggleFocus?: () => void;
-  onOpenOutlineDrawer?: () => void;
-  autoGenerateLabel?: string | null;
-  onStopAutoGenerate?: () => void;
+  /** 自动生成进行中时显示「暂停生成」，点击后立刻消失并由父级中止 */
+  autoGenerating?: boolean;
+  onPauseGeneration?: () => void;
 };
 
 export default function EditorTopBar({
@@ -39,17 +34,19 @@ export default function EditorTopBar({
   savedAt,
   onBack,
   onExport,
-  focusMode,
-  onToggleFocus,
-  onOpenOutlineDrawer,
-  autoGenerateLabel,
-  onStopAutoGenerate,
+  autoGenerating,
+  onPauseGeneration,
 }: EditorTopBarProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const [exportOpen, setExportOpen] = useState(false);
+  const [pauseHidden, setPauseHidden] = useState(false);
   const exportTriggerRef = useRef<HTMLButtonElement>(null);
   const [exportMenuStyle, setExportMenuStyle] = useState<CSSProperties>({});
+
+  useEffect(() => {
+    if (!autoGenerating) setPauseHidden(false);
+  }, [autoGenerating]);
 
   const positionExportMenu = useCallback(() => {
     const el = exportTriggerRef.current;
@@ -112,189 +109,144 @@ export default function EditorTopBar({
           ? "保存失败"
           : null;
 
-  if (focusMode) {
-    return (
-      <header className="editor-topbar-compact editor-topbar-compact--dense flex flex-wrap items-center justify-between gap-2 border-b border-slate-100/80 bg-white/90 px-3 py-2">
-        <span className="min-w-0 truncate text-base font-medium text-ink">{title || "未命名书稿"}</span>
-        <span className="shrink-0 text-xs tabular-nums text-slate-600">{currentWords.toLocaleString()} 字</span>
-        <button type="button" className="btn-secondary h-9 px-3 text-xs" onClick={onToggleFocus}>
-          退出专注
-        </button>
-      </header>
-    );
+  const showPause = Boolean(autoGenerating && onPauseGeneration && !pauseHidden);
+
+  function handlePause() {
+    setPauseHidden(true);
+    onPauseGeneration?.();
   }
 
   return (
-    <header className="editor-topbar-compact editor-topbar-compact--dense flex-col gap-2 sm:flex-row">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <nav className="hidden text-[11px] text-slate-500 sm:block">
-          <Link to="/app/books" className="hover:text-brand-700">
-            图书管理
-          </Link>
-          <span className="mx-1 text-slate-300">/</span>
+    <header className="editor-topbar-row flex w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-slate-200/80 bg-white/90 px-3 py-2 shadow-sm backdrop-blur-md">
+      {/* 返回 */}
+      <button type="button" className="icon-button h-9 w-9 shrink-0" title="返回" onClick={onBack} aria-label="返回">
+        <ChevronLeft className="h-5 w-5" />
+      </button>
+
+      {/* 书名 */}
+      <div className="flex min-w-[8rem] max-w-[14rem] shrink-0">
+        {editing ? (
+          <input
+            className="input w-full py-1 text-base font-medium"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commitTitle}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitTitle();
+              if (e.key === "Escape") {
+                setDraft(title);
+                setEditing(false);
+              }
+            }}
+            autoFocus
+          />
+        ) : (
           <button
             type="button"
-            className="font-medium text-slate-700 hover:text-brand-700"
-            onClick={() => onOpenOutlineDrawer?.()}
-            title="查看与编辑大纲"
+            className="truncate text-left text-base font-semibold text-ink hover:text-brand-700"
+            title="点击重命名"
+            onClick={() => setEditing(true)}
           >
-            {title || "未命名"}
+            {title || "未命名书稿"}
           </button>
-          <span className="mx-1 text-slate-300">/</span>
-          <span className="text-slate-600">写作</span>
-        </nav>
-        <div className="flex min-w-0 items-center gap-2">
-          <button type="button" className="icon-button h-9 w-9 shrink-0" title="返回" onClick={onBack} aria-label="返回">
-            <ChevronLeft className="h-5 w-5" />
-          </button>
-          {editing ? (
-            <input
-              className="input max-w-md py-1 text-base font-medium"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={commitTitle}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitTitle();
-                if (e.key === "Escape") {
-                  setDraft(title);
-                  setEditing(false);
-                }
-              }}
-              autoFocus
-            />
-          ) : (
-            <button
-              type="button"
-              className="truncate text-left text-lg font-medium text-ink hover:text-brand-700"
-              title="点击重命名"
-              onClick={() => setEditing(true)}
-            >
-              {title || "未命名书稿"}
-            </button>
+        )}
+      </div>
+
+      {/* 进度条 */}
+      <div className="flex min-w-[120px] flex-1 items-center gap-2 px-1">
+        <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-200">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-brand-500 to-violet-500 transition-[width]"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <span className="shrink-0 text-[11px] tabular-nums text-slate-600">
+          {currentWords.toLocaleString()}/{targetWords.toLocaleString()}
+        </span>
+      </div>
+
+      {/* 模型 */}
+      <div className="relative shrink-0">
+        <select
+          className="input h-9 cursor-pointer appearance-none py-1 pl-2 pr-7 text-xs"
+          value={aiModel ?? MODEL_OPTIONS[0]}
+          onChange={(e) => onModelChange(e.target.value)}
+          aria-label="模型选择"
+        >
+          {MODEL_OPTIONS.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+      </div>
+
+      {/* 导出 */}
+      <div className="relative shrink-0">
+        <button
+          ref={exportTriggerRef}
+          type="button"
+          className="btn-secondary h-9 px-2.5 text-xs"
+          aria-expanded={exportOpen}
+          aria-haspopup="menu"
+          onClick={() => setExportOpen((v) => !v)}
+        >
+          导出 ▾
+        </button>
+        {typeof document !== "undefined" &&
+          exportOpen &&
+          createPortal(
+            <>
+              <div className="fixed inset-0 z-[200] bg-transparent" aria-hidden onClick={() => setExportOpen(false)} />
+              <div role="menu" style={exportMenuStyle} className="z-[210] rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="block w-full px-3 py-2 text-left text-xs text-ink hover:bg-slate-50"
+                  onClick={() => {
+                    onExport?.("markdown");
+                    setExportOpen(false);
+                  }}
+                >
+                  Markdown (.md)
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="block w-full px-3 py-2 text-left text-xs text-ink hover:bg-slate-50"
+                  onClick={() => {
+                    onExport?.("docx");
+                    setExportOpen(false);
+                  }}
+                >
+                  Word (.docx)
+                </button>
+              </div>
+            </>,
+            document.body,
           )}
-          {onOpenOutlineDrawer ? (
-            <button
-              type="button"
-              className="icon-button h-9 w-9 shrink-0"
-              title="大纲"
-              aria-label="大纲"
-              onClick={() => onOpenOutlineDrawer()}
-            >
-              <ListTree className="h-4 w-4" />
-            </button>
-          ) : null}
-          {onToggleFocus ? (
-            <button
-              type="button"
-              className="icon-button h-9 w-9 shrink-0"
-              title="专注模式"
-              aria-label="专注模式"
-              onClick={onToggleFocus}
-            >
-              <Focus className="h-4 w-4" />
-            </button>
-          ) : null}
-        </div>
       </div>
 
-      <div className="flex min-w-0 flex-[2] flex-col gap-1 px-0 sm:px-4">
-        {autoGenerateLabel ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-800 ring-1 ring-violet-200">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-600" />
-              </span>
-              {autoGenerateLabel}
-            </span>
-            {onStopAutoGenerate ? (
-              <button type="button" className="btn-secondary h-7 px-2 text-[11px]" onClick={onStopAutoGenerate}>
-                停止
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="flex items-center gap-3">
-          <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-200">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-brand-500 to-violet-500 transition-[width]"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-          <span className="shrink-0 text-xs tabular-nums text-slate-600">
-            {currentWords.toLocaleString()} / {targetWords.toLocaleString()} 字
-          </span>
-        </div>
-      </div>
+      {/* 保存状态 */}
+      {saveLabel ? (
+        <span className="hidden max-w-[120px] shrink-0 truncate text-[11px] text-slate-500 sm:inline" title={saveLabel}>
+          {saveLabel}
+        </span>
+      ) : (
+        <span className="hidden w-14 shrink-0 sm:inline" aria-hidden />
+      )}
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <div className="relative">
-          <select
-            className="input h-10 cursor-pointer appearance-none py-1 pl-3 pr-8 text-sm"
-            value={aiModel ?? MODEL_OPTIONS[0]}
-            onChange={(e) => onModelChange(e.target.value)}
-            aria-label="模型选择"
-          >
-            {MODEL_OPTIONS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-        </div>
-
-        <div className="relative">
-          <button
-            ref={exportTriggerRef}
-            type="button"
-            className="btn-secondary h-10 px-3 text-xs"
-            aria-expanded={exportOpen}
-            aria-haspopup="menu"
-            onClick={() => setExportOpen((v) => !v)}
-          >
-            导出 ▾
-          </button>
-          {typeof document !== "undefined" &&
-            exportOpen &&
-            createPortal(
-              <>
-                <div className="fixed inset-0 z-[200] bg-transparent" aria-hidden onClick={() => setExportOpen(false)} />
-                <div role="menu" style={exportMenuStyle} className="z-[210] rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="block w-full px-3 py-2 text-left text-xs text-ink hover:bg-slate-50"
-                    onClick={() => {
-                      onExport?.("markdown");
-                      setExportOpen(false);
-                    }}
-                  >
-                    Markdown (.md)
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="block w-full px-3 py-2 text-left text-xs text-ink hover:bg-slate-50"
-                    onClick={() => {
-                      onExport?.("docx");
-                      setExportOpen(false);
-                    }}
-                  >
-                    Word (.docx)
-                  </button>
-                </div>
-              </>,
-              document.body,
-            )}
-        </div>
-
-        {saveLabel ? (
-          <span className="hidden max-w-[140px] truncate text-[11px] text-slate-500 lg:inline" title={saveLabel}>
-            {saveLabel}
-          </span>
-        ) : null}
-      </div>
+      {/* 暂停生成 */}
+      {showPause ? (
+        <button
+          type="button"
+          className="shrink-0 rounded-lg border border-slate-200/90 bg-slate-50/90 px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-100"
+          onClick={handlePause}
+        >
+          暂停生成
+        </button>
+      ) : null}
     </header>
   );
 }

@@ -1,11 +1,10 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutGrid, List, Plus } from "lucide-react";
+import { LayoutGrid, List } from "lucide-react";
 
 import { listBooks } from "@/api/books";
 import { BookCard, BookCardSkeleton } from "@/components/books/BookCard";
 import { getTodayWordsTotal } from "@/hooks/useDailyWordDelta";
-import NewBookDialog from "@/components/common/NewBookDialog";
 import { statusLabel, typeLabel } from "@/pages/bookView";
 import type { Book } from "@/types/book";
 
@@ -29,8 +28,21 @@ function sortBooks(books: Book[], sortBy: SortOption) {
   });
 }
 
+const PIN_KEY = "autobooker_books_pin_order";
+
+function readPinOrder(): string[] {
+  try {
+    const raw = window.localStorage.getItem(PIN_KEY);
+    if (!raw) return [];
+    const j = JSON.parse(raw) as unknown;
+    return Array.isArray(j) ? j.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function BooksPage() {
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [pinTick, setPinTick] = useState(0);
   const [statusFilter, setStatusFilter] = useState<"all" | Book["status"]>("all");
   const [typeFilter, setTypeFilter] = useState<"all" | Book["book_type"]>("all");
   const [sortBy, setSortBy] = useState<SortOption>("updated_desc");
@@ -62,8 +74,21 @@ export default function BooksPage() {
       return true;
     });
 
-    return sortBooks(books, sortBy);
-  }, [data, sortBy, statusFilter, typeFilter]);
+    const sorted = sortBooks(books, sortBy);
+    if (typeof window === "undefined") return sorted;
+    const pins = readPinOrder();
+    if (pins.length === 0) return sorted;
+    const map = new Map(sorted.map((b) => [b.id, b]));
+    const front: Book[] = [];
+    for (const id of pins) {
+      const b = map.get(id);
+      if (b) {
+        front.push(b);
+        map.delete(id);
+      }
+    }
+    return [...front, ...sorted.filter((b) => map.has(b.id))];
+  }, [data, sortBy, statusFilter, typeFilter, pinTick]);
 
   return (
     <section>
@@ -71,18 +96,8 @@ export default function BooksPage() {
         <div>
           <p className="eyebrow">Library</p>
           <h1 className="page-title mt-2">图书管理</h1>
-          <p className="page-subtitle">管理书稿全生命周期并直接进入编辑工作台。</p>
+          <p className="page-subtitle">管理书稿全生命周期并直接进入编辑工作台。新建书稿请使用顶部导航栏「新建书稿」。</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setDialogOpen(true)}
-          className="btn-primary"
-          aria-label="新建书稿"
-          title="新建书稿"
-        >
-          <Plus className="mr-1 h-4 w-4" />
-          新建书稿
-        </button>
       </div>
 
       <div className="mb-7 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -178,10 +193,7 @@ export default function BooksPage() {
       {!isLoading && !isError && data && filteredBooks.length === 0 && (
         <div className="state-panel">
           <p className="mb-1 text-slate-500">当前筛选下没有书稿</p>
-          <p className="mb-5 text-sm text-slate-400">请调整筛选条件，或点击右上角创建一本新书</p>
-          <button type="button" onClick={() => setDialogOpen(true)} className="btn-primary">
-            新建书稿
-          </button>
+          <p className="mb-5 text-sm text-slate-400">请调整筛选条件，或使用顶部导航栏新建书稿。</p>
         </div>
       )}
 
@@ -193,11 +205,11 @@ export default function BooksPage() {
               book={book}
               view={viewMode}
               isHero={sortBy === "updated_desc" && statusFilter === "all" && typeFilter === "all" && i === 0}
+              onPinned={() => setPinTick((x) => x + 1)}
             />
           ))}
         </div>
       )}
-      <NewBookDialog open={dialogOpen} onClose={() => setDialogOpen(false)} />
     </section>
   );
 }

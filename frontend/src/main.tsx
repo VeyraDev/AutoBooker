@@ -20,8 +20,10 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
-        <App />
-        <Toaster position="top-right" />
+        <div className="flex min-h-0 min-h-full flex-1 flex-col">
+          <App />
+          <Toaster position="top-right" />
+        </div>
       </QueryClientProvider>
     </BrowserRouter>
   </React.StrictMode>

@@ -11,7 +11,10 @@ export default function AppShell() {
     <div className={`app-shell-page${hideAppChrome ? " app-shell-page--editor" : ""}`}>
       {!hideAppChrome && <AppShellHeader />}
       <main className={`app-shell-main${hideAppChrome ? " app-shell-main--editor" : ""}`}>
-        <div key={location.pathname} className="page-transition-in">
+        <div
+          key={location.pathname}
+          className={`page-transition-in${hideAppChrome ? " page-transition-in--editor" : ""}`}
+        >
           <Outlet />
         </div>
       </main>

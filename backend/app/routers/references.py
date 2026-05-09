@@ -8,15 +8,17 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, get_db
-from app.models.reference import ParseStatus, ReferenceFile
+from app.models.reference import ParseStatus, ReferenceChunk, ReferenceFile
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.reference import (
     ParseStatusOut,
     ReferenceFileOut,
+    ReferenceSearchHit,
     ReferenceSearchIn,
     ReferenceSearchOut,
     ReferenceUploadOut,
@@ -118,7 +120,17 @@ def list_references(
         .order_by(ReferenceFile.created_at.desc())
         .all()
     )
-    return rows
+    pairs = (
+        db.query(ReferenceChunk.file_id, func.count(ReferenceChunk.id))
+        .filter(ReferenceChunk.book_id == book_id)
+        .group_by(ReferenceChunk.file_id)
+        .all()
+    )
+    cmap = {fid: int(n) for fid, n in pairs}
+    return [
+        ReferenceFileOut.model_validate(r).model_copy(update={"chunk_count": cmap.get(r.id, 0)})
+        for r in rows
+    ]
 
 
 @router.get("/{book_id}/references/{file_id}/status", response_model=ReferenceFileOut)
@@ -132,7 +144,12 @@ def reference_status(
     ref = db.query(ReferenceFile).filter(ReferenceFile.id == file_id, ReferenceFile.book_id == book_id).first()
     if not ref:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Reference not found")
-    return ref
+    cnt = (
+        db.query(func.count(ReferenceChunk.id))
+        .filter(ReferenceChunk.file_id == file_id, ReferenceChunk.book_id == book_id)
+        .scalar()
+    )
+    return ReferenceFileOut.model_validate(ref).model_copy(update={"chunk_count": int(cnt or 0)})
 
 
 @router.post("/{book_id}/references/search", response_model=ReferenceSearchOut)
@@ -144,5 +161,6 @@ def search_references(
 ):
     book_service.get_book_or_404(book_id, user, db)
     agent = DocumentParserAgent(db, book_id)
-    snippets = agent.retrieve(body.query, top_k=body.top_k)
-    return ReferenceSearchOut(snippets=snippets)
+    snippets, pairs = agent.retrieve_with_meta(body.query, top_k=body.top_k)
+    hits = [ReferenceSearchHit(content=c, filename=fn) for c, fn in pairs]
+    return ReferenceSearchOut(snippets=snippets, hits=hits)

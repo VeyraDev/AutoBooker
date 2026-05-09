@@ -115,7 +115,16 @@ class DocumentParserAgent:
             self.db.commit()
 
     def retrieve(self, query: str, top_k: int = 5) -> list[str]:
-        qvec = self._client.embed([query])[0]
+        any_chunk = self.db.execute(
+            select(ReferenceChunk.id).where(ReferenceChunk.book_id == self.book_id).limit(1)
+        ).first()
+        if not any_chunk:
+            return []
+        try:
+            qvec = self._client.embed([query])[0]
+        except Exception as e:
+            logger.warning("embedding unavailable for RAG retrieve; skipping snippets: %s", e)
+            return []
         stmt = (
             select(ReferenceChunk)
             .where(ReferenceChunk.book_id == self.book_id)
@@ -124,3 +133,30 @@ class DocumentParserAgent:
         )
         rows = self.db.execute(stmt).scalars().all()
         return [r.content for r in rows]
+
+    def retrieve_with_meta(self, query: str, top_k: int = 5) -> tuple[list[str], list[tuple[str, str]]]:
+        """Returns (snippets, [(content, filename), ...])."""
+        any_chunk = self.db.execute(
+            select(ReferenceChunk.id).where(ReferenceChunk.book_id == self.book_id).limit(1)
+        ).first()
+        if not any_chunk:
+            return [], []
+        try:
+            qvec = self._client.embed([query])[0]
+        except Exception as e:
+            logger.warning("embedding unavailable for RAG retrieve_with_meta; skipping snippets: %s", e)
+            return [], []
+        stmt = (
+            select(ReferenceChunk, ReferenceFile.filename)
+            .join(ReferenceFile, ReferenceChunk.file_id == ReferenceFile.id)
+            .where(ReferenceChunk.book_id == self.book_id)
+            .order_by(ReferenceChunk.embedding.cosine_distance(qvec))
+            .limit(top_k)
+        )
+        rows = self.db.execute(stmt).all()
+        snippets: list[str] = []
+        pairs: list[tuple[str, str]] = []
+        for chunk_row, filename in rows:
+            snippets.append(chunk_row.content)
+            pairs.append((chunk_row.content, filename or ""))
+        return snippets, pairs

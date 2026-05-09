@@ -1,5 +1,5 @@
 import { client } from "@/api/client";
-import type { ReferenceFile, ReferenceSearchPayload } from "@/types/reference";
+import type { ReferenceFile, ReferenceSearchHit, ReferenceSearchPayload } from "@/types/reference";
 
 export async function listReferences(bookId: string): Promise<ReferenceFile[]> {
   const { data } = await client.get<ReferenceFile[]>(`/books/${bookId}/references`);
@@ -16,7 +16,13 @@ export async function uploadReference(bookId: string, file: File): Promise<{ id:
   return data;
 }
 
-export async function searchReferences(bookId: string, payload: ReferenceSearchPayload): Promise<{ snippets: string[] }> {
-  const { data } = await client.post<{ snippets: string[] }>(`/books/${bookId}/references/search`, payload);
+export async function searchReferences(
+  bookId: string,
+  payload: ReferenceSearchPayload,
+): Promise<{ snippets: string[]; hits: ReferenceSearchHit[] }> {
+  const { data } = await client.post<{ snippets: string[]; hits: ReferenceSearchHit[] }>(
+    `/books/${bookId}/references/search`,
+    payload,
+  );
   return data;
 }

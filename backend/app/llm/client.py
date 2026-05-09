@@ -77,30 +77,46 @@ class LLMClient:
         temperature: float = 0.7,
         provider: ChatProvider = "writer",
     ) -> str:
+        """Writer 优先 DeepSeek（若配置）；连接失败时回退 DashScope，避免本地网络/代理导致大纲等同步任务整段不可用。"""
+        specs: list[tuple[OpenAI, str]] = []
         if provider == "dashscope":
-            client = self._dashscope
-            m = model or settings.CHAT_MODEL_FAST
+            specs.append((self._dashscope, model or settings.CHAT_MODEL_FAST))
         else:
-            client = self._writer_chat
-            m = model or settings.default_writer_model()
-        last_err: Exception | None = None
-        for attempt in range(settings.LLM_MAX_RETRIES):
-            try:
-                resp = client.chat.completions.create(
-                    model=m,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
+            specs.append((self._writer_chat, model or settings.default_writer_model()))
+            if settings.use_deepseek_writer() and self._writer_chat is not self._dashscope:
+                specs.append((self._dashscope, model or settings.CHAT_MODEL))
+
+        last_outer: Exception | None = None
+        for idx, (client, m) in enumerate(specs):
+            last_err: Exception | None = None
+            for attempt in range(settings.LLM_MAX_RETRIES):
+                try:
+                    resp = client.chat.completions.create(
+                        model=m,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
+                    choice = resp.choices[0].message
+                    return (choice.content or "").strip()
+                except (APIError, RateLimitError, TimeoutError) as e:
+                    last_err = e
+                    logger.warning(
+                        "chat_completion attempt %s (%s) failed: %s",
+                        attempt + 1,
+                        m,
+                        e,
+                    )
+                    if attempt < settings.LLM_MAX_RETRIES - 1:
+                        _backoff_sleep(attempt)
+            last_outer = last_err
+            if idx < len(specs) - 1 and last_err is not None:
+                logger.warning(
+                    "chat_completion switching to DashScope fallback after writer failure: %s",
+                    last_err,
                 )
-                choice = resp.choices[0].message
-                return (choice.content or "").strip()
-            except (APIError, RateLimitError, TimeoutError) as e:
-                last_err = e
-                logger.warning("chat_completion attempt %s failed: %s", attempt + 1, e)
-                if attempt < settings.LLM_MAX_RETRIES - 1:
-                    _backoff_sleep(attempt)
-        if last_err:
-            raise last_err
+        if last_outer:
+            raise last_outer
         raise RuntimeError("chat_completion failed with no error recorded")
 
 
@@ -129,33 +145,52 @@ class AsyncLLMClient:
         temperature: float = 0.7,
         provider: ChatProvider = "writer",
     ) -> AsyncIterator[str]:
-        client = self._dashscope if provider == "dashscope" else self._writer_chat
-        m = (
-            model
-            or (settings.CHAT_MODEL_FAST if provider == "dashscope" else settings.default_writer_model())
-        )
-        last_err: Exception | None = None
-        for attempt in range(settings.LLM_MAX_RETRIES):
-            try:
-                stream = await client.chat.completions.create(
-                    model=m,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    stream=True,
+        if provider == "dashscope":
+            specs: list[tuple[AsyncOpenAI, str]] = [
+                (self._dashscope, model or settings.CHAT_MODEL_FAST),
+            ]
+        else:
+            specs = [
+                (self._writer_chat, model or settings.default_writer_model()),
+            ]
+            if settings.use_deepseek_writer() and self._writer_chat is not self._dashscope:
+                specs.append((self._dashscope, model or settings.CHAT_MODEL))
+
+        last_outer: Exception | None = None
+        for idx, (client, m) in enumerate(specs):
+            last_err: Exception | None = None
+            for attempt in range(settings.LLM_MAX_RETRIES):
+                try:
+                    stream = await client.chat.completions.create(
+                        model=m,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        stream=True,
+                    )
+                    async for chunk in stream:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        if delta and delta.content:
+                            yield delta.content
+                    return
+                except (APIError, RateLimitError, TimeoutError) as e:
+                    last_err = e
+                    logger.warning(
+                        "stream_chat attempt %s (%s) failed: %s",
+                        attempt + 1,
+                        m,
+                        e,
+                    )
+                    if attempt < settings.LLM_MAX_RETRIES - 1:
+                        await asyncio.sleep(settings.LLM_RETRY_BASE_SECONDS * (2**attempt))
+            last_outer = last_err
+            if idx < len(specs) - 1 and last_err is not None:
+                logger.warning(
+                    "stream_chat switching to DashScope fallback after writer failure: %s",
+                    last_err,
                 )
-                async for chunk in stream:
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
-                    if delta and delta.content:
-                        yield delta.content
-                return
-            except (APIError, RateLimitError, TimeoutError) as e:
-                last_err = e
-                logger.warning("stream_chat attempt %s failed: %s", attempt + 1, e)
-                if attempt < settings.LLM_MAX_RETRIES - 1:
-                    await asyncio.sleep(settings.LLM_RETRY_BASE_SECONDS * (2**attempt))
-        if last_err:
-            raise last_err
+        if last_outer:
+            raise last_outer
         raise RuntimeError("stream_chat failed with no error recorded")
