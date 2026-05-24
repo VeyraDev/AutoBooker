@@ -17,6 +17,7 @@ class ReferenceFileOut(BaseModel):
     book_id: UUID
     filename: str
     file_type: str
+    ingest_kind: str = "reference"
     parse_status: ParseStatusOut
     error_message: str | None
     parsed_at: datetime | None
@@ -31,6 +32,7 @@ class ReferenceUploadOut(BaseModel):
     id: UUID
     filename: str
     file_type: str
+    ingest_kind: str = "reference"
     parse_status: ParseStatusOut
     message: str = "uploaded, parsing in background"
 

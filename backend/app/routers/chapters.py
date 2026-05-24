@@ -15,11 +15,14 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.agents.chapter_writer import ChapterWriterAgent
 from app.agents.document_parser import DocumentParserAgent
+from app.agents.narrative_agent import NarrativeAgent
 from app.database import SessionLocal, get_db
+from app.models.book import Book
 from app.models.chapter import Chapter, ChapterStatus
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.llm.client import LLMClient
+from app.schemas.book import NarrativeEnsureOut
 from app.schemas.chapter import (
     ChapterCreateIn,
     ChapterOut,
@@ -30,6 +33,7 @@ from app.schemas.chapter import (
 )
 from app.services import book_service
 from app.services.memory_service import build_book_memory, extract_chapter_memory
+from app.services.outline_text import serialize_book_outline_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +51,38 @@ def _get_chapter(book_id: UUID, chapter_index: int, db: Session) -> Chapter:
     return ch
 
 
-def _chapter_payload(ch: Chapter) -> dict:
+def _chapter_payload(ch: Chapter, total_chapters: int) -> dict:
     meta = ch.content if isinstance(ch.content, dict) else {}
     return {
         "title": ch.title,
         "summary": ch.summary or "",
         "key_points": list(meta.get("key_points") or []),
         "estimated_words": int(meta.get("estimated_words") or 3000),
+        "chapter_index": ch.index,
+        "total_chapters": max(int(total_chapters), 1),
     }
+
+
+def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> None:
+    """独立 Session：可在 asyncio.to_thread 中调用，生成并写入 narrative_constitution。"""
+    db = SessionLocal()
+    try:
+        book = db.get(Book, book_id)
+        if not book or (book.narrative_constitution or "").strip():
+            return
+        n = db.query(func.count(Chapter.id)).filter(Chapter.book_id == book_id).scalar() or 0
+        outline_md = serialize_book_outline_markdown(book_id, db)
+        agent = NarrativeAgent()
+        text = agent.generate_constitution(
+            book,
+            outline_md,
+            chapter_count=max(int(n), 1),
+            model=chat_model,
+        )
+        book.narrative_constitution = text
+        db.commit()
+    finally:
+        db.close()
 
 
 def _chat_model_for_book(book) -> str:
@@ -66,12 +94,52 @@ def _chat_model_for_book(book) -> str:
     return raw or settings.CHAT_MODEL
 
 
+@router.post("/{book_id}/narrative/ensure", response_model=NarrativeEnsureOut)
+def ensure_narrative_constitution(
+    book_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """进入写作前同步生成叙事宪法（若尚未生成）。耗时可能较长。"""
+    book = book_service.get_book_or_404(book_id, user, db)
+    if (book.narrative_constitution or "").strip():
+        return NarrativeEnsureOut(ok=True, generated=False)
+    chat_model = _chat_model_for_book(book)
+    _ensure_narrative_constitution_thread(book_id, chat_model)
+    db.expire_all()
+    book_fresh = db.get(Book, book_id)
+    if not book_fresh or not (book_fresh.narrative_constitution or "").strip():
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="叙事宪法生成失败或结果为空",
+        )
+    return NarrativeEnsureOut(ok=True, generated=True)
+
+
 def _memory_background(book_id: UUID, chapter_index: int, text: str) -> None:
     db = SessionLocal()
     try:
         extract_chapter_memory(book_id, chapter_index, text, db)
     except Exception:
         logger.exception("memory extract failed book=%s ch=%s", book_id, chapter_index)
+    finally:
+        db.close()
+
+
+def _reset_stuck_generating_chapter(book_id: UUID, chapter_index: int) -> None:
+    """客户端断开或生成器异常退出时，避免章节永久卡在 generating。"""
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(Chapter)
+            .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
+            .first()
+        )
+        if row and row.status == ChapterStatus.generating:
+            row.status = ChapterStatus.pending
+            db.commit()
+    except Exception:
+        logger.exception("reset stuck generating failed book=%s ch=%s", book_id, chapter_index)
     finally:
         db.close()
 
@@ -103,7 +171,12 @@ def update_chapter(
     if body.summary is not None:
         ch.summary = body.summary
     if body.content is not None:
-        ch.content = body.content
+        if isinstance(body.content, dict):
+            old = dict(ch.content) if isinstance(ch.content, dict) else {}
+            incoming = dict(body.content)
+            ch.content = {**old, **incoming}
+        else:
+            ch.content = body.content
     db.commit()
     db.refresh(ch)
     return ch
@@ -213,6 +286,23 @@ def reorder_chapters(
     return rows
 
 
+@router.post("/{book_id}/chapters/{chapter_index}/cancel-generation", response_model=ChapterOut)
+def cancel_generation(
+    book_id: UUID,
+    chapter_index: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """断流/刷新后目录卡在「生成中」时，将本章恢复为待生成（幂等）。"""
+    book_service.get_book_or_404(book_id, user, db)
+    ch = _get_chapter(book_id, chapter_index, db)
+    if ch.status == ChapterStatus.generating:
+        ch.status = ChapterStatus.pending
+        db.commit()
+        db.refresh(ch)
+    return ch
+
+
 @router.post("/{book_id}/chapters/{chapter_index}/generate")
 async def generate_chapter_stream(
     book_id: UUID,
@@ -221,30 +311,64 @@ async def generate_chapter_stream(
     db: Session = Depends(get_db),
 ):
     book = book_service.get_book_or_404(book_id, user, db)
+    book_id = book.id
     ch = _get_chapter(book_id, chapter_index, db)
 
-    memory = build_book_memory(book.id, chapter_index, db)
-    parser = DocumentParserAgent(db, book.id)
-    summary_q = (ch.summary or "") + " " + ch.title
-    snippets = parser.retrieve(summary_q.strip() or book.title, top_k=4)
-
-    chapter_dict = _chapter_payload(ch)
     writer = ChapterWriterAgent()
     chat_model = _chat_model_for_book(book)
+
+    total_chapters = int(
+        db.query(func.count(Chapter.id)).filter(Chapter.book_id == book_id).scalar() or 0
+    )
 
     async def event_stream():
         row = (
             db.query(Chapter)
-            .filter(Chapter.book_id == book.id, Chapter.index == chapter_index)
+            .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
             .first()
         )
         if not row:
             yield f"data: {json.dumps({'error': 'chapter_not_found'}, ensure_ascii=False)}\n\n"
             return
-        row.status = ChapterStatus.generating
-        db.commit()
-        full_text = ""
         try:
+            row.status = ChapterStatus.generating
+            db.commit()
+            full_text = ""
+            try:
+                await asyncio.to_thread(_ensure_narrative_constitution_thread, book_id, chat_model)
+            except Exception:
+                logger.exception("narrative constitution generation failed")
+                row = (
+                    db.query(Chapter)
+                    .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
+                    .first()
+                )
+                if row:
+                    row.status = ChapterStatus.pending
+                    db.commit()
+                yield f"data: {json.dumps({'error': 'narrative_failed'}, ensure_ascii=False)}\n\n"
+                return
+
+            book_live = db.get(Book, book_id)
+            if not book_live:
+                logger.error("book %s not found in session after narrative ensure", book_id)
+                row = (
+                    db.query(Chapter)
+                    .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
+                    .first()
+                )
+                if row:
+                    row.status = ChapterStatus.pending
+                    db.commit()
+                yield f"data: {json.dumps({'error': 'narrative_failed'}, ensure_ascii=False)}\n\n"
+                return
+
+            memory = build_book_memory(book_id, chapter_index, db)
+            parser = DocumentParserAgent(db, book_id)
+            summary_q = (ch.summary or "") + " " + ch.title
+            snippets = parser.retrieve(summary_q.strip() or (book_live.title or ""), top_k=4)
+            chapter_dict = _chapter_payload(ch, total_chapters)
+
             async for token in writer.stream(
                 chapter_dict, memory, snippets, model=chat_model
             ):
@@ -252,7 +376,7 @@ async def generate_chapter_stream(
                 yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
             row = (
                 db.query(Chapter)
-                .filter(Chapter.book_id == book.id, Chapter.index == chapter_index)
+                .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
                 .first()
             )
             if row:
@@ -262,19 +386,29 @@ async def generate_chapter_stream(
                 row.word_count = len(full_text)
                 row.status = ChapterStatus.done
                 db.commit()
-            asyncio.create_task(asyncio.to_thread(_memory_background, book.id, chapter_index, full_text))
+            asyncio.create_task(asyncio.to_thread(_memory_background, book_id, chapter_index, full_text))
             yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
         except Exception:
             logger.exception("chapter generate failed")
             row = (
                 db.query(Chapter)
-                .filter(Chapter.book_id == book.id, Chapter.index == chapter_index)
+                .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
                 .first()
             )
             if row:
                 row.status = ChapterStatus.pending
                 db.commit()
             yield f"data: {json.dumps({'error': 'generation_failed'}, ensure_ascii=False)}\n\n"
+        finally:
+            try:
+                await asyncio.to_thread(_reset_stuck_generating_chapter, book_id, chapter_index)
+            except Exception:
+                logger.warning(
+                    "post-stream reset hook failed book=%s ch=%s",
+                    book_id,
+                    chapter_index,
+                    exc_info=True,
+                )
 
     return StreamingResponse(
         event_stream(),
@@ -306,16 +440,49 @@ def edit_selection(
         "polish": "请润色以下文字，保持原意，使表达更流畅专业。只输出改写后的正文，不要解释。",
         "expand": "请扩写以下文字，增加必要细节与衔接，不要改变核心观点。只输出扩写结果。",
         "shrink": "请缩写以下文字，保留关键信息。只输出缩写结果。",
+        "dedupe": (
+            "请对以下文字做「降重」改写：在完整保留原意、事实与专业术语的前提下，"
+            "调整句式与用词，降低与常见表述的雷同度，使表达更原创。"
+            "不要添加新观点，不要删减关键信息。只输出改写后的正文。"
+        ),
+        "rewrite": "请按用户指令改写以下文字。只输出改写结果，不要解释。",
+        "flowchart": (
+            "根据用户选中的文字及章节上下文，生成一张 Mermaid 流程图。"
+            "只输出 Mermaid 源码（可用 ```mermaid 围栏包裹），不要解释。"
+            "优先使用 flowchart TD 或 flowchart LR；节点中文标签必须用双引号包裹，例如 A[\"大模型\"]；"
+            "逻辑清晰、层次分明。"
+        ),
     }
-    system = "你是专业中文编辑，只输出改写结果，不要加引号、标题或前言。"
-    user_msg = f"{prompts[body.mode]}\n\n---\n{body.text.strip()}"
+    if body.mode not in prompts:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unsupported mode: {body.mode}")
+
+    ctx_block = ""
+    if (body.context or "").strip():
+        ctx_block = f"\n\n【章节上下文（供参考）】\n{body.context.strip()[:12000]}"
+
+    if body.mode == "flowchart":
+        system = (
+            "你是技术写作助手，擅长用 Mermaid 表达流程与结构。"
+            "只输出 Mermaid 代码，不要 Markdown 标题或说明文字。"
+        )
+        instr = (body.instruction or "").strip() or "根据选中内容生成流程图。"
+        user_msg = f"要求：{instr}{ctx_block}\n\n【选中正文】\n{body.text.strip()}"
+    elif body.mode == "rewrite":
+        system = "你是专业中文编辑，只输出改写结果，不要加引号、标题或前言。"
+        instr = (body.instruction or "").strip() or "使表达更清晰、自然。"
+        user_msg = f"改写要求：{instr}{ctx_block}\n\n---\n{body.text.strip()}"
+    else:
+        system = "你是专业中文编辑，只输出改写结果，不要加引号、标题或前言。"
+        user_msg = f"{prompts[body.mode]}{ctx_block}\n\n---\n{body.text.strip()}"
+
     client = LLMClient()
     chat_model = _chat_model_for_book(book)
+    temp = 0.55 if body.mode == "dedupe" else 0.45
     out = client.chat_completion(
         [{"role": "system", "content": system}, {"role": "user", "content": user_msg}],
         model=chat_model,
         max_tokens=4096,
-        temperature=0.45,
+        temperature=temp,
         provider="writer",
     )
     return SelectionEditOut(text=out.strip())

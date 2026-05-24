@@ -26,7 +26,7 @@ def create_book(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return book_service.create_book(user, body.model_dump(exclude_unset=False), db)
+    return book_service.create_book(user, body.model_dump(mode="json", exclude_unset=False), db)
 
 
 @router.get("/{book_id}", response_model=BookOut)
@@ -42,7 +42,7 @@ def update_book(
     db: Session = Depends(get_db),
 ):
     book = book_service.get_book_or_404(book_id, user, db)
-    return book_service.update_book(book, body.model_dump(exclude_unset=True), db)
+    return book_service.update_book(book, body.model_dump(exclude_unset=True, mode="json"), db)
 
 
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -61,7 +61,7 @@ def export_book(
     book_id: UUID,
     format: str = Query(
         "markdown",
-        description="导出格式：markdown / md / docx",
+        description="导出格式：markdown / md / docx / pdf",
     ),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

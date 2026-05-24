@@ -23,7 +23,8 @@ class ReferenceFile(Base):
     book_id = Column(UUID(as_uuid=True), ForeignKey("books.id", ondelete="CASCADE"), nullable=False, index=True)
     filename = Column(String(500), nullable=False)
     storage_path = Column(String(2000), nullable=False)
-    file_type = Column(String(20), nullable=False)  # pdf | docx
+    file_type = Column(String(20), nullable=False)  # pdf | docx | txt
+    ingest_kind = Column(String(20), nullable=False, default="reference")  # reference | material
     parse_status = Column(
         Enum(ParseStatus, name="parse_status"),
         default=ParseStatus.pending,

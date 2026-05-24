@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.constants.style_types import DEFAULT_TARGET_WORDS, coerce_style
 from app.models.book import Book
 from app.models.user import User
 
@@ -27,7 +28,14 @@ def list_user_books(user: User, db: Session) -> list[Book]:
 
 
 def create_book(user: User, payload: dict, db: Session) -> Book:
-    book = Book(user_id=user.id, **payload)
+    data = dict(payload)
+    bt = data["book_type"]
+    bt_val = bt.value if hasattr(bt, "value") else str(bt)
+    if data.get("target_words") is None:
+        data["target_words"] = DEFAULT_TARGET_WORDS.get(bt_val, 80000)
+    st = data.get("style_type")
+    data["style_type"] = coerce_style(bt_val, st).value
+    book = Book(user_id=user.id, **data)
     db.add(book)
     db.commit()
     db.refresh(book)
@@ -36,6 +44,8 @@ def create_book(user: User, payload: dict, db: Session) -> Book:
 
 def update_book(book: Book, payload: dict, db: Session) -> Book:
     for key, value in payload.items():
+        if key == "style_type" and value is not None:
+            value = coerce_style(book.book_type.value, value).value
         setattr(book, key, value)
     db.commit()
     db.refresh(book)

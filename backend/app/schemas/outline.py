@@ -46,3 +46,4 @@ class OutlinePut(BaseModel):
 class OutlineGenerateIn(BaseModel):
     topic_override: str | None = Field(default=None, max_length=500)
     target_audience: str | None = Field(default=None, max_length=500)
+    topic_brief: str | None = Field(default=None, max_length=12000)

@@ -1,9 +1,10 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.book import BookStatus, BookType, CitationStyle
+from app.constants.style_types import StyleType
 
 
 class BookCreate(BaseModel):
@@ -12,8 +13,22 @@ class BookCreate(BaseModel):
     discipline: str | None = Field(default=None, max_length=100)
     target_audience: str | None = Field(default=None, max_length=500)
     citation_style: CitationStyle | None = None
-    target_words: int | None = Field(default=80000, ge=1000, le=500000)
+    target_words: int | None = Field(default=None, ge=1000, le=500000)
     ai_model: str | None = Field(default="claude-3-5-sonnet", max_length=50)
+    style_type: StyleType | str | None = None
+    topic_tags: list[str] | None = None
+
+    @field_validator("topic_tags")
+    @classmethod
+    def cap_tags(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        out: list[str] = []
+        for t in v[:40]:
+            s = (t or "").strip()[:80]
+            if s and s not in out:
+                out.append(s)
+        return out or None
 
 
 class BookUpdate(BaseModel):
@@ -24,6 +39,21 @@ class BookUpdate(BaseModel):
     target_words: int | None = Field(default=None, ge=1000, le=500000)
     status: BookStatus | None = None
     ai_model: str | None = Field(default=None, max_length=50)
+    style_type: StyleType | str | None = None
+    topic_tags: list[str] | None = None
+    user_material: str | None = Field(default=None, max_length=100_000)
+
+    @field_validator("topic_tags")
+    @classmethod
+    def cap_tags(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        out: list[str] = []
+        for t in v[:40]:
+            s = (t or "").strip()[:80]
+            if s and s not in out:
+                out.append(s)
+        return out or None
 
 
 class BookOut(BaseModel):
@@ -37,8 +67,21 @@ class BookOut(BaseModel):
     target_words: int | None
     status: BookStatus
     ai_model: str | None
+    style_type: str | None
+    topic_tags: list[str] | None
+    user_material: str | None = None
     created_at: datetime
     updated_at: datetime | None
 
     class Config:
         from_attributes = True
+
+
+class NarrativeEnsureOut(BaseModel):
+    """POST /books/{id}/narrative/ensure 的响应。"""
+
+    ok: bool = True
+    generated: bool = Field(
+        default=False,
+        description="本次请求是否新调用了 LLM 生成叙事宪法；若已有则 false",
+    )

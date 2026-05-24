@@ -5,6 +5,9 @@ from app.config import settings
 from app.routers import auth as auth_router
 from app.routers import books as books_router
 from app.routers import chapters as chapters_router
+from app.routers import citations as citations_router
+from app.routers import review as review_router
+from app.routers import literature as literature_router
 from app.routers import outline as outline_router
 from app.routers import references as references_router
 
@@ -21,6 +24,9 @@ app.add_middleware(
 app.include_router(auth_router.router)
 app.include_router(books_router.router)
 app.include_router(references_router.router)
+app.include_router(literature_router.router)
+app.include_router(citations_router.router)
+app.include_router(review_router.router)
 app.include_router(outline_router.router)
 app.include_router(chapters_router.router)
 

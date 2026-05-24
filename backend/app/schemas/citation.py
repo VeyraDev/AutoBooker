@@ -1,0 +1,84 @@
+from datetime import datetime
+from enum import Enum
+from uuid import UUID
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class CitationSourceOut(str, Enum):
+    literature_search = "literature_search"
+    uploaded_file = "uploaded_file"
+    manual = "manual"
+
+
+class CitationPaperIn(BaseModel):
+    title: str = ""
+    year: int | None = None
+    authors: list[str] = []
+    journal: str = ""
+    doi: str = ""
+    citations: int = 0
+    type: str | None = None
+    source: str | None = None
+    source_label: str | None = None
+    url: str | None = None
+    semantic_scholar_id: str | None = None
+    external_id: str | None = None
+    abstract_preview: str | None = None
+
+
+class CitationCreateIn(BaseModel):
+    paper: CitationPaperIn
+    source: CitationSourceOut = CitationSourceOut.literature_search
+    raw_text: str | None = None
+
+
+class CitationBatchIn(BaseModel):
+    papers: list[CitationPaperIn] = Field(min_length=1, max_length=50)
+    source: CitationSourceOut = CitationSourceOut.literature_search
+
+
+class CitationOut(BaseModel):
+    id: UUID
+    book_id: UUID
+    doi: str | None
+    title: str
+    authors: list[str]
+    year: int | None
+    journal: str | None
+    format_cache: dict[str, str] | None
+    source: CitationSourceOut
+    source_file_id: UUID | None
+    raw_text: str | None
+    external_source: str | None = None
+    external_id: str | None = None
+    quotable_snippet: str | None = None
+    list_index: int | None
+    formatted: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CitationInsertIn(BaseModel):
+    """插入选中文献：写入 citations 表并返回正文标记与参考文献行。"""
+
+    citation_ids: list[UUID] = Field(min_length=1, max_length=30)
+    sync_bibliography: bool = True
+
+
+class CitationInsertOut(BaseModel):
+    in_text_marks: list[str]
+    bibliography_lines: list[str]
+    citations: list[CitationOut]
+
+
+class CitationListOut(BaseModel):
+    items: list[CitationOut]
+
+
+class CitationApplyBibliographyOut(BaseModel):
+    chapter_index: int | None
+    bibliography_text: str
+    message: str

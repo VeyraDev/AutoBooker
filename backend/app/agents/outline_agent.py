@@ -12,7 +12,8 @@ import jsonschema
 from jsonschema import ValidationError
 
 from app.llm.client import LLMClient
-from app.prompts.outline import OUTLINE_JSON_SCHEMA, OUTLINE_SYSTEM_PROMPT
+from app.prompts.outline import OUTLINE_FALLBACK_STYLE, OUTLINE_JSON_INSTRUCTION, OUTLINE_JSON_SCHEMA
+from app.prompts.style_prompts import get_outline_style_prompt
 from app.utils.json_llm import parse_llm_json
 
 logger = logging.getLogger(__name__)
@@ -42,10 +43,18 @@ class OutlineAgent:
     def __init__(self) -> None:
         self._client = LLMClient()
 
+    @staticmethod
+    def build_system_prompt(style_type: str | None) -> str:
+        frag = get_outline_style_prompt(style_type or "")
+        if not frag.strip():
+            frag = OUTLINE_FALLBACK_STYLE
+        return frag + "\n\n" + OUTLINE_JSON_INSTRUCTION
+
     def generate(self, book_config: dict[str, Any], reference_snippets: list[str] | None = None) -> dict[str, Any]:
         reference_snippets = reference_snippets or []
         user_msg = self._build_user_message(book_config, reference_snippets)
         last_err: str | None = None
+        system = self.build_system_prompt(book_config.get("style_type"))
 
         for attempt in range(3):
             extra = ""
@@ -53,7 +62,7 @@ class OutlineAgent:
                 extra = f"\n\n上次输出无法通过校验（{last_err}）。请严格只输出符合要求的 JSON，不要附加说明。"
 
             messages = [
-                {"role": "system", "content": OUTLINE_SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": user_msg + extra},
             ]
             raw = self._client.chat_completion(
@@ -93,6 +102,7 @@ class OutlineAgent:
     def _build_user_message(self, cfg: dict[str, Any], snippets: list[str]) -> str:
         parts = [
             f"书籍类型：{cfg['book_type']}",
+            f"二级体裁（style_type）：{cfg.get('style_type') or '未指定'}",
             f"主题/书名方向：{cfg['topic']}",
             f"目标读者：{cfg.get('target_audience', '大众读者')}",
             f"目标字数：{cfg['target_words']}字",
@@ -100,6 +110,12 @@ class OutlineAgent:
         ]
         if cfg.get("discipline"):
             parts.append(f"学科领域：{cfg['discipline']}")
+        if cfg.get("topic_tags"):
+            parts.append("三级话题标签：" + "、".join(cfg["topic_tags"]))
+        if cfg.get("user_material"):
+            parts.append("作者资料与写作约束（务必在大纲中体现）：\n" + str(cfg["user_material"])[:4000])
+        if cfg.get("topic_brief"):
+            parts.append("主题补充说明：\n" + str(cfg["topic_brief"])[:6000])
         if snippets:
             parts.append("参考资料摘录（请结合这些内容规划大纲）：")
             parts.extend([f"---\n{s}" for s in snippets[:5]])

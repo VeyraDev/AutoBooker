@@ -130,11 +130,15 @@ def generate_outline(
 
         cfg = {
             "book_type": book.book_type.value,
+            "style_type": book.style_type,
             "topic": body.topic_override or book.title,
-            "target_audience": body.target_audience or "大众读者",
+            "target_audience": body.target_audience or book.target_audience or "大众读者",
             "target_words": book.target_words or 80000,
             "citation_style": book.citation_style.value if book.citation_style else "无需引用",
             "discipline": book.discipline,
+            "topic_tags": list(book.topic_tags or []),
+            "user_material": (book.user_material or "").strip(),
+            "topic_brief": (body.topic_brief or "").strip() or None,
         }
 
         agent = OutlineAgent()

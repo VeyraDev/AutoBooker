@@ -24,12 +24,15 @@ class Settings(BaseSettings):
     LLM_MAX_RETRIES: int = 3
     LLM_RETRY_BASE_SECONDS: float = 1.0
 
-    # DeepSeek（OpenAI 兼容）：大纲 / 章节正文；需同时保留上方 DashScope 做向量
+    # DeepSeek（OpenAI 兼容）：大纲 / 章节正文 / 记忆抽取等 chat；DashScope 仍用于向量嵌入（及未配 DeepSeek 时的回退）
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
     DEEPSEEK_CHAT_MODEL: str = "deepseek-chat"
 
     UPLOAD_DIR: str = "./uploads"
+
+    # 可选：提高 GitHub API 限额
+    GITHUB_TOKEN: str = ""
 
     def use_deepseek_writer(self) -> bool:
         return bool((self.DEEPSEEK_API_KEY or "").strip())

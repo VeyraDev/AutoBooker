@@ -23,7 +23,7 @@ ChatProvider = Literal["writer", "dashscope"]
 
 
 class LLMClient:
-    """Sync：嵌入始终 DashScope；chat 可选 DeepSeek（writer）或 DashScope（记忆抽取等）。"""
+    """Sync：嵌入始终 DashScope；chat 走 writer（配置 DeepSeek 时优先 DeepSeek，否则 DashScope）。"""
 
     def __init__(self) -> None:
         self._dashscope = OpenAI(

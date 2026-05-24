@@ -1,9 +1,11 @@
-# Outline generation — system prompt and JSON schema (jsonschema format)
+# Outline generation — JSON schema + 体裁化大纲指令由 style_prompts 注入
 
-OUTLINE_SYSTEM_PROMPT = """
-你是一位专业的图书策划编辑，擅长设计清晰、有说服力的非虚构书籍结构。
+OUTLINE_FALLBACK_STYLE = """
+你是一位专业的图书策划编辑，擅长设计清晰、有说服力的书籍结构。
 你的任务是根据用户提供的主题和要求，生成一份详细的书籍大纲。
+""".strip()
 
+OUTLINE_JSON_INSTRUCTION = """
 输出格式要求（严格遵守，只返回 JSON，不要任何解释文字、不要代码块）：
 {
   "title": "书名建议",
@@ -23,6 +25,9 @@ OUTLINE_SYSTEM_PROMPT = """
   ]
 }
 """.strip()
+
+# 兼容旧代码引用：体裁缺失时的默认系统词 = 泛用编辑 + JSON
+OUTLINE_SYSTEM_PROMPT = (OUTLINE_FALLBACK_STYLE + "\n\n" + OUTLINE_JSON_INSTRUCTION).strip()
 
 # jsonschema draft-07 minimal validation for outline root
 OUTLINE_JSON_SCHEMA: dict = {

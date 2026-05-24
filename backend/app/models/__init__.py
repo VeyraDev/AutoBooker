@@ -3,6 +3,7 @@ from app.models.book import Book, BookType, BookStatus, CitationStyle
 from app.models.chapter import Chapter, ChapterStatus
 from app.models.reference import ParseStatus, ReferenceChunk, ReferenceFile
 from app.models.memory import BookMemory, MemoryType
+from app.models.citation import Citation, CitationSource
 
 __all__ = [
     "User",
@@ -17,4 +18,6 @@ __all__ = [
     "ReferenceFile",
     "BookMemory",
     "MemoryType",
+    "Citation",
+    "CitationSource",
 ]

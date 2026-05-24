@@ -1,4 +1,4 @@
-"""全书导出为 Markdown / DOCX。"""
+"""全书导出为 Markdown / DOCX / PDF。"""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import io
 import re
 from uuid import UUID
 
+import fitz
+import markdown
 from docx import Document
 from docx.shared import Pt
 from fastapi import HTTPException, status
@@ -76,6 +78,84 @@ def build_docx_bytes(book: Book, chapters: list[Chapter]) -> bytes:
     return buf.getvalue()
 
 
+_PDF_CSS = """
+body {
+  font-family: china-ss;
+  font-size: 11pt;
+  line-height: 1.65;
+  color: #1a1a1a;
+}
+h1 {
+  font-size: 22pt;
+  font-weight: bold;
+  margin: 0 0 18pt 0;
+  page-break-after: avoid;
+}
+h2 {
+  font-size: 16pt;
+  font-weight: bold;
+  margin: 24pt 0 10pt 0;
+  page-break-after: avoid;
+}
+h3, h4, h5, h6 {
+  font-size: 13pt;
+  font-weight: bold;
+  margin: 16pt 0 8pt 0;
+  page-break-after: avoid;
+}
+blockquote {
+  font-style: italic;
+  color: #555;
+  margin: 8pt 0 12pt 0;
+  padding-left: 10pt;
+  border-left: 2pt solid #ccc;
+}
+pre, code {
+  font-family: monospace;
+  font-size: 9.5pt;
+}
+pre {
+  background: #f5f5f5;
+  padding: 8pt;
+  margin: 8pt 0;
+}
+ul, ol {
+  margin: 6pt 0 10pt 0;
+  padding-left: 20pt;
+}
+li { margin: 3pt 0; }
+p { margin: 0 0 8pt 0; }
+hr {
+  border: none;
+  border-top: 1pt solid #ccc;
+  margin: 16pt 0;
+}
+"""
+
+
+def build_pdf_bytes(book: Book, chapters: list[Chapter]) -> bytes:
+    md = build_markdown(book, chapters)
+    body_html = markdown.markdown(md, extensions=["extra", "nl2br", "sane_lists"])
+    html = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
+        f"<body>{body_html}</body></html>"
+    )
+    story = fitz.Story(html=html, user_css=_PDF_CSS)
+    buf = io.BytesIO()
+    writer = fitz.DocumentWriter(buf)
+    mediabox = fitz.paper_rect("a4")
+    margin = 56
+    where = mediabox + (margin, margin, -margin, -margin)
+    more = 1
+    while more:
+        device = writer.begin_page(mediabox)
+        more, _ = story.place(where)
+        story.draw(device)
+        writer.end_page()
+    writer.close()
+    return buf.getvalue()
+
+
 def export_book_bytes(book_id: UUID, export_format: str, user, db: Session) -> tuple[bytes, str, str]:
     """
     Returns (body_bytes, filename, media_type).
@@ -94,7 +174,11 @@ def export_book_bytes(book_id: UUID, export_format: str, user, db: Session) -> t
         body = build_docx_bytes(book, chapters)
         return body, f"{base}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
+    if fmt == "pdf":
+        body = build_pdf_bytes(book, chapters)
+        return body, f"{base}.pdf", "application/pdf"
+
     raise HTTPException(
         status.HTTP_400_BAD_REQUEST,
-        "format must be markdown, md, or docx",
+        "format must be markdown, md, docx, or pdf",
     )

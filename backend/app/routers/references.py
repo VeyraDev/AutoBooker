@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -31,18 +31,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/books", tags=["references"])
 
 
-def _run_parse_task(book_id: UUID, file_id: UUID, storage_path: str, file_type: str) -> None:
+def _run_parse_task(
+    book_id: UUID,
+    file_id: UUID,
+    storage_path: str,
+    file_type: str,
+    ingest_hint: str | None = None,
+) -> None:
     db = SessionLocal()
     try:
         agent = DocumentParserAgent(db, book_id)
-        agent.parse_and_store(file_id, storage_path, file_type)
+        forced = None
+        if ingest_hint in ("material", "reference"):
+            forced = ingest_hint
+        agent.parse_and_store(file_id, storage_path, file_type, forced_class=forced)
     except Exception:
         logger.exception("background parse failed book=%s file=%s", book_id, file_id)
     finally:
         db.close()
 
 
-ALLOWED = {".pdf", ".docx"}
+ALLOWED = {".pdf", ".docx", ".txt"}
 
 
 @router.post(
@@ -54,6 +63,7 @@ async def upload_reference(
     book_id: UUID,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    ingest_hint: str | None = Form(default=None),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -67,7 +77,15 @@ async def upload_reference(
             status.HTTP_400_BAD_REQUEST,
             f"Only {', '.join(sorted(ALLOWED))} are allowed",
         )
-    file_type = "pdf" if suffix == ".pdf" else "docx"
+    hint = (ingest_hint or "auto").strip().lower()
+    if hint not in ("auto", "material", "reference"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ingest_hint must be auto, material, or reference")
+    if suffix == ".pdf":
+        file_type = "pdf"
+    elif suffix == ".docx":
+        file_type = "docx"
+    else:
+        file_type = "txt"
 
     from app.config import settings
 
@@ -96,12 +114,14 @@ async def upload_reference(
         ref.id,
         str(dest),
         file_type,
+        hint if hint != "auto" else None,
     )
 
     return ReferenceUploadOut(
         id=ref.id,
         filename=ref.filename,
         file_type=ref.file_type,
+        ingest_kind=ref.ingest_kind or "reference",
         parse_status=ParseStatusOut(ref.parse_status.value),
         message="uploaded, parsing in background",
     )

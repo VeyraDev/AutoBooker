@@ -42,8 +42,11 @@ class ChapterReorderIn(BaseModel):
 
 
 class SelectionEditIn(BaseModel):
-    mode: Literal["polish", "expand", "shrink"]
+    mode: Literal["polish", "expand", "shrink", "dedupe", "rewrite", "flowchart"]
     text: str = Field(..., min_length=1, max_length=32000)
+    """rewrite / flowchart 模式下的额外指令。"""
+    instruction: str | None = Field(default=None, max_length=2000)
+    context: str | None = Field(default=None, max_length=16000)
 
 
 class SelectionEditOut(BaseModel):
