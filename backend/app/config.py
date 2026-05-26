@@ -13,35 +13,72 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     CORS_ORIGINS: str = "http://localhost:5173"
 
-    # DashScope (OpenAI-compatible)
+    # 千问 DashScope（OpenAI 兼容；向量嵌入始终走此通道）
     DASHSCOPE_API_KEY: str = ""
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    """万相/图像等原生 API 根路径（非 OpenAI 兼容模式）。"""
+    DASHSCOPE_NATIVE_API_BASE: str = "https://dashscope.aliyuncs.com/api/v1"
     EMBEDDING_MODEL: str = "text-embedding-v3"
     EMBEDDING_DIMENSIONS: int = 1024
     EMBEDDING_BATCH_SIZE: int = 25
     CHAT_MODEL: str = "qwen-max"
     CHAT_MODEL_FAST: str = "qwen-turbo"
-    LLM_MAX_RETRIES: int = 3
-    LLM_RETRY_BASE_SECONDS: float = 1.0
 
-    # DeepSeek（OpenAI 兼容）：大纲 / 章节正文 / 记忆抽取等 chat；DashScope 仍用于向量嵌入（及未配 DeepSeek 时的回退）
+    # DeepSeek
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
     DEEPSEEK_CHAT_MODEL: str = "deepseek-chat"
 
+    # Kimi（Moonshot）
+    KIMI_API_KEY: str = ""
+    KIMI_BASE_URL: str = "https://api.moonshot.cn/v1"
+
+    # 豆包（火山方舟）
+    DOUBAO_API_KEY: str = ""
+    DOUBAO_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
+
+    # 百度千帆
+    BAIDU_API_KEY: str = ""
+    BAIDU_BASE_URL: str = "https://qianfan.baidubce.com/v2"
+
+    # OpenAI
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+
+    # Claude（Anthropic 原生 API）
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_BASE_URL: str = "https://api.anthropic.com"
+
+    # Gemini（Google OpenAI 兼容端点）
+    GEMINI_API_KEY: str = ""
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+    # Grok（xAI）
+    GROK_API_KEY: str = ""
+    GROK_BASE_URL: str = "https://api.x.ai/v1"
+
+    LLM_MAX_RETRIES: int = 3
+    LLM_RETRY_BASE_SECONDS: float = 1.0
+
     UPLOAD_DIR: str = "./uploads"
+    FIGURES_DIR: str = ""
+    INTENT_MODEL: str = ""
+    """FIGURE 插图管道：openai | wanx | auto（有 OPENAI_API_KEY 时默认 openai）。"""
+    FIGURE_IMAGE_PROVIDER: str = "auto"
+    OPENAI_IMAGE_MODEL: str = "gpt-image-1"
+    OPENAI_IMAGE_SIZE: str = "1024x1024"
+    OPENAI_IMAGE_QUALITY: str = "medium"
+    OPENAI_IMAGE_TIMEOUT_SEC: float = 180.0
+    OPENAI_IMAGE_MAX_RETRIES: int = 2
+    """OpenAI 超时/连不上时是否回退万相（需 DASHSCOPE_API_KEY）。"""
+    FIGURE_IMAGE_FALLBACK_WANX: bool = True
+    """通义万相模型（仅 FIGURE_IMAGE_PROVIDER=wanx 时使用）。"""
+    IMAGE_MODEL: str = "wanx-v1"
+    """Graphviz bin 目录（可选；未在 PATH 时后端会自动探测 Windows 默认安装路径）。"""
+    GRAPHVIZ_BIN_DIR: str = ""
 
     # 可选：提高 GitHub API 限额
     GITHUB_TOKEN: str = ""
-
-    def use_deepseek_writer(self) -> bool:
-        return bool((self.DEEPSEEK_API_KEY or "").strip())
-
-    def default_writer_model(self) -> str:
-        """章节/大纲生成默认模型：配置了 DeepSeek 优先，否则 DashScope。"""
-        if self.use_deepseek_writer():
-            return self.DEEPSEEK_CHAT_MODEL
-        return self.CHAT_MODEL
 
     @property
     def cors_origins_list(self) -> list[str]:
@@ -50,6 +87,20 @@ class Settings(BaseSettings):
     @property
     def upload_path(self) -> Path:
         return Path(self.UPLOAD_DIR).resolve()
+
+    @property
+    def figures_path(self) -> Path:
+        if self.FIGURES_DIR.strip():
+            return Path(self.FIGURES_DIR).resolve()
+        return self.upload_path / "figures"
+
+    @property
+    def intent_model(self) -> str:
+        if self.INTENT_MODEL.strip():
+            return self.INTENT_MODEL.strip()
+        from app.llm.providers import default_ai_model
+
+        return default_ai_model()
 
 
 settings = Settings()

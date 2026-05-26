@@ -13,7 +13,11 @@ type Props = {
   outline: OutlineBookResponse | undefined;
   outlineGeneratingUi: boolean;
   onPatchBook: (b: Book) => void;
-  onGenerateOutline: (payload: { topic_override?: string | null; target_audience?: string | null }) => Promise<boolean>;
+  onGenerateOutline: (payload: {
+    topic_override?: string | null;
+    target_audience?: string | null;
+    topic_brief?: string | null;
+  }) => Promise<boolean>;
   onStartWriting: (mode: ChapterGenMode) => Promise<void>;
   onOutlinePatched: () => void | Promise<void>;
   onReorder: (items: { chapter_id: string; new_index: number }[]) => void | Promise<void>;
@@ -77,9 +81,9 @@ export default function PlanningWizard({
     } catch {
       return;
     }
-    const topic_override = window.localStorage.getItem(topicKey(bookId))?.trim() || null;
     const target_audience = window.localStorage.getItem(audienceKey(bookId))?.trim() || book.target_audience?.trim() || null;
-    const ok = await onGenerateOutline({ topic_override, target_audience });
+    const topic_brief = window.localStorage.getItem(topicKey(bookId))?.trim() || null;
+    const ok = await onGenerateOutline({ topic_override: null, target_audience, topic_brief });
     if (ok) {
       setStep1SaveOnlyFab(false);
       setWizardStep(2);
@@ -155,6 +159,7 @@ export default function PlanningWizard({
               await onGenerateOutline({
                 topic_override: window.localStorage.getItem(topicKey(bookId))?.trim() || null,
                 target_audience: book.target_audience?.trim() || null,
+                topic_brief: window.localStorage.getItem(topicKey(bookId))?.trim() || null,
               });
             }}
             onOutlinePatched={onOutlinePatched}

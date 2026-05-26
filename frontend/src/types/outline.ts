@@ -41,4 +41,6 @@ export interface OutlinePutPayload {
 export interface OutlineGeneratePayload {
   topic_override?: string | null;
   target_audience?: string | null;
+  /** 策划页「主题要点」长文本，对应书稿设定 localStorage 与保存逻辑 */
+  topic_brief?: string | null;
 }

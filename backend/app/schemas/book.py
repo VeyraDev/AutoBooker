@@ -14,7 +14,7 @@ class BookCreate(BaseModel):
     target_audience: str | None = Field(default=None, max_length=500)
     citation_style: CitationStyle | None = None
     target_words: int | None = Field(default=None, ge=1000, le=500000)
-    ai_model: str | None = Field(default="claude-3-5-sonnet", max_length=50)
+    ai_model: str | None = Field(default="deepseek:deepseek-chat", max_length=80)
     style_type: StyleType | str | None = None
     topic_tags: list[str] | None = None
 
@@ -38,7 +38,7 @@ class BookUpdate(BaseModel):
     citation_style: CitationStyle | None = None
     target_words: int | None = Field(default=None, ge=1000, le=500000)
     status: BookStatus | None = None
-    ai_model: str | None = Field(default=None, max_length=50)
+    ai_model: str | None = Field(default=None, max_length=80)
     style_type: StyleType | str | None = None
     topic_tags: list[str] | None = None
     user_material: str | None = Field(default=None, max_length=100_000)

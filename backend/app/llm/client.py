@@ -1,15 +1,24 @@
-"""DashScope：向量嵌入；DeepSeek（可选）：大纲与章节流式写作。"""
+"""多服务商 LLM 客户端：OpenAI 兼容 + Claude（Anthropic）。"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator
 
+from anthropic import APIError as AnthropicAPIError
+from anthropic import Anthropic, AsyncAnthropic
+from anthropic import RateLimitError as AnthropicRateLimitError
 from openai import APIError, AsyncOpenAI, OpenAI, RateLimitError
 
 from app.config import settings
+from app.llm.providers import (
+    is_provider_configured,
+    parse_ai_model,
+    provider_api_key,
+    provider_base_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,37 +28,85 @@ def _backoff_sleep(attempt: int) -> None:
     time.sleep(delay)
 
 
-ChatProvider = Literal["writer", "dashscope"]
+def _resolve_target(model: str | None) -> tuple[str, str]:
+    provider_id, model_name = parse_ai_model(model)
+    if not is_provider_configured(provider_id):
+        raise RuntimeError(f"LLM provider '{provider_id}' is not configured (missing API key)")
+    return provider_id, model_name
+
+
+def _fallback_targets(primary_provider: str, model: str | None) -> list[tuple[str, str]]:
+    """主服务商失败时，若 DeepSeek 已配置且主服务商非 DeepSeek，则回退 DeepSeek。"""
+    targets = [_resolve_target(model)]
+    if primary_provider != "deepseek" and is_provider_configured("deepseek"):
+        fallback_model = settings.DEEPSEEK_CHAT_MODEL
+        if model and ":" not in (model or ""):
+            _, parsed = parse_ai_model(model)
+            if parsed.startswith("deepseek-"):
+                fallback_model = parsed
+        targets.append(("deepseek", fallback_model))
+    return targets
+
+
+def _split_messages_for_anthropic(
+    messages: list[dict[str, Any]],
+) -> tuple[str | None, list[dict[str, Any]]]:
+    system_parts: list[str] = []
+    conv: list[dict[str, Any]] = []
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role == "system":
+            if isinstance(content, str) and content.strip():
+                system_parts.append(content.strip())
+            continue
+        if role in ("user", "assistant"):
+            conv.append({"role": role, "content": content if isinstance(content, str) else str(content)})
+    system = "\n\n".join(system_parts) if system_parts else None
+    return system, conv
 
 
 class LLMClient:
-    """Sync：嵌入始终 DashScope；chat 走 writer（配置 DeepSeek 时优先 DeepSeek，否则 DashScope）。"""
+    """同步：嵌入走千问 DashScope；对话按 provider:model 路由。"""
 
     def __init__(self) -> None:
-        self._dashscope = OpenAI(
-            api_key=settings.DASHSCOPE_API_KEY or None,
-            base_url=settings.DASHSCOPE_BASE_URL,
-        )
-        if settings.use_deepseek_writer():
-            self._writer_chat = OpenAI(
-                api_key=settings.DEEPSEEK_API_KEY,
-                base_url=settings.DEEPSEEK_BASE_URL,
+        self._openai_clients: dict[str, OpenAI] = {}
+        self._anthropic: Anthropic | None = None
+
+    def _get_openai(self, provider_id: str) -> OpenAI:
+        if provider_id not in self._openai_clients:
+            self._openai_clients[provider_id] = OpenAI(
+                api_key=provider_api_key(provider_id) or None,
+                base_url=provider_base_url(provider_id),
             )
-        else:
-            self._writer_chat = self._dashscope
+        return self._openai_clients[provider_id]
+
+    def _get_anthropic(self) -> Anthropic:
+        if self._anthropic is None:
+            self._anthropic = Anthropic(
+                api_key=settings.ANTHROPIC_API_KEY,
+                base_url=settings.ANTHROPIC_BASE_URL or None,
+            )
+        return self._anthropic
+
+    def _dashscope_embed_client(self) -> OpenAI:
+        return self._get_openai("qwen")
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        """DashScope embedding（与向量检索一致）。"""
+        """DashScope 向量嵌入（与检索一致，始终走千问）。"""
         if not texts:
             return []
+        if not is_provider_configured("qwen"):
+            raise RuntimeError("DASHSCOPE_API_KEY is required for embeddings")
         batch_size = min(settings.EMBEDDING_BATCH_SIZE, 25)
+        client = self._dashscope_embed_client()
         out: list[list[float]] = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
             last_err: Exception | None = None
             for attempt in range(settings.LLM_MAX_RETRIES):
                 try:
-                    resp = self._dashscope.embeddings.create(
+                    resp = client.embeddings.create(
                         model=settings.EMBEDDING_MODEL,
                         input=batch,
                         dimensions=settings.EMBEDDING_DIMENSIONS,
@@ -68,6 +125,47 @@ class LLMClient:
                 raise RuntimeError("embedding failed with no error recorded")
         return out
 
+    def _chat_openai(
+        self,
+        client: OpenAI,
+        model_name: str,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> str:
+        resp = client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        choice = resp.choices[0].message
+        return (choice.content or "").strip()
+
+    def _chat_anthropic(
+        self,
+        model_name: str,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> str:
+        system, conv = _split_messages_for_anthropic(messages)
+        if not conv:
+            conv = [{"role": "user", "content": ""}]
+        kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": conv,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if system:
+            kwargs["system"] = system
+        resp = self._get_anthropic().messages.create(**kwargs)
+        parts = [getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text"]
+        return "".join(parts).strip()
+
     def chat_completion(
         self,
         messages: list[dict[str, Any]],
@@ -75,36 +173,37 @@ class LLMClient:
         model: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
-        provider: ChatProvider = "writer",
     ) -> str:
-        """Writer 优先 DeepSeek（若配置）；连接失败时回退 DashScope，避免本地网络/代理导致大纲等同步任务整段不可用。"""
-        specs: list[tuple[OpenAI, str]] = []
-        if provider == "dashscope":
-            specs.append((self._dashscope, model or settings.CHAT_MODEL_FAST))
-        else:
-            specs.append((self._writer_chat, model or settings.default_writer_model()))
-            if settings.use_deepseek_writer() and self._writer_chat is not self._dashscope:
-                specs.append((self._dashscope, model or settings.CHAT_MODEL))
-
+        primary_provider, _ = parse_ai_model(model)
+        specs = _fallback_targets(primary_provider, model)
         last_outer: Exception | None = None
-        for idx, (client, m) in enumerate(specs):
+
+        for idx, (provider_id, model_name) in enumerate(specs):
             last_err: Exception | None = None
             for attempt in range(settings.LLM_MAX_RETRIES):
                 try:
-                    resp = client.chat.completions.create(
-                        model=m,
-                        messages=messages,
+                    if provider_id == "claude":
+                        return self._chat_anthropic(
+                            model_name,
+                            messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                        )
+                    client = self._get_openai(provider_id)
+                    return self._chat_openai(
+                        client,
+                        model_name,
+                        messages,
                         max_tokens=max_tokens,
                         temperature=temperature,
                     )
-                    choice = resp.choices[0].message
-                    return (choice.content or "").strip()
-                except (APIError, RateLimitError, TimeoutError) as e:
+                except (APIError, RateLimitError, TimeoutError, AnthropicAPIError, AnthropicRateLimitError) as e:
                     last_err = e
                     logger.warning(
-                        "chat_completion attempt %s (%s) failed: %s",
+                        "chat_completion attempt %s (%s:%s) failed: %s",
                         attempt + 1,
-                        m,
+                        provider_id,
+                        model_name,
                         e,
                     )
                     if attempt < settings.LLM_MAX_RETRIES - 1:
@@ -112,7 +211,9 @@ class LLMClient:
             last_outer = last_err
             if idx < len(specs) - 1 and last_err is not None:
                 logger.warning(
-                    "chat_completion switching to DashScope fallback after writer failure: %s",
+                    "chat_completion switching to deepseek fallback after %s:%s failure: %s",
+                    provider_id,
+                    model_name,
                     last_err,
                 )
         if last_outer:
@@ -121,20 +222,74 @@ class LLMClient:
 
 
 class AsyncLLMClient:
-    """异步流式：章节写作走 DeepSeek（若配置），否则 DashScope。"""
+    """异步流式：按 provider:model 路由。"""
 
     def __init__(self) -> None:
-        self._dashscope = AsyncOpenAI(
-            api_key=settings.DASHSCOPE_API_KEY or None,
-            base_url=settings.DASHSCOPE_BASE_URL,
-        )
-        if settings.use_deepseek_writer():
-            self._writer_chat = AsyncOpenAI(
-                api_key=settings.DEEPSEEK_API_KEY,
-                base_url=settings.DEEPSEEK_BASE_URL,
+        self._openai_clients: dict[str, AsyncOpenAI] = {}
+        self._anthropic: AsyncAnthropic | None = None
+
+    def _get_openai(self, provider_id: str) -> AsyncOpenAI:
+        if provider_id not in self._openai_clients:
+            self._openai_clients[provider_id] = AsyncOpenAI(
+                api_key=provider_api_key(provider_id) or None,
+                base_url=provider_base_url(provider_id),
             )
-        else:
-            self._writer_chat = self._dashscope
+        return self._openai_clients[provider_id]
+
+    def _get_anthropic(self) -> AsyncAnthropic:
+        if self._anthropic is None:
+            self._anthropic = AsyncAnthropic(
+                api_key=settings.ANTHROPIC_API_KEY,
+                base_url=settings.ANTHROPIC_BASE_URL or None,
+            )
+        return self._anthropic
+
+    async def _stream_openai(
+        self,
+        client: AsyncOpenAI,
+        model_name: str,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> AsyncIterator[str]:
+        stream = await client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=True,
+        )
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta and delta.content:
+                yield delta.content
+
+    async def _stream_anthropic(
+        self,
+        model_name: str,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> AsyncIterator[str]:
+        system, conv = _split_messages_for_anthropic(messages)
+        if not conv:
+            conv = [{"role": "user", "content": ""}]
+        kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": conv,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if system:
+            kwargs["system"] = system
+        async with self._get_anthropic().messages.stream(**kwargs) as stream:
+            async for text in stream.text_stream:
+                if text:
+                    yield text
 
     async def stream_chat(
         self,
@@ -143,44 +298,41 @@ class AsyncLLMClient:
         model: str | None = None,
         max_tokens: int = 8192,
         temperature: float = 0.7,
-        provider: ChatProvider = "writer",
     ) -> AsyncIterator[str]:
-        if provider == "dashscope":
-            specs: list[tuple[AsyncOpenAI, str]] = [
-                (self._dashscope, model or settings.CHAT_MODEL_FAST),
-            ]
-        else:
-            specs = [
-                (self._writer_chat, model or settings.default_writer_model()),
-            ]
-            if settings.use_deepseek_writer() and self._writer_chat is not self._dashscope:
-                specs.append((self._dashscope, model or settings.CHAT_MODEL))
-
+        primary_provider, _ = parse_ai_model(model)
+        specs = _fallback_targets(primary_provider, model)
         last_outer: Exception | None = None
-        for idx, (client, m) in enumerate(specs):
+
+        for idx, (provider_id, model_name) in enumerate(specs):
             last_err: Exception | None = None
             for attempt in range(settings.LLM_MAX_RETRIES):
                 try:
-                    stream = await client.chat.completions.create(
-                        model=m,
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        stream=True,
-                    )
-                    async for chunk in stream:
-                        if not chunk.choices:
-                            continue
-                        delta = chunk.choices[0].delta
-                        if delta and delta.content:
-                            yield delta.content
+                    if provider_id == "claude":
+                        async for token in self._stream_anthropic(
+                            model_name,
+                            messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                        ):
+                            yield token
+                    else:
+                        client = self._get_openai(provider_id)
+                        async for token in self._stream_openai(
+                            client,
+                            model_name,
+                            messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                        ):
+                            yield token
                     return
-                except (APIError, RateLimitError, TimeoutError) as e:
+                except (APIError, RateLimitError, TimeoutError, AnthropicAPIError, AnthropicRateLimitError) as e:
                     last_err = e
                     logger.warning(
-                        "stream_chat attempt %s (%s) failed: %s",
+                        "stream_chat attempt %s (%s:%s) failed: %s",
                         attempt + 1,
-                        m,
+                        provider_id,
+                        model_name,
                         e,
                     )
                     if attempt < settings.LLM_MAX_RETRIES - 1:
@@ -188,7 +340,9 @@ class AsyncLLMClient:
             last_outer = last_err
             if idx < len(specs) - 1 and last_err is not None:
                 logger.warning(
-                    "stream_chat switching to DashScope fallback after writer failure: %s",
+                    "stream_chat switching to deepseek fallback after %s:%s failure: %s",
+                    provider_id,
+                    model_name,
                     last_err,
                 )
         if last_outer:

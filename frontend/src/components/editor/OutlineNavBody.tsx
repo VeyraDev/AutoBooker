@@ -95,7 +95,7 @@ function SortableChapterBlock({
   const statusClass =
     ch.status === "done"
       ? "toc-ch-done"
-      : ch.status === "generating" || streamingHere
+      : streamingHere
         ? "toc-ch-generating"
         : "toc-ch-pending";
 
@@ -148,9 +148,7 @@ function SortableChapterBlock({
           <span className="toc-chapter-title">{ch.title}</span>
         )}
 
-        {(ch.status === "generating" || streamingHere) && (
-          <span className="toc-generating-dot" title="生成中" />
-        )}
+        {streamingHere ? <span className="toc-generating-dot" title="生成中" /> : null}
 
         <div className="toc-row-actions">
           <button

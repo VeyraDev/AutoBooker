@@ -6,9 +6,18 @@ export async function listReferences(bookId: string): Promise<ReferenceFile[]> {
   return data;
 }
 
-export async function uploadReference(bookId: string, file: File): Promise<{ id: string }> {
+export type UploadIngestHint = "auto" | "material" | "reference";
+
+export async function uploadReference(
+  bookId: string,
+  file: File,
+  ingestHint: UploadIngestHint = "auto",
+): Promise<{ id: string }> {
   const form = new FormData();
   form.append("file", file);
+  if (ingestHint !== "auto") {
+    form.append("ingest_hint", ingestHint);
+  }
   const { data } = await client.post<{ id: string; filename: string; parse_status: string }>(
     `/books/${bookId}/references/upload`,
     form,

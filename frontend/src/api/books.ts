@@ -27,7 +27,13 @@ export async function deleteBook(id: string): Promise<void> {
   await client.delete(`/books/${id}`);
 }
 
-export type ExportFormat = "markdown" | "docx";
+export type ExportFormat = "markdown" | "docx" | "pdf";
+
+export const EXPORT_EXT: Record<ExportFormat, string> = {
+  markdown: "md",
+  docx: "docx",
+  pdf: "pdf",
+};
 
 async function blobErrorMessage(blob: Blob): Promise<string> {
   const text = await blob.text();
@@ -49,10 +55,9 @@ async function blobErrorMessage(blob: Blob): Promise<string> {
 
 /** 下载二进制；若服务端返回 JSON 错误体会抛出 Error */
 export async function exportBook(id: string, format: ExportFormat): Promise<Blob> {
-  const query = format === "markdown" ? "markdown" : "docx";
   try {
     const res = await client.get(`/books/${id}/export`, {
-      params: { format: query },
+      params: { format },
       responseType: "blob",
       timeout: 120000,
     });

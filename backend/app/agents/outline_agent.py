@@ -50,7 +50,7 @@ class OutlineAgent:
             frag = OUTLINE_FALLBACK_STYLE
         return frag + "\n\n" + OUTLINE_JSON_INSTRUCTION
 
-    def generate(self, book_config: dict[str, Any], reference_snippets: list[str] | None = None) -> dict[str, Any]:
+    def generate(self, book_config: dict[str, Any], reference_snippets: list[str] | None = None, *, model: str | None = None) -> dict[str, Any]:
         reference_snippets = reference_snippets or []
         user_msg = self._build_user_message(book_config, reference_snippets)
         last_err: str | None = None
@@ -69,7 +69,7 @@ class OutlineAgent:
                 messages,
                 max_tokens=4096,
                 temperature=0.6,
-                provider="writer",
+                model=model,
             )
             try:
                 data = parse_llm_json(raw)

@@ -5,6 +5,8 @@ export interface ReferenceFile {
   book_id: string;
   filename: string;
   file_type: string;
+  /** reference=RAG 向量；material=资料型全文注入 books.user_material */
+  ingest_kind?: string;
   parse_status: ParseStatus;
   error_message: string | null;
   parsed_at: string | null;

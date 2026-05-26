@@ -45,7 +45,7 @@ class Book(Base):
     user_material = Column(Text, nullable=True)
     narrative_constitution = Column(Text, nullable=True)
     status = Column(Enum(BookStatus, name="book_status"), default=BookStatus.setup, nullable=False)
-    ai_model = Column(String(50), default="claude-3-5-sonnet")
+    ai_model = Column(String(80), default="deepseek:deepseek-chat")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -57,3 +57,4 @@ class Book(Base):
         cascade="all, delete-orphan",
     )
     citations = relationship("Citation", back_populates="book", cascade="all, delete-orphan")
+    figures = relationship("Figure", back_populates="book", cascade="all, delete-orphan")

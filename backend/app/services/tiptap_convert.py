@@ -103,6 +103,24 @@ def _block_to_markdown(node: dict[str, Any], depth: int = 0) -> str:
                     lines_o.append(f"{pad}   {line}")
             idx += 1
         return "\n".join(lines_o)
+    if t in ("diagramBlock", "mermaidBlock"):
+        attrs = node.get("attrs") or {}
+        engine = str(attrs.get("engine") or "graphviz")
+        code = str(attrs.get("code") or "").strip()
+        lang = "plantuml" if engine == "plantuml" else "dot"
+        return f"```{lang}\n{code}\n```"
+    if t == "figureBlock":
+        attrs = node.get("attrs") or {}
+        num = str(attrs.get("figureNumber") or "")
+        caption = str(attrs.get("caption") or attrs.get("rawAnnotation") or "")
+        url = str(attrs.get("fileUrl") or "")
+        label = f"图 {num}" if num else "图"
+        if url:
+            return f"![{label}]({url})\n\n*{label} 图解：{caption}*"
+        raw = str(attrs.get("rawAnnotation") or caption)
+        ftype = str(attrs.get("figureType") or "figure").upper()
+        tag = "FLOWCHART" if ftype == "FLOWCHART" else "CHART" if ftype == "CHART" else "SCREENSHOT" if ftype == "SCREENSHOT" else "FIGURE"
+        return f"[{tag}: {raw}]"
     if t == "listItem":
         return _list_item_body(node, depth)
     return ""
@@ -223,6 +241,28 @@ def _docx_block(doc: Document, node: dict[str, Any]) -> None:
         return
     if t == "horizontalRule":
         doc.add_paragraph("—" * 24)
+        return
+    if t == "figureBlock":
+        from docx.shared import Inches
+
+        attrs = node.get("attrs") or {}
+        path = str(attrs.get("fileUrl") or attrs.get("file_path") or "")
+        caption = str(attrs.get("caption") or attrs.get("rawAnnotation") or "")
+        num = str(attrs.get("figureNumber") or "")
+        label = f"图 {num}" if num else "图"
+        if path.startswith("/static/figures/"):
+            from app.config import settings
+
+            local = settings.figures_path / path.replace("/static/figures/", "", 1)
+            if local.is_file():
+                doc.add_paragraph(label)
+                doc.add_picture(str(local), width=Inches(5.5))
+                if caption:
+                    cp = doc.add_paragraph(f"图解：{caption}")
+                    cp.paragraph_format.space_before = Pt(6)
+                return
+        p = doc.add_paragraph(f"[{label}: {caption or '待生成'}]")
+        return
 
 
 def append_tiptap_to_document(doc: Document, tiptap: dict[str, Any] | None) -> None:

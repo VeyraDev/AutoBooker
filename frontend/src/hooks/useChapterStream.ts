@@ -5,9 +5,10 @@ import { useAuthStore } from "@/stores/authStore";
 async function parseSSEStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   onEvent: (obj: Record<string, unknown>) => void,
-): Promise<void> {
+): Promise<boolean> {
   const decoder = new TextDecoder();
   let buffer = "";
+  let sawDone = false;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -20,6 +21,7 @@ async function parseSSEStream(
         if (line.startsWith("data: ")) {
           try {
             const obj = JSON.parse(line.slice(6)) as Record<string, unknown>;
+            if (obj.done === true) sawDone = true;
             onEvent(obj);
           } catch {
             /* ignore malformed line */
@@ -28,6 +30,7 @@ async function parseSSEStream(
       }
     }
   }
+  return sawDone;
 }
 
 async function openGenerateStream(
@@ -77,14 +80,24 @@ export function useChapterStream() {
       abortRef.current = ac;
       try {
         const reader = await openGenerateStream(bookId, chapterIndex, ac.signal);
-        await parseSSEStream(reader, (obj) => {
+        let errored = false;
+        const sawDone = await parseSSEStream(reader, (obj) => {
           if ("error" in obj && obj.error != null) {
-            cb.onError(new Error(String(obj.error)));
+            errored = true;
+            const code = String(obj.error);
+            if (code === "narrative_failed") {
+              cb.onError(new Error("全书叙事宪法生成失败，请检查网络或模型配置后重试"));
+              return;
+            }
+            cb.onError(new Error(code));
             return;
           }
           if (typeof obj.token === "string") cb.onToken(obj.token);
           if (obj.done === true) cb.onDone();
         });
+        if (!errored && !sawDone && !ac.signal.aborted) {
+          cb.onError(new Error("连接已结束但未收到完成标记，请刷新或重试本章"));
+        }
       } catch (e) {
         if ((e as Error).name === "AbortError") {
           cb.onAbort?.();

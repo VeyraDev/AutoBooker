@@ -25,6 +25,7 @@ from app.schemas.outline import (
     OutlinePut,
     OutlineSectionOut,
 )
+from app.llm.providers import resolve_book_ai_model
 from app.services import book_service
 
 logger = logging.getLogger(__name__)
@@ -142,7 +143,8 @@ def generate_outline(
         }
 
         agent = OutlineAgent()
-        outline = agent.generate(cfg, snippets)
+        chat_model = resolve_book_ai_model(book)
+        outline = agent.generate(cfg, snippets, model=chat_model)
 
         db.query(Chapter).filter(Chapter.book_id == book.id).delete()
 

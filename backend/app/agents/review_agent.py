@@ -81,7 +81,6 @@ class ReviewAgent:
             model=self._model,
             max_tokens=4096,
             temperature=0.35,
-            provider="writer",
         )
         try:
             data = parse_llm_json(raw)

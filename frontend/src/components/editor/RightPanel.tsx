@@ -1,14 +1,19 @@
-import { BookOpen, ClipboardList, MessageSquareText, PenLine, ShieldCheck, X } from "lucide-react";
+import { BookOpen, ClipboardList, GraduationCap, MessageSquareText, PenLine, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 
+import type { LlmModelsResponse } from "@/api/config";
 import { searchReferences } from "@/api/references";
+import AiAssistantPanel from "@/components/editor/AiAssistantPanel";
+import type { EditorAiPreviewPayload } from "@/types/aiPreview";
+import LiteraturePanel from "@/components/editor/LiteraturePanel";
+import ReviewPanel from "@/components/editor/ReviewPanel";
 import type { AutoSaveUi } from "@/components/editor/EditorTopBar";
+import type { CitationStyle } from "@/types/book";
 import type { OutlineChapter } from "@/types/outline";
+import type { LiteratureQuoteBlock } from "@/types/literature";
 
-export type RightPanelTab = "detail" | "refs" | "ai" | "review";
-
-const MODEL_OPTIONS = ["qwen-max", "qwen-turbo", "qwen-plus"];
+export type RightPanelTab = "detail" | "refs" | "literature" | "ai" | "review";
 
 type Props = {
   bookId: string;
@@ -17,14 +22,35 @@ type Props = {
   autoSaveStatus: AutoSaveUi;
   savedAt: Date | null;
   aiModel: string | null;
+  llmCatalog?: LlmModelsResponse;
+  llmCatalogLoading?: boolean;
   onModelChange: (model: string) => void;
   /** 由 BubbleMenu「…」联动打开时切换到 AI 并预填选区 */
   activeTab: RightPanelTab;
   onTabChange: (t: RightPanelTab) => void;
   assistantSeed: string;
   onConsumeAssistantSeed: () => void;
+  citationStyle?: CitationStyle | null;
   /** 参考资料插入到编辑器 */
   onInsertReference?: (plain: string, filename: string) => void;
+  /** 文献引用段落插入正文（含标记与摘录） */
+  onInsertLiteratureQuotes?: (quotes: LiteratureQuoteBlock[]) => void;
+  chapterIndex?: number | null;
+  editorSelectionText?: string;
+  chapterContext?: string;
+  onApplyReviewFix?: (quote: string, suggestion: string) => void;
+  onAiPreviewReady?: (payload: EditorAiPreviewPayload) => void;
+  quotedFigureId?: string | null;
+  quotedFigureAnnotation?: string;
+  onClearFigureQuote?: () => void;
+  onFigureReady?: (payload: {
+    figure_id: string;
+    file_url: string | null;
+    figure_number: string | null;
+    status: string;
+    caption: string | null;
+    figure_type: string;
+  }) => void;
   /** 打开全局大纲以编辑章节元信息 */
   onOpenOutlineEditor?: () => void;
 };
@@ -36,23 +62,29 @@ export default function RightPanel({
   autoSaveStatus,
   savedAt,
   aiModel,
+  llmCatalog,
+  llmCatalogLoading,
   onModelChange,
   activeTab,
   onTabChange,
   assistantSeed,
   onConsumeAssistantSeed,
+  citationStyle = null,
   onInsertReference,
+  onInsertLiteratureQuotes,
+  chapterIndex = null,
+  editorSelectionText = "",
+  chapterContext = "",
+  onApplyReviewFix,
+  onAiPreviewReady,
+  quotedFigureId = null,
+  quotedFigureAnnotation = "",
+  onClearFigureQuote,
+  onFigureReady,
   onOpenOutlineEditor,
 }: Props) {
-  const [aiInstruction, setAiInstruction] = useState("");
   const [refHits, setRefHits] = useState<{ content: string; filename: string }[]>([]);
   const [refsLoading, setRefsLoading] = useState(false);
-
-  useEffect(() => {
-    if (!assistantSeed.trim()) return;
-    setAiInstruction((prev) => (prev.trim() ? `${prev.trim()}\n\n${assistantSeed.trim()}` : assistantSeed.trim()));
-    onConsumeAssistantSeed();
-  }, [assistantSeed, onConsumeAssistantSeed]);
 
   useEffect(() => {
     if (activeTab !== "refs" || !activeChapter?.title?.trim()) {
@@ -86,7 +118,8 @@ export default function RightPanel({
     <aside className="right-panel" aria-label="辅助面板">
       <div className="right-panel-tab-bar">
         {tabBtn("detail", <ClipboardList className="h-4 w-4" aria-hidden />, "章节细则")}
-        {tabBtn("refs", <BookOpen className="h-4 w-4" aria-hidden />, "参考资料")}
+        {tabBtn("refs", <BookOpen className="h-4 w-4" aria-hidden />, "资料片段")}
+        {tabBtn("literature", <GraduationCap className="h-4 w-4" aria-hidden />, "文献搜索")}
         {tabBtn("ai", <MessageSquareText className="h-4 w-4" aria-hidden />, "AI 助手")}
         {tabBtn("review", <ShieldCheck className="h-4 w-4" aria-hidden />, "审阅")}
         <button
@@ -144,7 +177,7 @@ export default function RightPanel({
 
         {activeTab === "refs" && (
           <div className="space-y-3 text-sm">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">参考资料</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">已上传资料（RAG）</p>
             {refsLoading ? (
               <p className="text-slate-500">检索中…</p>
             ) : refHits.length === 0 ? (
@@ -172,55 +205,47 @@ export default function RightPanel({
           </div>
         )}
 
+        {activeTab === "literature" && (
+          <LiteraturePanel
+            bookId={bookId}
+            citationStyle={citationStyle}
+            defaultQuery={activeChapter?.title ?? ""}
+            mode="editor"
+            onInsertQuotes={(quotes) => onInsertLiteratureQuotes?.(quotes)}
+          />
+        )}
+
         {activeTab === "ai" && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">模型</p>
-              <select
-                className="input h-8 max-w-[9rem] cursor-pointer py-1 text-xs"
-                value={aiModel ?? MODEL_OPTIONS[0]}
-                onChange={(e) => onModelChange(e.target.value)}
-                aria-label="模型选择"
-              >
-                {MODEL_OPTIONS.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">指令</p>
-            <textarea
-              className="input min-h-[120px] text-sm"
-              placeholder="输入指令，例如：把最后一段改得更口语化…"
-              value={aiInstruction}
-              onChange={(e) => setAiInstruction(e.target.value)}
-            />
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn-secondary h-9 px-3 text-xs" onClick={() => toast("全文指令处理即将接入工作流")}>
-                发送到编辑器
-              </button>
-            </div>
+          <div className="flex min-h-[min(420px,65vh)] flex-col">
+          <AiAssistantPanel
+            bookId={bookId}
+            chapterIndex={chapterIndex}
+            aiModel={aiModel}
+            llmCatalog={llmCatalog}
+            llmCatalogLoading={llmCatalogLoading}
+            onModelChange={onModelChange}
+            selectionText={editorSelectionText}
+            assistantSeed={assistantSeed}
+            onConsumeAssistantSeed={onConsumeAssistantSeed}
+            chapterContext={chapterContext}
+            cursorParagraph={chapterContext.slice(0, 400)}
+            quotedFigureId={quotedFigureId}
+            quotedFigureAnnotation={quotedFigureAnnotation}
+            onClearFigureQuote={onClearFigureQuote}
+            onPreviewReady={(payload) => onAiPreviewReady?.(payload)}
+            onFigureReady={onFigureReady}
+          />
           </div>
         )}
 
         {activeTab === "review" && (
-          <div className="space-y-4 text-sm">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">审校</p>
-              <div className="mt-2 rounded-xl border border-dashed border-slate-200 bg-white/80 p-4 text-slate-600">
-                <p className="font-medium text-ink">审校功能开发中</p>
-                <p className="mt-2 text-xs text-slate-500">将在此展示 ReviewAgent 报告。</p>
-              </div>
-            </div>
-            <hr className="border-slate-100" />
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">AI 降重</p>
-              <div className="mt-2 rounded-xl border border-dashed border-slate-200 bg-white/80 p-4 text-slate-600">
-                <p className="font-medium text-ink">降重功能开发中</p>
-              </div>
-            </div>
-          </div>
+          <ReviewPanel
+            bookId={bookId}
+            chapterIndex={chapterIndex}
+            chapterTitle={activeChapter?.title}
+            selectionText={editorSelectionText}
+            onApplySuggestion={onApplyReviewFix}
+          />
         )}
       </div>
     </aside>

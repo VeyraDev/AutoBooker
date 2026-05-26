@@ -91,7 +91,6 @@ class NarrativeAgent:
             model=model,
             max_tokens=max_tokens,
             temperature=0.55,
-            provider="writer",
         )
         if not out.strip():
             logger.warning("narrative constitution empty for book %s", book.id)

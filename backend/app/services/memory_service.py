@@ -11,6 +11,7 @@ import jsonschema
 from sqlalchemy.orm import Session
 
 from app.llm.client import LLMClient
+from app.llm.providers import resolve_book_ai_model
 from app.models.book import Book
 from app.models.memory import BookMemory, MemoryType
 from app.prompts.chapter_voice import get_chapter_voice_block
@@ -104,15 +105,15 @@ def extract_chapter_memory(book_id: uuid.UUID, chapter_index: int, content: str,
         return
 
     client = LLMClient()
+    book = db.get(Book, book_id)
+    chat_model = resolve_book_ai_model(book) if book else None
     prompt = MEMORY_EXTRACT_PROMPT + "\n\n章节内容：\n" + content[:8000]
     try:
-        # 与章节写作一致：配置了 DEEPSEEK_API_KEY 时走 writer（DeepSeek），勿写死 dashscope
         raw = client.chat_completion(
             [{"role": "user", "content": prompt}],
-            model=None,
+            model=chat_model,
             max_tokens=1024,
             temperature=0.3,
-            provider="writer",
         )
     except Exception as e:
         msg = str(e)

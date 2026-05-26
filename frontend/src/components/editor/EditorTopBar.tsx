@@ -1,9 +1,11 @@
-import { ChevronLeft, ChevronDown } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 
-const MODEL_OPTIONS = ["qwen-max", "qwen-turbo", "qwen-plus"];
+import type { LlmModelsResponse } from "@/api/config";
+import type { ExportFormat } from "@/api/books";
+import ModelSelector from "@/components/editor/ModelSelector";
 
 export type AutoSaveUi = "idle" | "pending" | "saved" | "error";
 
@@ -12,12 +14,14 @@ export type EditorTopBarProps = {
   currentWords: number;
   targetWords: number;
   aiModel: string | null;
+  llmCatalog?: LlmModelsResponse;
+  llmCatalogLoading?: boolean;
   onTitleSave: (title: string) => void;
   onModelChange: (model: string) => void;
   autoSaveStatus: AutoSaveUi;
   savedAt: Date | null;
   onBack: () => void;
-  onExport?: (format: "markdown" | "docx") => void;
+  onExport?: (format: ExportFormat) => void;
   /** 批量生成进行中：按钮为「暂停生成」；否则为「全部生成」（始终占位） */
   autoGenerating?: boolean;
   onPauseGeneration?: () => void;
@@ -29,6 +33,8 @@ export default function EditorTopBar({
   currentWords,
   targetWords,
   aiModel,
+  llmCatalog,
+  llmCatalogLoading,
   onTitleSave,
   onModelChange,
   autoSaveStatus,
@@ -162,21 +168,12 @@ export default function EditorTopBar({
       </div>
 
       {/* 模型 */}
-      <div className="relative shrink-0">
-        <select
-          className="input h-9 cursor-pointer appearance-none py-1 pl-2 pr-7 text-xs"
-          value={aiModel ?? MODEL_OPTIONS[0]}
-          onChange={(e) => onModelChange(e.target.value)}
-          aria-label="模型选择"
-        >
-          {MODEL_OPTIONS.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
-        <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-      </div>
+      <ModelSelector
+        aiModel={aiModel}
+        catalog={llmCatalog}
+        loading={llmCatalogLoading}
+        onModelChange={onModelChange}
+      />
 
       {/* 导出 */}
       <div className="relative shrink-0">
@@ -217,6 +214,17 @@ export default function EditorTopBar({
                   }}
                 >
                   Word (.docx)
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="block w-full px-3 py-2 text-left text-xs text-ink hover:bg-slate-50"
+                  onClick={() => {
+                    onExport?.("pdf");
+                    setExportOpen(false);
+                  }}
+                >
+                  PDF (.pdf)
                 </button>
               </div>
             </>,

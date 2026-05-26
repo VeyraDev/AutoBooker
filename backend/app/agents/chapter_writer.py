@@ -1,4 +1,4 @@
-"""Stream chapter body via DeepSeek（若配置）或 DashScope。"""
+"""Stream chapter body via configured LLM provider."""
 
 from __future__ import annotations
 
@@ -48,7 +48,6 @@ class ChapterWriterAgent:
             model=model,
             max_tokens=8192,
             temperature=0.75,
-            provider="writer",
         ):
             yield token
 

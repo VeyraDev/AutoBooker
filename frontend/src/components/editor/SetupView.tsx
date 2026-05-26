@@ -1,10 +1,13 @@
 import { Loader2 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
 import { listReferences, uploadReference } from "@/api/references";
+import LiteraturePanel from "@/components/editor/LiteraturePanel";
 import { updateBook } from "@/api/books";
-import type { Book, BookType, CitationStyle } from "@/types/book";
+import { styleOptionsFor, TOPIC_TAG_PRESETS } from "@/lib/styleTypes";
+import type { Book, BookType, CitationStyle, StyleType } from "@/types/book";
 import type { ReferenceFile } from "@/types/reference";
 
 const CITATION_OPTIONS: { value: CitationStyle; label: string }[] = [
@@ -15,8 +18,8 @@ const CITATION_OPTIONS: { value: CitationStyle; label: string }[] = [
 ];
 
 const BOOK_TYPE_LABEL: Record<BookType, string> = {
-  nonfiction: "非虚构",
-  academic: "学术",
+  nonfiction: "大众非虚构",
+  academic: "学术专著",
 };
 
 export const TOPIC_INSPIRATION_PRESETS: { id: string; label: string; text: string }[] = [
@@ -54,17 +57,34 @@ type Props = {
   onRegisterActions?: (actions: SetupViewActions) => void;
 };
 
+const FILE_ACCEPT =
+  ".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain";
+
+const TARGET_WORDS_STEP = 5000;
+const TARGET_WORDS_MIN = 1000;
+
 export default function SetupView({ book, onBookPatched, onRegisterActions }: Props) {
+  const qc = useQueryClient();
   const [targetAudience, setTargetAudience] = useState("");
   const [discipline, setDiscipline] = useState(book.discipline ?? "");
   const [citation, setCitation] = useState<CitationStyle | "">(book.citation_style ?? "");
   const [targetWords, setTargetWords] = useState(String(book.target_words ?? 80000));
   const [topicBrief, setTopicBrief] = useState("");
+  const [styleType, setStyleType] = useState<StyleType>("popular_science");
+  const [topicTags, setTopicTags] = useState<string[]>([]);
+  const [customTagInput, setCustomTagInput] = useState("");
+
+  const styleOpts = styleOptionsFor(book.book_type);
 
   useEffect(() => {
     setDiscipline(book.discipline ?? "");
     setCitation(book.citation_style ?? "");
     setTargetWords(String(book.target_words ?? 80000));
+    setStyleType(
+      (book.style_type as StyleType) ||
+        (book.book_type === "academic" ? "textbook" : "popular_science"),
+    );
+    setTopicTags(book.topic_tags?.length ? [...book.topic_tags] : []);
     const stored = window.localStorage.getItem(topicKey(book.id));
     if (stored) setTopicBrief(stored);
     const fromApi = book.target_audience?.trim();
@@ -84,6 +104,29 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
     window.localStorage.setItem(audienceKey(book.id), targetAudience);
   }, [book.id, targetAudience]);
 
+  function toggleTag(tag: string) {
+    setTopicTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+  }
+
+  function addCustomTag() {
+    const tag = customTagInput.trim();
+    if (!tag) return;
+    if (topicTags.includes(tag)) {
+      toast.error("该标签已存在");
+      return;
+    }
+    setTopicTags((prev) => [...prev, tag]);
+    setCustomTagInput("");
+  }
+
+  function bumpTargetWords(delta: number) {
+    const current = parseInt(targetWords, 10);
+    const base = Number.isNaN(current) ? book.target_words ?? 80000 : current;
+    setTargetWords(String(Math.max(TARGET_WORDS_MIN, base + delta)));
+  }
+
+  const customTopicTags = topicTags.filter((t) => !TOPIC_TAG_PRESETS.includes(t));
+
   async function saveMeta() {
     const tw = parseInt(targetWords, 10);
     if (Number.isNaN(tw) || tw < 1000) {
@@ -95,6 +138,8 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
       target_audience: targetAudience.trim() || null,
       citation_style: citation || null,
       target_words: tw,
+      style_type: styleType,
+      topic_tags: topicTags.length ? topicTags : null,
     });
     onBookPatched(next);
     toast.success("书稿设定已保存");
@@ -132,17 +177,18 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
     return () => window.clearInterval(id);
   }, [book.id, parsingActive]);
 
-  async function onDropUpload(fileList: FileList | null) {
+  async function onDropUpload(fileList: FileList | null, ingestHint: "auto" | "material" | "reference" = "auto") {
     if (!fileList?.length) return;
     for (const f of Array.from(fileList)) {
       try {
-        await uploadReference(book.id, f);
+        await uploadReference(book.id, f, ingestHint);
         toast.success(`已上传 ${f.name}`);
       } catch {
         toast.error(`上传失败：${f.name}`);
       }
     }
     await refreshRefs();
+    void qc.invalidateQueries({ queryKey: ["book", book.id] });
   }
 
   function applyPreset(text: string) {
@@ -159,8 +205,84 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
             <p className="mt-1 font-medium text-ink">{book.title || "未命名"}</p>
           </div>
           <div className="text-sm">
-            <span className="text-slate-600">类型</span>
+            <span className="text-slate-600">一级分类</span>
             <p className="mt-1 font-medium text-ink">{BOOK_TYPE_LABEL[book.book_type]}</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-ink">体裁与标签</h3>
+        <p className="mt-1 text-xs text-slate-500">二级体裁决定大纲与章节专用 prompt；三级标签写入全书上下文。</p>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <label className="block text-sm md:col-span-2">
+            <span className="text-slate-600">二级体裁</span>
+            <select
+              className="input mt-1"
+              value={styleType}
+              onChange={(e) => setStyleType(e.target.value as StyleType)}
+            >
+              {styleOpts.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="text-sm md:col-span-2">
+            <span className="text-slate-600">三级话题标签（点选或自行添加）</span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {TOPIC_TAG_PRESETS.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => toggleTag(tag)}
+                  className={`rounded-full border px-3 py-1 text-xs transition ${
+                    topicTags.includes(tag)
+                      ? "border-violet-400 bg-violet-50 text-violet-900"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                  }`}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+            {customTopicTags.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {customTopicTags.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => toggleTag(tag)}
+                    className="rounded-full border border-violet-400 bg-violet-50 px-3 py-1 text-xs text-violet-900 transition hover:bg-violet-100"
+                    title="点击移除"
+                  >
+                    {tag} ×
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-2 flex gap-2">
+              <input
+                className="input h-9 flex-1 text-sm"
+                value={customTagInput}
+                onChange={(e) => setCustomTagInput(e.target.value)}
+                placeholder="输入自定义标签…"
+                maxLength={40}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addCustomTag();
+                  }
+                }}
+              />
+              <button type="button" className="btn-secondary h-9 shrink-0 px-3 text-xs" onClick={addCustomTag}>
+                添加
+              </button>
+            </div>
+            {topicTags.length > 0 ? (
+              <p className="mt-2 text-xs text-slate-500">已选：{topicTags.join("、")}</p>
+            ) : null}
           </div>
         </div>
       </section>
@@ -198,8 +320,50 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
           </label>
           <label className="block text-sm">
             <span className="text-slate-600">目标字数</span>
-            <input className="input mt-1" type="number" min={1000} value={targetWords} onChange={(e) => setTargetWords(e.target.value)} />
+            <div className="mt-1 flex gap-2">
+              <button
+                type="button"
+                className="btn-secondary h-10 w-10 shrink-0 px-0 text-lg leading-none"
+                aria-label={`减少 ${TARGET_WORDS_STEP} 字`}
+                onClick={() => bumpTargetWords(-TARGET_WORDS_STEP)}
+              >
+                −
+              </button>
+              <input
+                className="input min-w-0 flex-1 text-center"
+                type="number"
+                min={TARGET_WORDS_MIN}
+                step={TARGET_WORDS_STEP}
+                value={targetWords}
+                onChange={(e) => setTargetWords(e.target.value)}
+              />
+              <button
+                type="button"
+                className="btn-secondary h-10 w-10 shrink-0 px-0 text-lg leading-none"
+                aria-label={`增加 ${TARGET_WORDS_STEP} 字`}
+                onClick={() => bumpTargetWords(TARGET_WORDS_STEP)}
+              >
+                +
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-slate-400">每次调整 {TARGET_WORDS_STEP.toLocaleString()} 字</p>
           </label>
+        </div>
+      </section>
+
+      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-ink">文献检索</h3>
+        <p className="mt-1 text-xs text-slate-500">
+          提前检索并勾选文献加入引用库；请先在上方「写作参数」选择引用格式并保存设定。
+        </p>
+        <div className="mt-4">
+          <LiteraturePanel
+            bookId={book.id}
+            citationStyle={citation || book.citation_style || null}
+            defaultQuery={book.title?.trim() ?? ""}
+            mode="setup"
+            embedded
+          />
         </div>
       </section>
 
@@ -229,39 +393,88 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
 
       <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
         <h3 className="text-sm font-semibold text-ink">
-          参考文献 <span className="font-normal text-slate-500">（{files.length} 个文件）</span>
+          上传文件 <span className="font-normal text-slate-500">（{files.length} 个）</span>
         </h3>
-        <p className="mt-2 text-xs text-slate-500">上传 PDF / DOCX，解析完成后可用于写作检索。</p>
+        <p className="mt-2 text-xs text-slate-500">
+          分区上传可指定处理路径；选「自动」时系统按字数与学术特征分流。支持 PDF、DOCX、TXT。
+        </p>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div
+            className="rounded-xl border border-dashed border-amber-200 bg-amber-50/40 p-5 text-center"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              void onDropUpload(e.dataTransfer.files, "material");
+            }}
+          >
+            <h4 className="text-sm font-medium text-amber-900">约束 / 说明文件</h4>
+            <p className="mt-1 text-xs text-amber-800/80">写作要求、风格、术语表等，合并进全书写作资料</p>
+            <label className="btn-secondary mt-3 inline-flex cursor-pointer text-xs">
+              选择说明文件
+              <input
+                type="file"
+                accept={FILE_ACCEPT}
+                className="hidden"
+                multiple
+                onChange={(e) => void onDropUpload(e.target.files, "material")}
+              />
+            </label>
+          </div>
+          <div
+            className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-5 text-center"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              void onDropUpload(e.dataTransfer.files, "reference");
+            }}
+          >
+            <h4 className="text-sm font-medium text-slate-800">参考文献</h4>
+            <p className="mt-1 text-xs text-slate-600">论文 PDF 向量化供检索；含参考文献章节时自动解析条目</p>
+            <label className="btn-secondary mt-3 inline-flex cursor-pointer text-xs">
+              选择文献文件
+              <input
+                type="file"
+                accept={FILE_ACCEPT}
+                className="hidden"
+                multiple
+                onChange={(e) => void onDropUpload(e.target.files, "reference")}
+              />
+            </label>
+          </div>
+        </div>
         <div
-          className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white/70 p-6 text-center"
-          onDragOver={(e) => {
-            e.preventDefault();
-          }}
+          className="mt-3 rounded-lg border border-slate-100 bg-white/60 px-4 py-3 text-center text-xs text-slate-500"
+          onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
-            onDropUpload(e.dataTransfer.files);
+            void onDropUpload(e.dataTransfer.files, "auto");
           }}
         >
-          <p className="text-sm text-slate-600">拖拽 PDF / DOCX 到此处，或</p>
-          <label className="btn-secondary mt-3 inline-flex cursor-pointer">
-            选择文件
+          或拖拽到此处由系统自动判断
+          <label className="ml-2 cursor-pointer font-medium text-violet-700 hover:underline">
+            选择文件（自动）
             <input
               type="file"
-              accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              accept={FILE_ACCEPT}
               className="hidden"
               multiple
-              onChange={(e) => onDropUpload(e.target.files)}
+              onChange={(e) => void onDropUpload(e.target.files, "auto")}
             />
           </label>
         </div>
         <ul className="mt-4 space-y-2 text-left text-sm">
           {files.length === 0 ? (
-            <li className="text-slate-400">暂无参考资料</li>
+            <li className="text-slate-400">暂无文件</li>
           ) : (
             files.map((f) => (
               <li key={f.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white/80 px-3 py-2">
                 <span className="min-w-0 truncate font-medium text-slate-800">{f.filename}</span>
                 <span className="flex shrink-0 flex-wrap items-center gap-2 text-xs">
+                  {f.ingest_kind === "material" ? (
+                    <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-800">资料型</span>
+                  ) : (
+                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">参考文献</span>
+                  )}
                   {f.parse_status === "pending" || f.parse_status === "processing" ? (
                     <>
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-500" aria-hidden />
@@ -269,8 +482,10 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
                     </>
                   ) : f.parse_status === "done" ? (
                     <span className="text-emerald-600">
-                      ✓ 已解析
-                      {typeof f.chunk_count === "number" ? ` · ${f.chunk_count} 条片段` : null}
+                      {f.ingest_kind === "material" ? "✓ 已保存到写作资料" : "✓ 已向量化"}
+                      {f.ingest_kind !== "material" && typeof f.chunk_count === "number"
+                        ? ` · ${f.chunk_count} 条片段`
+                        : null}
                     </span>
                   ) : f.parse_status === "failed" ? (
                     <>
@@ -281,7 +496,7 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
                         重新上传
                         <input
                           type="file"
-                          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                          accept={FILE_ACCEPT}
                           className="hidden"
                           onChange={(e) => {
                             const file = e.target.files?.[0];
@@ -292,6 +507,7 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
                                 await uploadReference(book.id, file);
                                 toast.success(`已上传 ${file.name}`);
                                 await refreshRefs();
+                                void qc.invalidateQueries({ queryKey: ["book", book.id] });
                               } catch {
                                 toast.error("上传失败");
                               }

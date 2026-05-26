@@ -12,7 +12,6 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.agents.chapter_writer import ChapterWriterAgent
 from app.agents.document_parser import DocumentParserAgent
 from app.agents.narrative_agent import NarrativeAgent
@@ -32,6 +31,7 @@ from app.schemas.chapter import (
     SelectionEditOut,
 )
 from app.services import book_service
+from app.services.figure_service import extract_and_store_figures, renumber_figures
 from app.services.memory_service import build_book_memory, extract_chapter_memory
 from app.services.outline_text import serialize_book_outline_markdown
 
@@ -85,13 +85,11 @@ def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> Non
         db.close()
 
 
+from app.llm.providers import resolve_book_ai_model
+
+
 def _chat_model_for_book(book) -> str:
-    raw = (book.ai_model or "").strip()
-    if settings.use_deepseek_writer():
-        if raw.startswith("deepseek-"):
-            return raw
-        return settings.DEEPSEEK_CHAT_MODEL
-    return raw or settings.CHAT_MODEL
+    return resolve_book_ai_model(book)
 
 
 @router.post("/{book_id}/narrative/ensure", response_model=NarrativeEnsureOut)
@@ -282,6 +280,7 @@ def reorder_chapters(
     for ch in all_ch:
         ch.index = id_to_new[ch.id]
     db.commit()
+    renumber_figures(book_id, db)
     rows = db.query(Chapter).filter(Chapter.book_id == book_id).order_by(Chapter.index.asc()).all()
     return rows
 
@@ -386,6 +385,12 @@ async def generate_chapter_stream(
                 row.word_count = len(full_text)
                 row.status = ChapterStatus.done
                 db.commit()
+                try:
+                    extract_and_store_figures(book_id, chapter_index, full_text, db)
+                except Exception:
+                    logger.exception(
+                        "extract figures failed book=%s ch=%s", book_id, chapter_index
+                    )
             asyncio.create_task(asyncio.to_thread(_memory_background, book_id, chapter_index, full_text))
             yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
         except Exception:
@@ -447,10 +452,13 @@ def edit_selection(
         ),
         "rewrite": "请按用户指令改写以下文字。只输出改写结果，不要解释。",
         "flowchart": (
-            "根据用户选中的文字及章节上下文，生成一张 Mermaid 流程图。"
-            "只输出 Mermaid 源码（可用 ```mermaid 围栏包裹），不要解释。"
-            "优先使用 flowchart TD 或 flowchart LR；节点中文标签必须用双引号包裹，例如 A[\"大模型\"]；"
-            "逻辑清晰、层次分明。"
+            "根据用户选中的文字及章节上下文，生成一张 Graphviz 流程图（DOT 语法）。"
+            "只输出 DOT 源码（可用 ```dot 或 ```graphviz 围栏包裹），不要解释。"
+            "使用 digraph 语法；节点中文标签必须用双引号包裹，例如 \"大模型\"；"
+            "逻辑清晰、层次分明。流程图与概念图均用 Graphviz。"
+            "若需左右对比两列内容：图级 rankdir=LR，每个 subgraph cluster 内设 rankdir=TB，"
+            "簇内节点用 -> 串联，对应行用 { rank=same; 左节点; 右节点; } 对齐，"
+            "两簇首节点间加 style=invis,weight=100 的隐形边使左右并排。"
         ),
     }
     if body.mode not in prompts:
@@ -462,8 +470,8 @@ def edit_selection(
 
     if body.mode == "flowchart":
         system = (
-            "你是技术写作助手，擅长用 Mermaid 表达流程与结构。"
-            "只输出 Mermaid 代码，不要 Markdown 标题或说明文字。"
+            "你是技术写作助手，擅长用 Graphviz DOT 表达流程与概念结构。"
+            "只输出 DOT 代码，不要 Markdown 标题或说明文字。"
         )
         instr = (body.instruction or "").strip() or "根据选中内容生成流程图。"
         user_msg = f"要求：{instr}{ctx_block}\n\n【选中正文】\n{body.text.strip()}"
@@ -483,6 +491,5 @@ def edit_selection(
         model=chat_model,
         max_tokens=4096,
         temperature=temp,
-        provider="writer",
     )
     return SelectionEditOut(text=out.strip())

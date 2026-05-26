@@ -1,0 +1,19 @@
+digraph ReAct {
+    rankdir=TB;
+    node [fontname="SimHei", fontcolor="#1C2833"];
+    edge [fontname="SimHei", fontcolor="#1C2833"];
+
+    start [label="开始", shape=box, style=rounded, fillcolor="#EBF5FB", color="#2E86C1"];
+    thought [label="思考 (Thought)\n分析当前状态，决定下一步", shape=box, style=rounded, fillcolor="#EBF5FB", color="#2E86C1"];
+    action [label="行动 (Action)\n输出结构化指令调用工具", shape=box, style=rounded, fillcolor="#EBF5FB", color="#2E86C1"];
+    observe [label="观察 (Observation)\n系统执行工具并返回结果", shape=box, style=rounded, fillcolor="#EBF5FB", color="#2E86C1"];
+    check [label="任务完成？\n或达到最大步数？", shape=diamond, fillcolor="#EBF5FB", color="#2E86C1"];
+    end [label="输出最终回复", shape=box, style=rounded, fillcolor="#EBF5FB", color="#2E86C1"];
+
+    start -> thought;
+    thought -> action;
+    action -> observe;
+    observe -> check;
+    check -> thought [label="否\n继续循环"];
+    check -> end [label="是"];
+}

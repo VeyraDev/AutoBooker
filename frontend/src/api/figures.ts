@@ -1,0 +1,142 @@
+import { client } from "@/api/client";
+
+export type FigureType = "flowchart" | "chart" | "figure" | "screenshot";
+export type FigureStatus = "pending" | "generated" | "uploaded" | "approved";
+
+export type FigureListItem = {
+  id: string;
+  figure_number: string | null;
+  type: FigureType;
+  status: FigureStatus;
+  caption: string | null;
+  chapter: number;
+  position_hint: string | null;
+  file_url: string | null;
+  raw_annotation: string | null;
+};
+
+export type FigureOut = {
+  id: string;
+  book_id: string;
+  chapter_index: number;
+  figure_number: string | null;
+  figure_type: FigureType;
+  status: FigureStatus;
+  caption: string | null;
+  raw_annotation: string | null;
+  file_url: string | null;
+  position_hint: string | null;
+  sort_order: number | null;
+  updated_at?: string | null;
+};
+
+/** 从 API 时间戳或本地毫秒时间生成缓存破坏参数 */
+export function figureFileVersion(updatedAt?: string | null, localMs?: number): number {
+  if (updatedAt) {
+    const t = Date.parse(updatedAt);
+    if (!Number.isNaN(t)) return t;
+  }
+  return localMs ?? Date.now();
+}
+
+export function resolveFigureUrl(
+  fileUrl: string | null | undefined,
+  fileVersion?: number | string | null,
+): string {
+  if (!fileUrl) return "";
+  let url = fileUrl;
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    const path = url.startsWith("/") ? url : `/${url}`;
+    const base = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
+    url = base ? `${base}${path}` : path;
+  }
+  const v = fileVersion != null && String(fileVersion) !== "" ? String(fileVersion) : "";
+  if (!v) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}v=${encodeURIComponent(v)}`;
+}
+
+export function formatFigureLabel(figureNumber: string | null | undefined, isTable = false): string {
+  if (!figureNumber) return isTable ? "表" : "图";
+  const parts = figureNumber.split("-");
+  if (parts.length >= 2) {
+    const prefix = isTable ? "表" : "图";
+    return `${prefix} ${parts[0]}-${parts[1]}`;
+  }
+  return isTable ? `表 ${figureNumber}` : `图 ${figureNumber}`;
+}
+
+/** 图解用短文案，避免把整段生成描述铺在图下 */
+export function shortenFigureCaption(text: string | null | undefined, maxLen = 120): string {
+  const t = (text ?? "").trim();
+  if (!t) return "";
+  const first = t.split(/[。！？\n]/)[0]?.trim() ?? t;
+  const base = first.length >= 20 ? first : t;
+  if (base.length <= maxLen) return base;
+  return `${base.slice(0, maxLen).trim()}…`;
+}
+
+export async function listFigures(bookId: string) {
+  const { data } = await client.get<{ items: FigureListItem[] }>(`/books/${bookId}/figures`);
+  return data.items;
+}
+
+export async function getFigure(bookId: string, figureId: string) {
+  const { data } = await client.get<FigureOut>(`/books/${bookId}/figures/${figureId}`);
+  return data;
+}
+
+/** 图像/流程图生成含 LLM 与外部 API，耗时可能超过默认 15s */
+const FIGURE_GENERATE_TIMEOUT_MS = 300_000;
+
+export async function generateFigure(
+  bookId: string,
+  figureId: string,
+  opts?: { chart_type?: string; sub_kind?: string },
+) {
+  const { data } = await client.post<FigureOut>(
+    `/books/${bookId}/figures/${figureId}/generate`,
+    opts ?? {},
+    { timeout: FIGURE_GENERATE_TIMEOUT_MS },
+  );
+  return data;
+}
+
+export async function uploadFigure(bookId: string, figureId: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await client.post<FigureOut>(`/books/${bookId}/figures/${figureId}/upload`, form, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 120000,
+  });
+  return data;
+}
+
+export async function approveFigure(bookId: string, figureId: string) {
+  const { data } = await client.patch<FigureOut>(`/books/${bookId}/figures/${figureId}/approve`);
+  return data;
+}
+
+export async function updateFigureCaption(bookId: string, figureId: string, caption: string) {
+  const { data } = await client.patch<FigureOut>(`/books/${bookId}/figures/${figureId}/caption`, { caption });
+  return data;
+}
+
+export async function syncChapterFigures(bookId: string, chapterIndex: number) {
+  const { data } = await client.post<{ tiptap_json: Record<string, unknown> }>(
+    `/books/${bookId}/chapters/${chapterIndex}/figures/sync`,
+  );
+  return data.tiptap_json;
+}
+
+export async function refreshChapterFigures(
+  bookId: string,
+  chapterIndex: number,
+  tiptapJson?: Record<string, unknown>,
+) {
+  const { data } = await client.post<{ items: FigureOut[] }>(
+    `/books/${bookId}/chapters/${chapterIndex}/figures/refresh`,
+    tiptapJson ? { tiptap_json: tiptapJson } : undefined,
+  );
+  return data.items;
+}

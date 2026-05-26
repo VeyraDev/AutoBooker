@@ -4,6 +4,7 @@ from app.models.chapter import Chapter, ChapterStatus
 from app.models.reference import ParseStatus, ReferenceChunk, ReferenceFile
 from app.models.memory import BookMemory, MemoryType
 from app.models.citation import Citation, CitationSource
+from app.models.figure import Figure, FigureStatus, FigureType
 
 __all__ = [
     "User",
@@ -20,4 +21,7 @@ __all__ = [
     "MemoryType",
     "Citation",
     "CitationSource",
+    "Figure",
+    "FigureStatus",
+    "FigureType",
 ]

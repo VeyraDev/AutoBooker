@@ -7,6 +7,9 @@ import { updateBook } from "@/api/books";
 import { audienceKey, topicKey } from "@/components/editor/SetupView";
 import type { Book, CitationStyle } from "@/types/book";
 
+const TARGET_WORDS_STEP = 5000;
+const TARGET_WORDS_MIN = 1000;
+
 const CITATION_OPTIONS: { value: CitationStyle; label: string }[] = [
   { value: "apa", label: "APA" },
   { value: "mla", label: "MLA" },
@@ -40,6 +43,12 @@ export default function BookSettingsModal({ open, book, bookId, onClose, onSaved
     if (fromApi) setTargetAudience(fromApi);
     else setTargetAudience(window.localStorage.getItem(audienceKey(bookId)) ?? "");
   }, [open, book, bookId]);
+
+  function bumpTargetWords(delta: number) {
+    const current = parseInt(targetWords, 10);
+    const base = Number.isNaN(current) ? book.target_words ?? 80000 : current;
+    setTargetWords(String(Math.max(TARGET_WORDS_MIN, base + delta)));
+  }
 
   async function handleSave() {
     const tw = parseInt(targetWords, 10);
@@ -109,7 +118,32 @@ export default function BookSettingsModal({ open, book, bookId, onClose, onSaved
           </label>
           <label className="block">
             <span className="text-slate-600">目标字数</span>
-            <input className="input mt-1 w-full" type="number" min={1000} value={targetWords} onChange={(e) => setTargetWords(e.target.value)} />
+            <div className="mt-1 flex gap-2">
+              <button
+                type="button"
+                className="btn-secondary h-10 w-10 shrink-0 px-0 text-lg leading-none"
+                aria-label={`减少 ${TARGET_WORDS_STEP} 字`}
+                onClick={() => bumpTargetWords(-TARGET_WORDS_STEP)}
+              >
+                −
+              </button>
+              <input
+                className="input min-w-0 flex-1 text-center"
+                type="number"
+                min={TARGET_WORDS_MIN}
+                step={TARGET_WORDS_STEP}
+                value={targetWords}
+                onChange={(e) => setTargetWords(e.target.value)}
+              />
+              <button
+                type="button"
+                className="btn-secondary h-10 w-10 shrink-0 px-0 text-lg leading-none"
+                aria-label={`增加 ${TARGET_WORDS_STEP} 字`}
+                onClick={() => bumpTargetWords(TARGET_WORDS_STEP)}
+              >
+                +
+              </button>
+            </div>
           </label>
           <label className="block">
             <span className="text-slate-600">主题要点</span>
