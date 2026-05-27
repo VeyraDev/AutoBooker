@@ -11,7 +11,6 @@ import ReviewPanel from "@/components/editor/ReviewPanel";
 import type { AutoSaveUi } from "@/components/editor/EditorTopBar";
 import type { CitationStyle } from "@/types/book";
 import type { OutlineChapter } from "@/types/outline";
-import type { LiteratureQuoteBlock } from "@/types/literature";
 
 export type RightPanelTab = "detail" | "refs" | "literature" | "ai" | "review";
 
@@ -33,13 +32,13 @@ type Props = {
   citationStyle?: CitationStyle | null;
   /** 参考资料插入到编辑器 */
   onInsertReference?: (plain: string, filename: string) => void;
-  /** 文献引用段落插入正文（含标记与摘录） */
-  onInsertLiteratureQuotes?: (quotes: LiteratureQuoteBlock[]) => void;
+  /** 文献叙述句预览插入（光标处） */
+  onPreviewCitationInsert?: (sentence: string) => void;
   chapterIndex?: number | null;
   editorSelectionText?: string;
   chapterContext?: string;
   onApplyReviewFix?: (quote: string, suggestion: string) => void;
-  onAiPreviewReady?: (payload: EditorAiPreviewPayload) => void;
+  onAiPreviewReady?: (payload: EditorAiPreviewPayload) => boolean | void;
   quotedFigureId?: string | null;
   quotedFigureAnnotation?: string;
   onClearFigureQuote?: () => void;
@@ -71,7 +70,7 @@ export default function RightPanel({
   onConsumeAssistantSeed,
   citationStyle = null,
   onInsertReference,
-  onInsertLiteratureQuotes,
+  onPreviewCitationInsert,
   chapterIndex = null,
   editorSelectionText = "",
   chapterContext = "",
@@ -205,15 +204,17 @@ export default function RightPanel({
           </div>
         )}
 
-        {activeTab === "literature" && (
+        <div className={activeTab === "literature" ? "" : "hidden"}>
           <LiteraturePanel
             bookId={bookId}
             citationStyle={citationStyle}
-            defaultQuery={activeChapter?.title ?? ""}
+            chapterIndex={chapterIndex ?? undefined}
+            defaultQuery=""
             mode="editor"
-            onInsertQuotes={(quotes) => onInsertLiteratureQuotes?.(quotes)}
+            chapterContext={chapterContext}
+            onPreviewInsert={onPreviewCitationInsert}
           />
-        )}
+        </div>
 
         {activeTab === "ai" && (
           <div className="flex min-h-[min(420px,65vh)] flex-col">
@@ -244,7 +245,9 @@ export default function RightPanel({
             chapterIndex={chapterIndex}
             chapterTitle={activeChapter?.title}
             selectionText={editorSelectionText}
+            chapterContext={chapterContext}
             onApplySuggestion={onApplyReviewFix}
+            onAiPreviewReady={onAiPreviewReady}
           />
         )}
       </div>

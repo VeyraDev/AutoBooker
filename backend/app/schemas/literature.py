@@ -1,13 +1,31 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.citation import CitationOut
 
 
 class LiteratureSearchIn(BaseModel):
-    query: str = Field(min_length=1, max_length=500)
+    query: str = Field(default="", max_length=500)
     rows: int = Field(default=20, ge=1, le=50)
+    refined_queries: list[str] | None = None
+    must_include: list[str] | None = None
+    must_exclude: list[str] | None = None
+    skip_refine: bool = False
+
+
+class LiteratureRefineQueryIn(BaseModel):
+    scope: Literal["book", "chapter"] = "book"
+    chapter_index: int | None = None
+    raw_query: str = Field(default="", max_length=500)
+
+
+class LiteratureRefineQueryOut(BaseModel):
+    refined_queries: list[str] = []
+    must_include: list[str] = []
+    must_exclude: list[str] = []
 
 
 class LiteraturePaperOut(BaseModel):
@@ -27,9 +45,16 @@ class LiteraturePaperOut(BaseModel):
 
 
 class LiteratureSearchOut(BaseModel):
-    items: list[LiteraturePaperOut]
+    papers: list[LiteraturePaperOut] = []
+    github: list[LiteraturePaperOut] = []
+    wiki: list[LiteraturePaperOut] = []
+    official_docs: list[LiteraturePaperOut] = []
+    refined_queries: list[str] = []
+    warnings: list[str] = []
     profile: str = ""
     source_hint: str = ""
+    # 兼容旧前端
+    items: list[LiteraturePaperOut] = []
 
 
 class LiteratureQuoteBlockOut(BaseModel):

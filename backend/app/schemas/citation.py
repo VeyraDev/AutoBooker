@@ -78,6 +78,17 @@ class CitationListOut(BaseModel):
     items: list[CitationOut]
 
 
+class CitationWeaveIn(BaseModel):
+    """根据光标上下文生成一句叙述性援引（不含 APA 括号）。"""
+
+    context: str = Field(default="", max_length=4000)
+
+
+class CitationWeaveOut(BaseModel):
+    sentence: str
+    citation_id: UUID
+
+
 class CitationApplyBibliographyOut(BaseModel):
     chapter_index: int | None
     bibliography_text: str

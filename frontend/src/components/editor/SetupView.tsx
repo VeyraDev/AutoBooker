@@ -360,7 +360,7 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
           <LiteraturePanel
             bookId={book.id}
             citationStyle={citation || book.citation_style || null}
-            defaultQuery={book.title?.trim() ?? ""}
+            defaultQuery=""
             mode="setup"
             embedded
           />

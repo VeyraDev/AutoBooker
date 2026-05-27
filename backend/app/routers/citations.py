@@ -22,6 +22,8 @@ from app.schemas.citation import (
     CitationListOut,
     CitationOut,
     CitationSourceOut,
+    CitationWeaveIn,
+    CitationWeaveOut,
 )
 from app.services import book_service
 from app.services.citation_service import (
@@ -33,6 +35,7 @@ from app.services.citation_service import (
     paper_to_dict,
     sync_bibliography_chapter,
 )
+from app.services.citation_weave import weave_citation_sentence
 
 router = APIRouter(prefix="/books", tags=["citations"])
 
@@ -116,6 +119,27 @@ def insert_citations(
         bibliography_lines=bib_lines,
         citations=[_to_out(r, book) for r in rows],
     )
+
+
+@router.post("/{book_id}/citations/{citation_id}/weave", response_model=CitationWeaveOut)
+def weave_citation_for_insert(
+    book_id: UUID,
+    citation_id: UUID,
+    body: CitationWeaveIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """结合光标上下文与文献摘录，生成一句可预览后插入正文的叙述性援引。"""
+    book = book_service.get_book_or_404(book_id, user, db)
+    row = (
+        db.query(Citation)
+        .filter(Citation.id == citation_id, Citation.book_id == book.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Citation not found")
+    sentence = weave_citation_sentence(book=book, citation=row, context=body.context)
+    return CitationWeaveOut(sentence=sentence, citation_id=row.id)
 
 
 @router.post("/{book_id}/citations/sync-bibliography", response_model=CitationApplyBibliographyOut)

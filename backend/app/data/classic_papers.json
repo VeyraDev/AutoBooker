@@ -1,0 +1,36 @@
+{
+  "concepts": {
+    "transformer": [
+      {"title": "Attention Is All You Need", "doi": "10.48550/arXiv.1706.03762"},
+      {"title": "BERT Pre-training of Deep Bidirectional Transformers"}
+    ],
+    "attention": [
+      {"title": "Attention Is All You Need", "doi": "10.48550/arXiv.1706.03762"}
+    ],
+    "gpt": [
+      {"title": "Language Models are Few-Shot Learners"},
+      {"title": "Improving Language Understanding by Generative Pre-Training"}
+    ],
+    "llm": [
+      {"title": "Language Models are Few-Shot Learners"},
+      {"title": "Attention Is All You Need"}
+    ],
+    "diffusion": [
+      {"title": "Denoising Diffusion Probabilistic Models"},
+      {"title": "High-Resolution Image Synthesis with Latent Diffusion Models"}
+    ],
+    "cnn": [
+      {"title": "ImageNet Classification with Deep Convolutional Neural Networks"}
+    ],
+    "rlhf": [
+      {"title": "Training language models to follow instructions with human feedback"}
+    ],
+    "rag": [
+      {"title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"}
+    ],
+    "fine-tuning": [
+      {"title": "LoRA Low-Rank Adaptation of Large Language Models"},
+      {"title": "Parameter-Efficient Transfer Learning for NLP"}
+    ]
+  }
+}

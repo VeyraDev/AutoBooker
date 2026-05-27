@@ -19,9 +19,13 @@ class ChapterWriterAgent:
         book_memory: dict[str, Any],
         reference_snippets: list[str],
         *,
+        citation_blocks: list[str] | None = None,
         model: str | None = None,
+        temperature: float | None = None,
     ) -> AsyncIterator[str]:
         constitution = (book_memory.get("narrative_constitution") or "").strip() or "（未生成叙事宪法，请按体裁常识写作。）"
+        cites = citation_blocks or []
+        policy = book_memory.get("citation_policy") or ""
         system = WRITER_SYSTEM_PROMPT.format(
             book_type=book_memory["book_type"],
             narrative_constitution=constitution,
@@ -37,8 +41,10 @@ class ChapterWriterAgent:
             citation_style=book_memory.get("citation_style", "无"),
             term_glossary=str(book_memory.get("terms", {})),
             target_words=chapter.get("estimated_words", 3000),
+            citation_policy=policy,
         )
-        user_msg = self._build_user_message(chapter, reference_snippets)
+        user_msg = self._build_user_message(chapter, reference_snippets, cites)
+        temp = temperature if temperature is not None else float(book_memory.get("writer_temperature", 0.75))
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
@@ -47,18 +53,26 @@ class ChapterWriterAgent:
             messages,
             model=model,
             max_tokens=8192,
-            temperature=0.75,
+            temperature=temp,
         ):
             yield token
 
-    def _build_user_message(self, chapter: dict[str, Any], snippets: list[str]) -> str:
+    def _build_user_message(
+        self,
+        chapter: dict[str, Any],
+        snippets: list[str],
+        citation_blocks: list[str],
+    ) -> str:
         parts = [
             f"本章摘要：{chapter.get('summary', '')}",
             f"核心论点：{'; '.join(chapter.get('key_points', []))}",
         ]
+        if citation_blocks:
+            parts.append("【已批准引用库】（正文引用只能来自以下条目）")
+            parts.extend([f"- {b}" for b in citation_blocks])
         if snippets:
-            parts.append("参考资料：")
-            parts.extend([f"- {s[:300]}..." if len(s) > 300 else f"- {s}" for s in snippets])
+            parts.append("【上传资料检索片段】")
+            parts.extend([f"- {s}" for s in snippets])
         parts.append(
             "请直接输出本章正文（可使用 Markdown 标题与列表）。"
             "不要写开场套话或与读者对话的句子；不要复述任务说明。"

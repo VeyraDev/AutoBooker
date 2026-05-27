@@ -35,6 +35,8 @@ class Citation(Base):
     external_source = Column(String(64), nullable=True)
     external_id = Column(String(500), nullable=True)
     quotable_snippet = Column(Text, nullable=True)
+    abstract_preview = Column(Text, nullable=True)
+    url = Column(String(2000), nullable=True)
     list_index = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

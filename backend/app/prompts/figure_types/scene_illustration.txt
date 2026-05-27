@@ -1,0 +1,6 @@
+Book scene illustration, approachable flat design, consistent with nonfiction publishing.
+Layout: balanced composition, focal subject clear.
+Style: {style_hint}, soft colors, professional not poster-like.
+Subject: {description}
+Negative: no cartoon exaggeration, no photorealistic faces, no readable text in image, no watermark, no movie poster composition.
+Minimal text glyphs; leave margin for figure caption.

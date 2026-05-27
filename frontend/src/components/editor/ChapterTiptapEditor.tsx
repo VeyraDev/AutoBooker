@@ -28,6 +28,7 @@ import {
   extractFigureBlocksFromDoc,
   tiptapHasRichStructure,
 } from "@/lib/buildTiptapDocWithFigures";
+import { cleanSuggestionText } from "@/lib/cleanSuggestion";
 import { migrateTiptapDoc } from "@/lib/migrateTiptapDoc";
 import type { EditorAiPreviewPayload } from "@/types/aiPreview";
 import { isRichMarkdown, markdownToTiptapDoc } from "@/lib/markdownToTiptapDoc";
@@ -146,21 +147,65 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     return `${b}\n[选中]\n${selected}\n[/选中]\n${a}`;
   }
 
-  function resolveQuoteRange(quote: string): { from: number; to: number } | null {
-    if (!editor) return null;
-    const q = quote.trim();
-    const { from, to, empty } = editor.state.selection;
-    const selected = empty ? "" : editor.state.doc.textBetween(from, to, "\n");
-    if (!empty && selected.trim() === q) return { from, to };
+  function normalizeMatchText(s: string): string {
+    return s.replace(/\s+/g, " ").trim();
+  }
+
+  function findTextRange(needle: string): { from: number; to: number } | null {
+    if (!editor || !needle) return null;
     let found: { from: number; to: number } | null = null;
     editor.state.doc.descendants((node, pos) => {
       if (found || !node.isText || !node.text) return;
-      const i = node.text.indexOf(q);
+      const i = node.text.indexOf(needle);
       if (i >= 0) {
-        found = { from: pos + i, to: pos + i + q.length };
+        found = { from: pos + i, to: pos + i + needle.length };
       }
     });
     return found;
+  }
+
+  function resolveQuoteRange(quote: string): { from: number; to: number } | null {
+    if (!editor) return null;
+    const q = quote.trim();
+    if (!q) {
+      const { from } = editor.state.selection;
+      return { from, to: from };
+    }
+    const { from, to, empty } = editor.state.selection;
+    const selected = empty ? "" : editor.state.doc.textBetween(from, to, "\n");
+    if (!empty && normalizeMatchText(selected) === normalizeMatchText(q)) return { from, to };
+    let found = findTextRange(q);
+    if (!found && q.length > 24) {
+      found = findTextRange(q.slice(0, Math.min(80, q.length)));
+    }
+    if (!found) {
+      const compact = normalizeMatchText(q);
+      if (compact.length >= 12) {
+        editor.state.doc.descendants((node, pos) => {
+          if (found || !node.isText || !node.text) return;
+          const norm = normalizeMatchText(node.text);
+          const i = norm.indexOf(compact);
+          if (i >= 0) {
+            found = { from: pos + i, to: pos + i + compact.length };
+          }
+        });
+      }
+    }
+    return found;
+  }
+
+  function safeSetContent(content: string | Record<string, unknown>): void {
+    if (!editor) return;
+    try {
+      editor.chain().setContent(content).run();
+    } catch (e) {
+      console.warn("[ChapterTiptapEditor] setContent failed", e);
+      try {
+        editor.chain().setContent(EMPTY_DOC).run();
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   function applyPreviewContent(preview: AiInlinePreviewData): boolean {
@@ -180,7 +225,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
 
   function showInlinePreview(payload: EditorAiPreviewPayload): boolean {
     if (!editor) return false;
-    const range = resolveQuoteRange(payload.quote);
+    const range = resolveQuoteRange(payload.quote.trim());
     if (!range) return false;
     editor.commands.setAiInlinePreview({
       ...range,
@@ -281,11 +326,11 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
         if (!preview) return;
         applyPreviewContent(preview);
         editor.commands.clearAiInlinePreview();
-        toast.success("已采用");
+        toast.success("已应用");
       },
       onReject: () => {
         editor.commands.clearAiInlinePreview();
-        toast("已放弃");
+        toast("已取消");
       },
     };
   });
@@ -314,7 +359,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     formatRecoveredChapterRef.current = chapter.id;
     const figBlocks = extractFigureBlocksFromDoc(tj as Record<string, unknown>);
     const rich = buildTiptapDocWithFigures(text, figBlocks);
-    editor.chain().setContent(migrateTiptapDoc(rich)).run();
+    safeSetContent(migrateTiptapDoc(rich));
   }, [chapter.id, chapter.content, editor, readOnly]);
 
   useEffect(() => {
@@ -338,7 +383,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     void syncChapterFigures(bookId, chapterIndex)
       .then((doc) => {
         const rich = enrichSyncedTiptapDoc(text, doc);
-        editor.chain().setContent(migrateTiptapDoc(rich)).run();
+        safeSetContent(migrateTiptapDoc(rich));
       })
       .catch(() => {
         figureSyncAttemptRef.current = null;
@@ -408,16 +453,16 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
         if (!raw.trim()) return;
         if (isRichMarkdown(raw)) {
           try {
-            editor.chain().setContent(markdownToTiptapDoc(raw)).run();
+            safeSetContent(markdownToTiptapDoc(raw));
             return;
           } catch {
             /* fall through */
           }
         }
         if (shouldParseAsMarkdown(raw)) {
-          editor.chain().setContent(plainTextMarkdownToTiptapDoc(raw)).run();
+          safeSetContent(plainTextMarkdownToTiptapDoc(raw));
         } else {
-          editor.chain().setContent(raw).run();
+          safeSetContent(raw);
         }
       },
       getSerialized: () => {
@@ -462,25 +507,21 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
       },
       replaceQuoteWithSuggestion: (quote: string, suggestion: string) => {
         if (!editor || !quote.trim() || !suggestion.trim()) return false;
+        const sug = cleanSuggestionText(suggestion);
+        if (!sug) return false;
         const q = quote.trim();
         const { from, to, empty } = editor.state.selection;
         const selected = empty ? "" : editor.state.doc.textBetween(from, to, "\n");
-        if (selected.trim() === q) {
-          editor.chain().focus().deleteRange({ from, to }).insertContent(suggestion.trim()).run();
+        if (normalizeMatchText(selected) === normalizeMatchText(q)) {
+          editor.chain().focus().deleteRange({ from, to }).insertContent(sug).run();
           return true;
         }
-        let replaced = false;
-        editor.state.doc.descendants((node, pos) => {
-          if (replaced || !node.isText || !node.text) return;
-          const i = node.text.indexOf(q);
-          if (i >= 0) {
-            const f = pos + i;
-            const t = f + q.length;
-            editor.chain().focus().deleteRange({ from: f, to: t }).insertContent(suggestion.trim()).run();
-            replaced = true;
-          }
-        });
-        return replaced;
+        const range = resolveQuoteRange(q);
+        if (range && range.from < range.to) {
+          editor.chain().focus().deleteRange(range).insertContentAt(range.from, sug).run();
+          return true;
+        }
+        return false;
       },
       getSelectionPlain: () => {
         if (!editor) return "";
@@ -512,8 +553,12 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
         const c = chapter.content as Record<string, unknown> | null | undefined;
         const text =
           markdownText ?? (typeof c?.text === "string" ? c.text : "");
-        const rich = text.trim() ? enrichSyncedTiptapDoc(text, doc) : doc;
-        editor.chain().setContent(migrateTiptapDoc(rich)).run();
+        try {
+          const rich = text.trim() ? enrichSyncedTiptapDoc(text, doc) : doc;
+          safeSetContent(migrateTiptapDoc(rich));
+        } catch (e) {
+          console.warn("[applySyncedDoc] failed, keeping current editor content", e);
+        }
       },
       updateFigureBlock: (figureId: string, patch: Record<string, unknown>) => {
         editor?.commands.updateFigureBlockAttrs(figureId, patch);

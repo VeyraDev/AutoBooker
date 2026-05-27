@@ -10,5 +10,11 @@ export default defineConfig({
     },
     server: {
         port: 5173,
+        proxy: {
+            "/static/figures": {
+                target: "http://localhost:8001",
+                changeOrigin: true,
+            },
+        },
     },
 });

@@ -114,6 +114,11 @@ export default function AiAssistantPanel({
 
       const res = await callAssistant(bookId, chapterIndex, body);
 
+      if (res.type === "confirm") {
+        toast(res.message || "请从功能面板选择具体操作，或说得更具体一些");
+        return;
+      }
+
       if (res.type === "figure") {
         onFigureReady?.({
           figure_id: res.figure_id,

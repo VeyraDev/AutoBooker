@@ -1,49 +1,80 @@
+import axios from "axios";
 import { ExternalLink, Loader2, Search } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
-import { listCitations, syncBibliographyChapter } from "@/api/citations";
 import {
-  addSelectedLiterature,
-  insertSelectedLiteratureQuotes,
-  searchLiterature,
-} from "@/api/literature";
+  loadLiteraturePanelState,
+  saveLiteraturePanelState,
+  useLiteratureSearchAbort,
+} from "@/hooks/useLiteraturePanelState";
+
+import { listCitations, syncBibliographyChapter, weaveCitation } from "@/api/citations";
+import { addSelectedLiterature, refineLiteratureQuery, searchLiterature } from "@/api/literature";
 import type { CitationStyle } from "@/types/book";
 import {
   literaturePaperKey,
   literaturePaperUrl,
   type CitationRecord,
   type LiteraturePaper,
-  type LiteratureQuoteBlock,
+  type LiteratureTab,
 } from "@/types/literature";
+
+const TAB_LABELS: Record<LiteratureTab, string> = {
+  papers: "论文",
+  github: "GitHub",
+  wiki: "百科",
+  official_docs: "官方文档",
+};
 
 type Props = {
   bookId: string;
   citationStyle: CitationStyle | null;
+  chapterIndex?: number;
   defaultQuery?: string;
   /** setup：设定页仅入库；editor：写作页可插入正文 */
   mode?: "setup" | "editor";
   /** 嵌入卡片时隐藏组件内小标题 */
   embedded?: boolean;
-  onInsertQuotes?: (quotes: LiteratureQuoteBlock[]) => void;
+  /** 写作页：光标附近上下文，用于生成融入句 */
+  chapterContext?: string;
+  /** 预览后插入正文（叙述句，非 APA 标记） */
+  onPreviewInsert?: (sentence: string) => void;
 };
 
 export default function LiteraturePanel({
   bookId,
   citationStyle,
+  chapterIndex,
   defaultQuery = "",
   mode = "editor",
   embedded = false,
-  onInsertQuotes,
+  chapterContext = "",
+  onPreviewInsert,
 }: Props) {
   const isSetup = mode === "setup";
+  const persistMode = mode;
+  const { begin: beginSearchAbort } = useLiteratureSearchAbort();
+  const hydrated = useRef(false);
+  const searchGen = useRef(0);
+
+  const emptyTabbed = (): Record<LiteratureTab, LiteraturePaper[]> => ({
+    papers: [],
+    github: [],
+    wiki: [],
+    official_docs: [],
+  });
+
   const [query, setQuery] = useState(defaultQuery);
   const [searching, setSearching] = useState(false);
-  const [results, setResults] = useState<LiteraturePaper[]>([]);
+  const [tab, setTab] = useState<LiteratureTab>("papers");
+  const [tabbed, setTabbed] = useState<Record<LiteratureTab, LiteraturePaper[]>>(emptyTabbed);
+  const [refinedQueries, setRefinedQueries] = useState<string[]>([]);
   const [sourceHint, setSourceHint] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<CitationRecord[]>([]);
   const [savedLoading, setSavedLoading] = useState(false);
+  const [savedSelected, setSavedSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
   const refreshSaved = useCallback(async () => {
@@ -65,27 +96,100 @@ export default function LiteraturePanel({
     if (defaultQuery.trim()) setQuery(defaultQuery.trim());
   }, [defaultQuery]);
 
-  async function runSearch() {
-    const q = query.trim();
-    if (!q) {
-      toast.error("请输入检索词");
-      return;
-    }
+  useEffect(() => {
+    if (hydrated.current) return;
+    hydrated.current = true;
+    const saved = loadLiteraturePanelState(bookId, persistMode);
+    if (!saved) return;
+    setQuery(saved.query);
+    setTab(saved.tab);
+    setTabbed(saved.tabbed);
+    setRefinedQueries(saved.refinedQueries);
+    setSourceHint(saved.sourceHint);
+    setSelected(new Set(saved.selectedKeys));
+  }, [bookId, persistMode]);
+
+  useEffect(() => {
+    if (!hydrated.current) return;
+    saveLiteraturePanelState(bookId, persistMode, {
+      query,
+      tab,
+      tabbed,
+      refinedQueries,
+      sourceHint,
+      selectedKeys: [...selected],
+    });
+  }, [bookId, persistMode, query, tab, tabbed, refinedQueries, sourceHint, selected]);
+
+  async function runRefine(scope: "book" | "chapter") {
     setSearching(true);
-    setSelected(new Set());
     try {
-      const res = await searchLiterature(bookId, q, 25);
-      setResults(res.items);
-      setSourceHint(res.source_hint || "");
-      if (!res.items.length) toast("未找到相关文献，可尝试英文关键词或换检索词");
+      const res = await refineLiteratureQuery(bookId, {
+        scope,
+        chapterIndex: scope === "chapter" ? chapterIndex : undefined,
+        rawQuery: query.trim(),
+      });
+      setRefinedQueries(res.refined_queries);
+      if (res.refined_queries.length) {
+        setQuery(res.refined_queries[0]);
+      }
+      toast.success("已生成检索词");
     } catch {
-      toast.error("文献检索失败");
-      setResults([]);
-      setSourceHint("");
+      toast.error("生成检索词失败");
     } finally {
       setSearching(false);
     }
   }
+
+  async function runSearch() {
+    const q = query.trim();
+    if (!q && !refinedQueries.length) {
+      toast.error("请输入检索词或先生成检索词");
+      return;
+    }
+    const gen = ++searchGen.current;
+    setSearching(true);
+    setSelected(new Set());
+    const signal = beginSearchAbort();
+    try {
+      const res = await searchLiterature(bookId, {
+        query: q,
+        rows: 25,
+        refined_queries: refinedQueries.length ? refinedQueries : undefined,
+        skip_refine: refinedQueries.length > 0,
+        signal,
+      });
+      setTabbed({
+        papers: res.papers ?? [],
+        github: res.github ?? [],
+        wiki: res.wiki ?? [],
+        official_docs: res.official_docs ?? [],
+      });
+      setRefinedQueries(res.refined_queries ?? refinedQueries);
+      setSourceHint(res.source_hint || "");
+      const total =
+        (res.papers?.length ?? 0) +
+        (res.github?.length ?? 0) +
+        (res.wiki?.length ?? 0) +
+        (res.official_docs?.length ?? 0);
+      if (res.warnings?.length) {
+        toast(res.warnings[0], { icon: "⚠️", duration: 5000 });
+      }
+      if (!total) toast("未找到相关文献，可尝试英文关键词或换检索词");
+      else toast.success(`检索完成，共 ${total} 条`);
+    } catch (err) {
+      if (axios.isCancel(err)) return;
+      if (axios.isAxiosError(err) && err.code === "ECONNABORTED") {
+        toast.error("检索超时（约 3 分钟），请减少检索词或稍后重试");
+      } else {
+        toast.error("文献检索失败，请查看网络或稍后重试");
+      }
+    } finally {
+      if (gen === searchGen.current) setSearching(false);
+    }
+  }
+
+  const results = tabbed[tab] ?? [];
 
   function toggle(p: LiteraturePaper) {
     const k = literaturePaperKey(p);
@@ -97,7 +201,8 @@ export default function LiteraturePanel({
     });
   }
 
-  const selectedPapers = results.filter((p) => selected.has(literaturePaperKey(p)));
+  const allPapers = [...tabbed.papers, ...tabbed.github, ...tabbed.wiki, ...tabbed.official_docs];
+  const selectedPapers = allPapers.filter((p) => selected.has(literaturePaperKey(p)));
 
   async function handleAddToLibrary(syncBibliography = false) {
     if (!selectedPapers.length) {
@@ -128,44 +233,61 @@ export default function LiteraturePanel({
     }
   }
 
-  async function handleInsertSelected() {
-    if (!selectedPapers.length) {
-      toast.error("请先勾选文献");
-      return;
-    }
-    if (!citationStyle) {
-      toast.error("请先在书稿设定中选择引用格式");
+  function selectAllResults() {
+    const keys = results.map((p) => literaturePaperKey(p));
+    setSelected(new Set(keys));
+  }
+
+  function clearResultSelection() {
+    setSelected(new Set());
+  }
+
+  function toggleSaved(id: string) {
+    setSavedSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAllSaved() {
+    setSavedSelected(new Set(saved.map((c) => c.id)));
+  }
+
+  async function handleInsertFromLibrary() {
+    if (!isSetup && !onPreviewInsert) return;
+    const ids = [...savedSelected];
+    if (!ids.length) {
+      toast.error("请在下方引用库勾选要插入的文献");
       return;
     }
     setBusy(true);
     try {
-      const { quotes } = await insertSelectedLiteratureQuotes(bookId, selectedPapers);
-      const usable = quotes.filter((q) => q.quote_body?.trim());
-      if (!usable.length) {
-        toast.error("未能抓取可引用正文，请换一条文献或稍后重试");
+      const sentences: string[] = [];
+      for (const id of ids) {
+        const { sentence } = await weaveCitation(bookId, id, chapterContext);
+        if (sentence.trim()) sentences.push(sentence.trim());
+      }
+      if (!sentences.length) {
+        toast.error("未能生成可插入句子");
         return;
       }
-      onInsertQuotes?.(usable);
-      const partial = usable.some((q) => q.fetch_status !== "ok");
-      toast.success(
-        partial
-          ? `已插入 ${usable.length} 段引用（部分为摘要摘录）`
-          : `已插入 ${usable.length} 段可引用正文，并同步参考文献章节`,
-      );
-      await refreshSaved();
-      setSelected(new Set());
+      onPreviewInsert?.(sentences.join("\n\n"));
+      toast.success("已生成预览，请确认后应用");
+      setSavedSelected(new Set());
     } catch {
-      toast.error("插入引用失败");
+      toast.error("生成融入句失败");
     } finally {
       setBusy(false);
     }
   }
 
   const hintText = sourceHint
-    ? `当前书类检索源：${sourceHint}。勾选后插入正文将抓取并解析可引用片段（非仅标记）。`
+    ? `当前书类检索源：${sourceHint}。检索后请「加入引用库」；在下方引用库中插入正文。`
     : isSetup
-      ? "按书类自动选择检索源；勾选后加入本书引用库。"
-      : "检索结果按被引量与年份综合排序；标题可点击跳转原文。";
+      ? "按书类自动选择检索源；勾选后加入本书引用库（自动解析摘录）。"
+      : "检索后加入引用库；在下方本书引用库勾选并插入正文（叙述性援引，书目仅出现在参考文献章）。";
 
   return (
     <div className="space-y-4 text-sm">
@@ -174,6 +296,37 @@ export default function LiteraturePanel({
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400">文献检索</p>
         ) : null}
         <p className="text-[11px] leading-relaxed text-slate-500">{hintText}</p>
+        <div className="flex flex-wrap gap-2">
+          {isSetup ? (
+            <button
+              type="button"
+              className="btn-secondary h-9 px-3 text-xs"
+              disabled={searching}
+              onClick={() => void runRefine("book")}
+            >
+              生成检索词
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn-secondary h-9 px-3 text-xs"
+                disabled={searching || chapterIndex == null}
+                onClick={() => void runRefine("chapter")}
+              >
+                基于本章
+              </button>
+              <button
+                type="button"
+                className="btn-secondary h-9 px-3 text-xs"
+                disabled={searching}
+                onClick={() => void runRefine("book")}
+              >
+                基于全书
+              </button>
+            </>
+          )}
+        </div>
         <div className="flex gap-2">
           <input
             className="input h-9 flex-1 text-sm"
@@ -196,50 +349,63 @@ export default function LiteraturePanel({
         </div>
       </div>
 
-      {results.length > 0 ? (
+      {(tabbed.papers.length > 0 ||
+        tabbed.github.length > 0 ||
+        tabbed.wiki.length > 0 ||
+        tabbed.official_docs.length > 0) ? (
         <div className="space-y-2">
+          <div className="flex flex-wrap gap-1">
+            {(Object.keys(TAB_LABELS) as LiteratureTab[]).map((k) => (
+              <button
+                key={k}
+                type="button"
+                className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${
+                  tab === k ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-600"
+                }`}
+                onClick={() => setTab(k)}
+              >
+                {TAB_LABELS[k]} ({tabbed[k].length})
+              </button>
+            ))}
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-slate-500">检索结果（已选 {selected.size}）</span>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="text-[10px] text-violet-700 hover:underline"
+                disabled={!results.length}
+                onClick={selectAllResults}
+              >
+                全选本页
+              </button>
+              {selected.size > 0 ? (
+                <button
+                  type="button"
+                  className="text-[10px] text-slate-500 hover:underline"
+                  onClick={clearResultSelection}
+                >
+                  清空
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
+                disabled={busy || !selected.size}
+                onClick={() => void handleAddToLibrary(false)}
+              >
+                加入引用库
+              </button>
               {isSetup ? (
-                <>
-                  <button
-                    type="button"
-                    className="btn-secondary h-8 px-3 text-xs disabled:opacity-50"
-                    disabled={busy || !selected.size}
-                    onClick={() => void handleAddToLibrary(false)}
-                  >
-                    加入引用库
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
-                    disabled={busy || !selected.size}
-                    onClick={() => void handleAddToLibrary(true)}
-                  >
-                    加入并同步参考文献章
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="text-xs font-medium text-violet-700 hover:underline disabled:opacity-50"
-                    disabled={busy || !selected.size}
-                    onClick={() => void handleAddToLibrary(false)}
-                  >
-                    仅加入引用库
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
-                    disabled={busy || !selected.size}
-                    onClick={() => void handleInsertSelected()}
-                  >
-                    插入选中
-                  </button>
-                </>
-              )}
+                <button
+                  type="button"
+                  className="btn-secondary h-8 px-3 text-xs disabled:opacity-50"
+                  disabled={busy || !selected.size}
+                  onClick={() => void handleAddToLibrary(true)}
+                >
+                  并同步参考文献章
+                </button>
+              ) : null}
             </div>
           </div>
           <ul
@@ -318,26 +484,75 @@ export default function LiteraturePanel({
       ) : null}
 
       <div className="border-t border-slate-100 pt-3">
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">本书引用库</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">本书引用库</p>
+          {!isSetup && saved.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="text-[10px] text-violet-700 hover:underline"
+                onClick={selectAllSaved}
+              >
+                全选
+              </button>
+              <button
+                type="button"
+                className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
+                disabled={busy || !savedSelected.size}
+                onClick={() => void handleInsertFromLibrary()}
+              >
+                插入正文
+              </button>
+            </div>
+          ) : isSetup && saved.length > 0 ? (
+            <button
+              type="button"
+              className="text-[10px] text-violet-700 hover:underline"
+              onClick={selectAllSaved}
+            >
+              全选
+            </button>
+          ) : null}
+        </div>
         {savedLoading ? (
           <p className="mt-2 text-xs text-slate-500">加载中…</p>
         ) : saved.length === 0 ? (
           <p className="mt-2 text-xs text-slate-500">
-            暂无已保存引用。上传含「参考文献」章节的 PDF 也会自动解析条目。
+            暂无已保存引用。检索后加入此处；完整书目仅出现在书末参考文献章。
           </p>
         ) : (
-          <ul className="mt-2 max-h-[160px] space-y-1.5 overflow-y-auto text-[11px] text-slate-600">
-            {saved.map((c) => (
-              <li key={c.id} className="rounded border border-slate-100 bg-white/70 px-2 py-1">
-                <span className="font-medium text-slate-700">
-                  {c.list_index != null ? `[${c.list_index}] ` : ""}
-                  {c.title.slice(0, 80)}
-                </span>
-                <span className="block text-slate-400">
-                  {c.source === "uploaded_file" ? "来自上传文件" : "来自检索"}
-                </span>
-              </li>
-            ))}
+          <ul className="mt-2 max-h-[200px] space-y-1.5 overflow-y-auto text-[11px] text-slate-600">
+            {saved.map((c) => {
+              const checked = savedSelected.has(c.id);
+              return (
+                <li
+                  key={c.id}
+                  className={`flex gap-2 rounded border px-2 py-1.5 ${
+                    checked ? "border-violet-300 bg-violet-50/80" : "border-slate-100 bg-white/70"
+                  }`}
+                >
+                  {!isSetup ? (
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 shrink-0"
+                      checked={checked}
+                      onChange={() => toggleSaved(c.id)}
+                      aria-label={`选择：${c.title}`}
+                    />
+                  ) : null}
+                  <div className="min-w-0 flex-1">
+                    <span className="font-medium text-slate-700">
+                      {c.list_index != null ? `[${c.list_index}] ` : ""}
+                      {c.title.slice(0, 80)}
+                    </span>
+                    <span className="block text-slate-400">
+                      {c.source === "uploaded_file" ? "来自上传文件" : "来自检索"}
+                      {c.quotable_snippet ? " · 已解析摘录" : ""}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

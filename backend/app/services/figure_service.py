@@ -68,8 +68,9 @@ def extract_and_store_figures(
     db: Session,
     *,
     preserve_approved: bool = False,
+    prune_unused: bool = True,
 ) -> int:
-    """解析章节标注并增量写入 figures 表；不删除已生成/已上传/已批准的图。"""
+    """解析章节标注并增量写入 figures 表；默认删除正文中已不存在的图记录。"""
     hits = _collect_annotation_matches(content)
     existing = get_chapter_figures(book_id, chapter_index, db)
     used_ids: set[UUID] = set()
@@ -108,7 +109,7 @@ def extract_and_store_figures(
             continue
         if preserve_approved and fig.status == FigureStatus.approved:
             continue
-        if fig.status != FigureStatus.pending:
+        if not prune_unused and fig.status != FigureStatus.pending:
             continue
         db.delete(fig)
 
@@ -337,16 +338,16 @@ def sync_figures_to_tiptap(
 
     lock_key = (book_id.int % (2**31 - 1), chapter_index)
     db.execute(text("SELECT pg_advisory_xact_lock(:k1, :k2)"), {"k1": lock_key[0], "k2": lock_key[1]})
-    extract_and_store_figures(book_id, chapter_index, content, db)
+    extract_and_store_figures(book_id, chapter_index, content, db, prune_unused=True)
     figures = get_chapter_figures(book_id, chapter_index, db)
-    fig_by_pos: list[tuple[int, Figure]] = []
-    for fig_type, pattern in ANNOTATION_PATTERNS.items():
-        for match in pattern.finditer(content):
-            # find matching figure by sort order among same-chapter figures
-            pass
-
-    # Build ordered figure queue from DB (same order as annotations in text)
-    fig_queue = list(figures)
+    hits = _collect_annotation_matches(content)
+    used_sync: set[UUID] = set()
+    fig_queue: list[Figure] = []
+    for _start, fig_type, raw in hits:
+        fig = _match_figure_for_annotation(fig_type, raw, figures, used_sync)
+        if fig:
+            used_sync.add(fig.id)
+            fig_queue.append(fig)
     fig_idx = 0
 
     # Collect all annotation spans in document order

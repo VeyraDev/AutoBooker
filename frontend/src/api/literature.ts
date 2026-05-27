@@ -3,18 +3,49 @@ import type {
   CitationRecord,
   LiteraturePaper,
   LiteratureQuoteBlock,
+  LiteratureRefineResult,
   LiteratureSearchResult,
 } from "@/types/literature";
 
+export async function refineLiteratureQuery(
+  bookId: string,
+  opts: { scope: "book" | "chapter"; chapterIndex?: number; rawQuery?: string },
+): Promise<LiteratureRefineResult> {
+  const { data } = await client.post<LiteratureRefineResult>(
+    `/books/${bookId}/literature/refine-query`,
+    {
+      scope: opts.scope,
+      chapter_index: opts.chapterIndex,
+      raw_query: opts.rawQuery ?? "",
+    },
+    { timeout: 60000 },
+  );
+  return data;
+}
+
 export async function searchLiterature(
   bookId: string,
-  query: string,
-  rows = 25,
+  opts: {
+    query?: string;
+    rows?: number;
+    refined_queries?: string[];
+    must_include?: string[];
+    must_exclude?: string[];
+    skip_refine?: boolean;
+    signal?: AbortSignal;
+  },
 ): Promise<LiteratureSearchResult> {
   const { data } = await client.post<LiteratureSearchResult>(
     `/books/${bookId}/literature/search`,
-    { query, rows },
-    { timeout: 60000 },
+    {
+      query: opts.query ?? "",
+      rows: opts.rows ?? 25,
+      refined_queries: opts.refined_queries,
+      must_include: opts.must_include,
+      must_exclude: opts.must_exclude,
+      skip_refine: opts.skip_refine ?? false,
+    },
+    { timeout: 180000, signal: opts.signal },
   );
   return data;
 }

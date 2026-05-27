@@ -9,7 +9,7 @@ from uuid import UUID
 import fitz
 import markdown
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -56,14 +56,20 @@ def build_markdown(book: Book, chapters: list[Chapter]) -> str:
 
 def build_docx_bytes(book: Book, chapters: list[Chapter]) -> bytes:
     doc = Document()
-    doc.add_heading(book.title, level=1)
+    black = RGBColor(0, 0, 0)
+    title_p = doc.add_heading(book.title, level=0)
+    for run in title_p.runs:
+        run.font.color.rgb = black
     for ch in chapters:
-        doc.add_heading(f"第 {ch.index} 章　{ch.title}", level=2)
+        ch_p = doc.add_heading(f"第 {ch.index} 章　{ch.title}", level=1)
+        for run in ch_p.runs:
+            run.font.color.rgb = black
         if ch.summary:
             p = doc.add_paragraph()
             run = p.add_run(ch.summary.strip())
             run.italic = True
             run.font.size = Pt(11)
+            run.font.color.rgb = black
         body_md = chapter_content_to_markdown(ch.content if isinstance(ch.content, dict) else None)
         if body_md:
             append_chapter_content_to_document(

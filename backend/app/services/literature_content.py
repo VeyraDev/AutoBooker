@@ -168,20 +168,45 @@ def fetch_paper_quotable_snippet(paper: dict[str, Any]) -> tuple[str, str]:
     return "", "failed"
 
 
+def _unescape_snippet(text: str) -> str:
+    import html
+
+    s = html.unescape((text or "").strip())
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def _body_source_label(source: str, source_label: str) -> str:
+    src = (source or "").lower()
+    if src == "wikipedia":
+        return "维基百科"
+    if src == "github":
+        return "GitHub"
+    if src == "official_doc":
+        return source_label or "官方文档"
+    if src in ("crossref", "semantic_scholar", "arxiv"):
+        return source_label or "文献"
+    return source_label or "资料"
+
+
 def build_quote_paragraph(
     *,
     in_text_mark: str,
     snippet: str,
     source_label: str,
     title: str,
+    source: str = "",
 ) -> str:
-    """生成可插入正文的引用段落（含标记与摘录）。"""
-    mark = in_text_mark.strip()
-    body = snippet.strip()
+    """生成可插入正文的叙述句（不含 APA 括号标记，仅自然表述 + 摘录）。"""
+    body = _unescape_snippet(snippet)
+    label = _body_source_label(source, source_label)
+    t = (title or "").strip()
     if not body:
-        return mark
-    if mark:
-        lead = f"{mark} 援引{source_label}《{title}》指出："
-    else:
-        lead = f"据{source_label}《{title}》："
-    return f"{lead}「{body}」"
+        if t:
+            return f"{label}《{t}》可作为本章参考。"
+        return ""
+    if label == "维基百科" and t:
+        return f"维基百科《{t}》指出：「{body}」"
+    if t:
+        return f"据{label}《{t}》记载：「{body}」"
+    return f"据{label}记载：「{body}」"

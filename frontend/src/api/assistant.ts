@@ -40,7 +40,18 @@ export type AssistantFigureResponse = {
   intent?: string;
 };
 
-export type AssistantResponse = AssistantTextResponse | AssistantFigureResponse;
+export type AssistantConfirmResponse = {
+  type: "confirm";
+  message: string;
+  intent?: string;
+  confidence?: number;
+  candidates?: string[];
+};
+
+export type AssistantResponse =
+  | AssistantTextResponse
+  | AssistantFigureResponse
+  | AssistantConfirmResponse;
 
 export async function callAssistant(
   bookId: string,

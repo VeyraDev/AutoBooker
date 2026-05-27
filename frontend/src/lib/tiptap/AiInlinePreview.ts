@@ -26,11 +26,19 @@ function mapPreview(
 function buildDecorations(state: EditorState, preview: AiInlinePreviewData): DecorationSet {
   const decos: Decoration[] = [];
 
-  decos.push(
-    Decoration.inline(preview.from, preview.to, {
-      class: preview.kind === "replace" ? "ai-inline-source" : "ai-inline-context",
-    }),
-  );
+  if (preview.kind === "replace" && preview.to > preview.from) {
+    decos.push(
+      Decoration.inline(preview.from, preview.to, {
+        class: "ai-inline-source",
+      }),
+    );
+  } else if (preview.kind === "insert") {
+    decos.push(
+      Decoration.inline(preview.from, preview.to, {
+        class: "ai-inline-insert-marker",
+      }),
+    );
+  }
 
   const widget = document.createElement("div");
   widget.className = "ai-inline-widget";
@@ -42,19 +50,22 @@ function buildDecorations(state: EditorState, preview: AiInlinePreviewData): Dec
   const acceptBtn = document.createElement("button");
   acceptBtn.type = "button";
   acceptBtn.className = "ai-inline-btn ai-inline-btn-accept";
-  acceptBtn.textContent = "采用";
+  acceptBtn.textContent = "应用";
   acceptBtn.dataset.aiAction = "accept";
 
   const rejectBtn = document.createElement("button");
   rejectBtn.type = "button";
   rejectBtn.className = "ai-inline-btn ai-inline-btn-reject";
-  rejectBtn.textContent = "放弃";
+  rejectBtn.textContent = "取消";
   rejectBtn.dataset.aiAction = "reject";
 
   toolbar.append(acceptBtn, rejectBtn);
 
   const body = document.createElement("div");
-  body.className = "ai-inline-body";
+  body.className =
+    preview.kind === "insert"
+      ? "ai-inline-body ai-inline-text-insert"
+      : "ai-inline-body ai-inline-text-replace";
   const pre = document.createElement("div");
   pre.className = "ai-inline-text";
   pre.textContent = preview.suggestion;

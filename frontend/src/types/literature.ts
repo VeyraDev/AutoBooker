@@ -15,10 +15,24 @@ export interface LiteraturePaper {
 }
 
 export interface LiteratureSearchResult {
+  papers: LiteraturePaper[];
+  github: LiteraturePaper[];
+  wiki: LiteraturePaper[];
+  official_docs: LiteraturePaper[];
+  refined_queries: string[];
+  warnings?: string[];
   items: LiteraturePaper[];
   profile?: string;
   source_hint?: string;
 }
+
+export interface LiteratureRefineResult {
+  refined_queries: string[];
+  must_include: string[];
+  must_exclude: string[];
+}
+
+export type LiteratureTab = "papers" | "github" | "wiki" | "official_docs";
 
 export interface LiteratureQuoteBlock {
   citation_id: string;
@@ -47,6 +61,9 @@ export function literaturePaperUrl(p: LiteraturePaper): string {
   if (p.source === "github" && p.external_id) {
     return `https://github.com/${p.external_id}`;
   }
+  if (p.source === "official_doc" && p.url?.trim()) {
+    return p.url.trim();
+  }
   if (p.doi?.trim()) return `https://doi.org/${p.doi.replace(/^https?:\/\/doi\.org\//i, "")}`;
   if (p.semantic_scholar_id?.trim()) {
     return `https://www.semanticscholar.org/paper/${p.semantic_scholar_id}`;
@@ -69,6 +86,8 @@ export interface CitationRecord {
   source: "literature_search" | "uploaded_file" | "manual";
   source_file_id?: string | null;
   raw_text?: string | null;
+  quotable_snippet?: string | null;
+  external_source?: string | null;
   list_index?: number | null;
   formatted?: string | null;
   created_at: string;

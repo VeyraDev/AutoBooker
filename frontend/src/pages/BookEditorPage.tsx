@@ -1099,15 +1099,17 @@ export default function BookEditorPage() {
                       editorRef.current?.insertReferenceQuote(plain, fn);
                       editorRef.current?.focusEditor();
                     }}
-                    onInsertLiteratureQuotes={(quotes) => {
-                      editorRef.current?.insertLiteratureQuotes(
-                        quotes.map((q) => ({
-                          quote_body: q.quote_body,
-                          bibliography_line: q.bibliography_line,
-                        })),
-                      );
+                    onPreviewCitationInsert={(sentence) => {
+                      const ok = editorRef.current?.showAiPreview({
+                        quote: "",
+                        suggestion: sentence,
+                        kind: "insert",
+                      });
+                      if (!ok) {
+                        toast.error("无法在光标处预览，请先将光标置于正文");
+                        return;
+                      }
                       editorRef.current?.focusEditor();
-                      void qc.invalidateQueries({ queryKey: ["outline", bookId] });
                     }}
                     chapterIndex={chapterIndex}
                     editorSelectionText={editorSelectionText}
@@ -1124,10 +1126,11 @@ export default function BookEditorPage() {
                     onAiPreviewReady={(payload) => {
                       const ok = editorRef.current?.showAiPreview(payload);
                       if (!ok) {
-                        toast.error("未在正文中定位到选区，请重新选中后重试");
-                        return;
+                        toast.error("未在正文中定位到对应片段，请核对原文或手动选中后重试");
+                        return false;
                       }
                       editorRef.current?.focusEditor();
+                      return true;
                     }}
                     quotedFigureId={quotedFigureId}
                     quotedFigureAnnotation={quotedFigureAnnotation}

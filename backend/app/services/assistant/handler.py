@@ -63,9 +63,10 @@ async def execute_image_generation(
             "gen_flowchart": FigureType.flowchart,
             "gen_chart": FigureType.chart,
             "gen_figure": FigureType.figure,
-            "regen_figure": FigureType.flowchart,
         }
         ftype = type_map.get(i, FigureType.figure)
+        if i == "regen_figure":
+            ftype = FigureType.figure
         desc = params.get("_description") or ctx.user_text or ctx.selected_text or ""
         fig = create_figure_from_annotation(
             book.id, chapter_index, ftype, desc, db
@@ -77,6 +78,8 @@ async def execute_image_generation(
         fig.figure_type = FigureType.chart
     elif i == "gen_figure":
         fig.figure_type = FigureType.figure
+    elif i == "regen_figure" and figure_id:
+        pass  # 保留原 figure_type
 
     db.commit()
     fig = generate_figure_asset(
@@ -85,6 +88,7 @@ async def execute_image_generation(
         db,
         chart_type=params.get("chart_type"),
         sub_kind=params.get("sub_kind"),
+        intent=i,
     )
     return {
         "type": "figure",
@@ -139,6 +143,18 @@ async def handle_assistant_request(
     )
 
     intent = classify_intent(ctx)
+    if intent.get("needs_confirmation") and not explicit_intent:
+        return {
+            "type": "confirm",
+            "message": "请确认您希望执行的操作：生成流程图、数据图、插图，还是文字编辑？",
+            "intent": intent.get("intent"),
+            "confidence": intent.get("confidence"),
+            "candidates": intent.get("confirmation_candidates") or [],
+        }
+    if intent.get("extracted_params"):
+        ep = intent["extracted_params"]
+        if ep.get("sub_kind") and not sub_kind:
+            sub_kind = ep.get("sub_kind")
     system, user, params = build_execution_prompt(intent, ctx)
     if chart_type:
         params["chart_type"] = chart_type

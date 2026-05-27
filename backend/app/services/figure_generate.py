@@ -13,9 +13,7 @@ from app.config import settings
 from app.llm.providers import resolve_book_ai_model
 from app.models.book import Book
 from app.models.figure import Figure, FigureStatus, FigureType
-from app.services.figure_render.chart import generate_chart
-from app.services.figure_render.figure_ai import generate_figure_image
-from app.services.figure_render.flowchart import generate_flowchart
+from app.services.figure_render.visual_dispatcher import render_figure_asset
 
 
 def _chat_model_for_book(book: Book) -> str:
@@ -40,6 +38,7 @@ def generate_figure_asset(
     *,
     chart_type: str | None = None,
     sub_kind: str | None = None,
+    intent: str = "gen_figure",
 ) -> Figure:
     if fig.figure_type == FigureType.screenshot:
         raise ValueError("screenshot 类型仅支持上传，不支持自动生成")
@@ -54,29 +53,29 @@ def generate_figure_asset(
     model = _chat_model_for_book(book)
     render_source = ""
 
-    if fig.figure_type == FigureType.flowchart:
-        render_source, png = generate_flowchart(
-            description,
+    try:
+        render_source, png = render_figure_asset(
+            fig,
+            book,
             out_path,
+            intent=intent,
+            chart_type=chart_type,
+            sub_kind=sub_kind,
             model=model,
-            book_type=book.book_type.value if book.book_type else "",
         )
-    elif fig.figure_type == FigureType.chart:
-        render_source, png = generate_chart(
-            description,
-            out_path,
-            model=model,
-            chart_type_hint=chart_type,
-        )
-    elif fig.figure_type == FigureType.figure:
-        render_source, png = generate_figure_image(
-            description,
-            out_path,
-            style_type=book.style_type or "",
-            sub_kind=sub_kind or "figure",
-        )
-    else:
-        raise ValueError(f"不支持的图表类型: {fig.figure_type}")
+    except Exception as first_err:
+        if intent in ("gen_figure", "regen_figure") and sub_kind != "architecture":
+            render_source, png = render_figure_asset(
+                fig,
+                book,
+                out_path,
+                intent=intent,
+                chart_type=chart_type,
+                sub_kind=sub_kind or "concept_diagram",
+                model=model,
+            )
+        else:
+            raise first_err
 
     if not png.is_file():
         raise RuntimeError(f"图表文件未写入: {png}")

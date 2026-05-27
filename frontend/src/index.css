@@ -1199,11 +1199,16 @@ body.theme-dark {
     @apply min-h-0 flex-1;
   }
 
-  /* AI 内联预览：原选区加深 + 建议块在光标下方（紫/灰，非红绿） */
+  /* AI 内联预览：灰底=将删原文，紫底=新增，蓝线=插入位置 */
   .ai-inline-source {
-    background: rgb(148 163 184 / 0.35);
+    background: rgb(148 163 184 / 0.42);
     border-radius: 2px;
     box-decoration-break: clone;
+  }
+  .ai-inline-insert-marker {
+    background: rgb(59 130 246 / 0.2);
+    border-bottom: 2px solid rgb(59 130 246 / 0.65);
+    border-radius: 1px;
   }
   .ai-inline-context {
     background: rgb(148 163 184 / 0.18);
@@ -1234,7 +1239,13 @@ body.theme-dark {
     @apply border-slate-200 bg-white text-slate-600 hover:bg-slate-50;
   }
   .ai-inline-body {
-    @apply rounded-md border border-violet-200/80 bg-violet-50/30 px-3 pb-3 pt-8 text-sm leading-relaxed text-slate-800;
+    @apply rounded-md border px-3 pb-3 pt-8 text-sm leading-relaxed text-slate-800;
+  }
+  .ai-inline-body.ai-inline-text-replace {
+    @apply border border-violet-200/80 bg-violet-50/40;
+  }
+  .ai-inline-body.ai-inline-text-insert {
+    @apply border border-blue-200/80 bg-blue-50/35;
   }
   .ai-inline-text {
     @apply whitespace-pre-wrap text-[15px] leading-relaxed;

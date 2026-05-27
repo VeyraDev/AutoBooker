@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.agents.literature_agent import LiteratureAgent, format_paper_citation
@@ -19,6 +19,8 @@ from app.schemas.literature import (
     LiteratureInsertQuotesOut,
     LiteraturePaperOut,
     LiteratureQuoteBlockOut,
+    LiteratureRefineQueryIn,
+    LiteratureRefineQueryOut,
     LiteratureSearchIn,
     LiteratureSearchOut,
 )
@@ -36,6 +38,7 @@ from app.services.literature_profiles import (
     literature_profile,
     profile_source_hint,
 )
+from app.services.literature_query_refiner import refine_literature_query
 
 router = APIRouter(prefix="/books", tags=["literature"])
 
@@ -43,6 +46,35 @@ router = APIRouter(prefix="/books", tags=["literature"])
 def _paper_payload(p) -> dict:
     d = p.model_dump() if hasattr(p, "model_dump") else dict(p)
     return {k: v for k, v in d.items() if v is not None}
+
+
+def _to_papers(raw: list) -> list[LiteraturePaperOut]:
+    return [LiteraturePaperOut.model_validate(x) for x in raw]
+
+
+@router.post("/{book_id}/literature/refine-query", response_model=LiteratureRefineQueryOut)
+def literature_refine_query(
+    book_id: UUID,
+    body: LiteratureRefineQueryIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book = book_service.get_book_or_404(book_id, user, db)
+    data = refine_literature_query(
+        db,
+        book,
+        raw_query=body.raw_query,
+        scope=body.scope,
+        chapter_index=body.chapter_index,
+    )
+    book.last_literature_query = {
+        "query": body.raw_query,
+        "refined_queries": data["refined_queries"],
+        "must_include": data["must_include"],
+        "must_exclude": data["must_exclude"],
+    }
+    db.commit()
+    return LiteratureRefineQueryOut.model_validate(data)
 
 
 @router.post("/{book_id}/literature/search", response_model=LiteratureSearchOut)
@@ -55,12 +87,54 @@ def literature_search(
     book = book_service.get_book_or_404(book_id, user, db)
     profile = literature_profile(book.book_type, book.style_type)
     agent = LiteratureAgent()
-    raw = agent.search_by_profile(body.query, profile, rows=body.rows)
-    items = [LiteraturePaperOut.model_validate(x) for x in raw]
+
+    queries = body.refined_queries or []
+    must_inc = body.must_include or []
+    must_exc = body.must_exclude or []
+
+    if not queries and not body.skip_refine:
+        refined = refine_literature_query(db, book, raw_query=body.query)
+        queries = refined["refined_queries"]
+        must_inc = refined.get("must_include") or must_inc
+        must_exc = refined.get("must_exclude") or must_exc
+    elif not queries:
+        queries = [body.query.strip()] if body.query.strip() else []
+
+    if not queries:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "请提供检索词或先生成检索词")
+
+    tabbed = agent.search_tabbed(
+        queries,
+        profile,
+        rows=body.rows,
+        must_include=must_inc,
+        must_exclude=must_exc,
+    )
+
+    papers = _to_papers(tabbed["papers"])
+    github = _to_papers(tabbed["github"])
+    wiki = _to_papers(tabbed["wiki"])
+    official = _to_papers(tabbed["official_docs"])
+    flat = papers + github + wiki + official
+
+    book.last_literature_query = {
+        "query": body.query,
+        "refined_queries": tabbed.get("refined_queries") or queries,
+        "must_include": must_inc,
+        "must_exclude": must_exc,
+    }
+    db.commit()
+
     return LiteratureSearchOut(
-        items=items,
+        papers=papers,
+        github=github,
+        wiki=wiki,
+        official_docs=official,
+        refined_queries=tabbed.get("refined_queries") or queries,
+        warnings=tabbed.get("warnings") or [],
         profile=profile,
         source_hint=profile_source_hint(profile),
+        items=flat,
     )
 
 
@@ -146,6 +220,7 @@ def literature_insert_selected(
             snippet=use_snippet,
             source_label=label,
             title=row.title,
+            source=src,
         )
         quote_blocks.append(
             LiteratureQuoteBlockOut(

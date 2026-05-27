@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.agents.literature_agent import format_paper_citation
+from app.services.citation_formats import format_in_text_by_source
 from app.models.book import Book, CitationStyle
 from app.models.chapter import Chapter
 from app.models.citation import Citation, CitationSource
@@ -45,7 +46,8 @@ def paper_to_dict(paper: dict[str, Any]) -> dict[str, Any]:
 
 def build_format_cache(paper: dict[str, Any], styles: list[str] | None = None) -> dict[str, str]:
     styles = styles or ["apa", "mla", "chicago", "gb_t7714"]
-    return {s: format_paper_citation(paper, s) for s in styles}
+    payload = {**paper, "source": paper.get("source") or ""}
+    return {s: format_paper_citation(payload, s) for s in styles}
 
 
 def create_citation_from_paper(
@@ -72,8 +74,13 @@ def create_citation_from_paper(
         if existing:
             if snippet and not existing.quotable_snippet:
                 existing.quotable_snippet = snippet
-                db.commit()
-                db.refresh(existing)
+            ab = data.get("abstract_preview")
+            if ab and not getattr(existing, "abstract_preview", None):
+                existing.abstract_preview = ab
+            if data.get("url") and not getattr(existing, "url", None):
+                existing.url = data.get("url")
+            db.commit()
+            db.refresh(existing)
             return existing
     if ext_src and ext_id:
         existing = (
@@ -88,8 +95,13 @@ def create_citation_from_paper(
         if existing:
             if snippet and not existing.quotable_snippet:
                 existing.quotable_snippet = snippet
-                db.commit()
-                db.refresh(existing)
+            ab = data.get("abstract_preview")
+            if ab and not getattr(existing, "abstract_preview", None):
+                existing.abstract_preview = ab
+            if data.get("url") and not getattr(existing, "url", None):
+                existing.url = data.get("url")
+            db.commit()
+            db.refresh(existing)
             return existing
 
     style = book.citation_style.value if book.citation_style else "apa"
@@ -108,6 +120,8 @@ def create_citation_from_paper(
         external_source=ext_src,
         external_id=ext_id,
         quotable_snippet=snippet,
+        abstract_preview=data.get("abstract_preview"),
+        url=data.get("url"),
     )
     db.add(row)
     db.flush()
@@ -133,6 +147,9 @@ def _reindex_citations(db: Session, book_id: uuid.UUID, style: str) -> None:
             "authors": row.authors or [],
             "journal": row.journal or "",
             "doi": row.doi or "",
+            "source": row.external_source or "",
+            "external_id": row.external_id or "",
+            "url": getattr(row, "url", None),
         }
         cache = dict(row.format_cache or {})
         cache[style] = format_paper_citation(paper, style, index=i if style == "gb_t7714" else None)
@@ -149,12 +166,29 @@ def formatted_line(citation: Citation, style: str) -> str:
         "authors": citation.authors or [],
         "journal": citation.journal or "",
         "doi": citation.doi or "",
+        "source": citation.external_source or "",
+        "external_id": citation.external_id or "",
+        "url": getattr(citation, "url", None),
     }
     idx = citation.list_index if style == "gb_t7714" else None
     return format_paper_citation(paper, style, index=idx)
 
 
 def in_text_mark(citation: Citation, style: str) -> str:
+    ext = (citation.external_source or "").lower()
+    if ext in ("github", "wikipedia", "official_doc"):
+        return format_in_text_by_source(
+            {
+                "source": ext,
+                "title": citation.title,
+                "authors": citation.authors or [],
+                "year": citation.year,
+                "external_id": citation.external_id,
+                "url": getattr(citation, "url", None),
+            },
+            style,
+            list_index=citation.list_index,
+        )
     authors = citation.authors or []
     year = citation.year or "n.d."
     if style == "gb_t7714":

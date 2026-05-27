@@ -26,6 +26,19 @@ export async function insertCitations(
   return data;
 }
 
+export async function weaveCitation(
+  bookId: string,
+  citationId: string,
+  context: string,
+): Promise<{ sentence: string; citation_id: string }> {
+  const { data } = await client.post<{ sentence: string; citation_id: string }>(
+    `/books/${bookId}/citations/${citationId}/weave`,
+    { context },
+    { timeout: 90000 },
+  );
+  return data;
+}
+
 export async function syncBibliographyChapter(bookId: string): Promise<{
   chapter_index: number | null;
   bibliography_text: string;

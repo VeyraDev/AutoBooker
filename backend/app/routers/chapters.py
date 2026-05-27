@@ -14,6 +14,11 @@ from sqlalchemy.orm import Session
 
 from app.agents.chapter_writer import ChapterWriterAgent
 from app.agents.document_parser import DocumentParserAgent
+from app.constants.style_types import StyleType
+from app.services.citation_grounding import (
+    build_citation_policy_block,
+    merge_grounding_for_writer,
+)
 from app.agents.narrative_agent import NarrativeAgent
 from app.database import SessionLocal, get_db
 from app.models.book import Book
@@ -90,6 +95,13 @@ from app.llm.providers import resolve_book_ai_model
 
 def _chat_model_for_book(book) -> str:
     return resolve_book_ai_model(book)
+
+
+def _writer_temperature_for_book(book: Book) -> float:
+    st = (book.style_type or "").strip()
+    if st in (StyleType.popular_science.value, StyleType.insight_opinion.value):
+        return 0.55
+    return 0.75
 
 
 @router.post("/{book_id}/narrative/ensure", response_model=NarrativeEnsureOut)
@@ -306,12 +318,29 @@ def cancel_generation(
 async def generate_chapter_stream(
     book_id: UUID,
     chapter_index: int,
+    force_generate: bool = False,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     book = book_service.get_book_or_404(book_id, user, db)
     book_id = book.id
     ch = _get_chapter(book_id, chapter_index, db)
+
+    if not force_generate:
+        from app.models.citation import Citation
+        from app.constants.style_types import StyleType as ST
+
+        cite_count = db.query(Citation).filter(Citation.book_id == book_id).count()
+        st = (book.style_type or "").strip()
+        min_cites = 1 if st in (ST.practical_guide.value, ST.reference_tool.value) else 0
+        if st in (ST.popular_science.value, ST.insight_opinion.value):
+            min_cites = 3
+        if min_cites and cite_count < min_cites:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"本书引用库不足（当前 {cite_count} 条，建议至少 {min_cites} 条）。"
+                "请先在文献搜索中勾选入库，或加 ?force_generate=true 继续生成。",
+            )
 
     writer = ChapterWriterAgent()
     chat_model = _chat_model_for_book(book)
@@ -365,11 +394,26 @@ async def generate_chapter_stream(
             memory = build_book_memory(book_id, chapter_index, db)
             parser = DocumentParserAgent(db, book_id)
             summary_q = (ch.summary or "") + " " + ch.title
-            snippets = parser.retrieve(summary_q.strip() or (book_live.title or ""), top_k=4)
+            rag_snippets = parser.retrieve(summary_q.strip() or (book_live.title or ""), top_k=4)
+            cite_blocks, rag_trimmed = merge_grounding_for_writer(
+                db,
+                book_live,
+                rag_snippets,
+                chapter_context=summary_q,
+            )
+            memory["citation_policy"] = build_citation_policy_block(
+                bool(cite_blocks), bool(rag_trimmed)
+            )
+            memory["writer_temperature"] = _writer_temperature_for_book(book_live)
             chapter_dict = _chapter_payload(ch, total_chapters)
 
             async for token in writer.stream(
-                chapter_dict, memory, snippets, model=chat_model
+                chapter_dict,
+                memory,
+                rag_trimmed,
+                citation_blocks=cite_blocks,
+                model=chat_model,
+                temperature=memory.get("writer_temperature"),
             ):
                 full_text += token
                 yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"

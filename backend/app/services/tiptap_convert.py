@@ -5,7 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from docx import Document
-from docx.shared import Pt
+from docx.enum.text import WD_LINE_SPACING
+from docx.shared import Inches, Pt, RGBColor
+
+BLACK = RGBColor(0, 0, 0)
+HEADING_PT = {1: 22, 2: 18, 3: 16, 4: 14, 5: 13, 6: 12}
+BODY_PT = 12
+CODE_PT = 10
 
 
 def _inline_to_markdown(nodes: list[dict[str, Any]] | None) -> str:
@@ -158,24 +164,42 @@ def chapter_content_to_markdown(content: dict[str, Any] | None) -> str:
 # --- DOCX ---
 
 
-def _add_inline_to_paragraph(paragraph, nodes: list[dict[str, Any]] | None) -> None:
+def _style_run(run, *, size_pt: int = BODY_PT, bold: bool = False, italic: bool = False, mono: bool = False) -> None:
+    run.font.color.rgb = BLACK
+    run.font.size = Pt(size_pt)
+    run.bold = bold
+    run.italic = italic
+    if mono:
+        run.font.name = "Consolas"
+
+
+def _add_inline_to_paragraph(paragraph, nodes: list[dict[str, Any]] | None, *, size_pt: int = BODY_PT) -> None:
     if not nodes:
         return
     for node in nodes:
         t = node.get("type")
         if t == "text":
             run = paragraph.add_run(str(node.get("text") or ""))
+            bold = italic = mono = False
             for m in node.get("marks") or []:
                 mt = m.get("type")
                 if mt == "bold":
-                    run.bold = True
+                    bold = True
                 elif mt == "italic":
-                    run.italic = True
+                    italic = True
                 elif mt == "code":
-                    run.font.name = "Consolas"
-                    run.font.size = Pt(10)
+                    mono = True
+            _style_run(run, size_pt=CODE_PT if mono else size_pt, bold=bold, italic=italic, mono=mono)
         elif t == "hardBreak":
-            paragraph.add_run("\n")
+            run = paragraph.add_run("\n")
+            _style_run(run, size_pt=size_pt)
+
+
+def _body_paragraph_format(p) -> None:
+    pf = p.paragraph_format
+    pf.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+    pf.line_spacing = 1.5
+    pf.space_after = Pt(6)
 
 
 def _add_paragraph_bullet(doc: Document, content: list[dict[str, Any]] | None) -> None:
@@ -183,7 +207,9 @@ def _add_paragraph_bullet(doc: Document, content: list[dict[str, Any]] | None) -
         p = doc.add_paragraph(style="List Bullet")
     except Exception:
         p = doc.add_paragraph()
-        p.add_run("• ")
+        r = p.add_run("• ")
+        _style_run(r)
+    _body_paragraph_format(p)
     _add_inline_to_paragraph(p, content)
 
 
@@ -192,19 +218,58 @@ def _add_paragraph_numbered(doc: Document, content: list[dict[str, Any]] | None)
         p = doc.add_paragraph(style="List Number")
     except Exception:
         p = doc.add_paragraph()
+    _body_paragraph_format(p)
     _add_inline_to_paragraph(p, content)
+
+
+def _table_cell_text(cell: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for sub in cell.get("content") or []:
+        if isinstance(sub, dict) and sub.get("type") == "paragraph":
+            parts.append(_inline_to_markdown(sub.get("content")))
+    return " ".join(p for p in parts if p).strip()
 
 
 def _docx_block(doc: Document, node: dict[str, Any]) -> None:
     t = node.get("type")
     if t == "paragraph":
         p = doc.add_paragraph()
+        _body_paragraph_format(p)
         _add_inline_to_paragraph(p, node.get("content"))
         return
     if t == "heading":
         level = int((node.get("attrs") or {}).get("level") or 1)
-        level = max(1, min(3, level))
-        doc.add_heading(_inline_to_markdown(node.get("content")), level=level)
+        level = max(1, min(6, level))
+        h = doc.add_heading(_inline_to_markdown(node.get("content")), level=min(level, 3))
+        for para in h.paragraphs:
+            for run in para.runs:
+                _style_run(run, size_pt=HEADING_PT.get(level, 14), bold=True)
+        return
+    if t == "table":
+        rows_in = [r for r in (node.get("content") or []) if isinstance(r, dict) and r.get("type") == "tableRow"]
+        if not rows_in:
+            return
+        max_cols = 0
+        for row in rows_in:
+            cells = [c for c in (row.get("content") or []) if isinstance(c, dict)]
+            max_cols = max(max_cols, len(cells))
+        max_cols = max(1, max_cols)
+        table = doc.add_table(rows=len(rows_in), cols=max_cols)
+        try:
+            table.style = "Table Grid"
+        except Exception:
+            pass
+        for ri, row in enumerate(rows_in):
+            cells = [c for c in (row.get("content") or []) if isinstance(c, dict)]
+            for ci in range(max_cols):
+                cell = cells[ci] if ci < len(cells) else {}
+                text = _table_cell_text(cell) if cell else ""
+                cell_p = table.rows[ri].cells[ci].paragraphs[0]
+                cell_p.clear()
+                if text:
+                    run = cell_p.add_run(text)
+                    _style_run(run, size_pt=BODY_PT)
+        doc.add_paragraph("")
         return
     if t == "bulletList":
         for item in node.get("content") or []:
@@ -231,20 +296,30 @@ def _docx_block(doc: Document, node: dict[str, Any]) -> None:
             if isinstance(sub, dict) and sub.get("type") == "paragraph":
                 p = doc.add_paragraph()
                 p.paragraph_format.left_indent = Pt(18)
+                _body_paragraph_format(p)
                 _add_inline_to_paragraph(p, sub.get("content"))
         return
     if t == "codeBlock":
         p = doc.add_paragraph()
+        _body_paragraph_format(p)
         run = p.add_run(_inline_to_markdown(node.get("content")))
-        run.font.name = "Consolas"
-        run.font.size = Pt(10)
+        _style_run(run, size_pt=CODE_PT, mono=True)
+        return
+    if t in ("diagramBlock", "mermaidBlock"):
+        attrs = node.get("attrs") or {}
+        code = str(attrs.get("code") or "").strip()
+        lang = str(attrs.get("engine") or "mermaid")
+        p = doc.add_paragraph()
+        _body_paragraph_format(p)
+        run = p.add_run(f"[{lang}]\n{code}")
+        _style_run(run, size_pt=CODE_PT, mono=True)
         return
     if t == "horizontalRule":
-        doc.add_paragraph("—" * 24)
+        p = doc.add_paragraph("—" * 24)
+        for run in p.runs:
+            _style_run(run)
         return
     if t == "figureBlock":
-        from docx.shared import Inches
-
         attrs = node.get("attrs") or {}
         path = str(attrs.get("fileUrl") or attrs.get("file_path") or "")
         caption = str(attrs.get("caption") or attrs.get("rawAnnotation") or "")
@@ -255,13 +330,19 @@ def _docx_block(doc: Document, node: dict[str, Any]) -> None:
 
             local = settings.figures_path / path.replace("/static/figures/", "", 1)
             if local.is_file():
-                doc.add_paragraph(label)
+                lp = doc.add_paragraph(label)
+                for run in lp.runs:
+                    _style_run(run, bold=True)
                 doc.add_picture(str(local), width=Inches(5.5))
                 if caption:
                     cp = doc.add_paragraph(f"图解：{caption}")
                     cp.paragraph_format.space_before = Pt(6)
+                    for run in cp.runs:
+                        _style_run(run, italic=True)
                 return
         p = doc.add_paragraph(f"[{label}: {caption or '待生成'}]")
+        for run in p.runs:
+            _style_run(run)
         return
 
 

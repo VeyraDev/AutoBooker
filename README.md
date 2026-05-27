@@ -11,24 +11,41 @@
 
 - Node.js 18+ / npm
 - Python 3.11+（推荐）
-- **PostgreSQL + pgvector 扩展**（本地推荐 Docker 镜像 `pgvector/pgvector:pg16`，迁移脚本会执行 `CREATE EXTENSION vector`）
-- 阿里云百炼 **DashScope API Key**（`.env` 中 `DASHSCOPE_API_KEY`）
+- **PostgreSQL + pgvector 扩展**（本地推荐 Docker 镜像 `pgvector/pgvector:pg16`）
+- `.env` 文件来自 `backend/.env.example`
+- 可选：Graphviz（用于流程图/图形渲染，Windows 上默认会自动探测 `C:\Program Files\Graphviz\bin`）
 
-### 后端 Phase 2 相关环境变量（节选）
+### 后端配置
 
-见 `backend/.env.example`：`DASHSCOPE_*`、`EMBEDDING_*`、`CHAT_MODEL`、`UPLOAD_DIR`。
+复制 `backend/.env.example` 为 `backend/.env`，并根据实际环境设置：
 
-### Phase 2 API（后端已实现，前端未接）
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `CORS_ORIGINS`
+- `UPLOAD_DIR`
+- `DASHSCOPE_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `KIMI_API_KEY` / `DOUBAO_API_KEY` / `BAIDU_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `GROK_API_KEY`
+- `FIGURE_IMAGE_PROVIDER`
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/books/{id}/references/upload` | 上传 PDF/DOCX，后台解析并向量化 |
-| GET | `/books/{id}/references` | 参考资料列表 |
-| POST | `/books/{id}/references/search` | RAG 检索（调试） |
-| POST | `/books/{id}/outline` | 生成大纲并写入 `chapters` |
-| GET/PUT | `/books/{id}/outline` | 读取/保存大纲；`PUT` 可 `confirm_start_writing` |
-| GET/PUT | `/books/{id}/chapters/{n}` | 读取/更新章节 |
-| POST | `/books/{id}/chapters/{n}/generate` | SSE 流式生成章节正文 |
+当前后端配置文件为 `backend/app/config.py`，默认使用 `.env` 中的设置。
+
+### 后端主要路由
+
+当前后端包含以下主要路由组：
+
+- `auth`
+- `books`
+- `references`
+- `literature`
+- `citations`
+- `review`
+- `outline`
+- `chapters`
+- `figures`
+- `assistant`
+
+此外提供健康检查接口：
+
+- `GET /health`
 
 更多说明见 `backend/PHASE2_NOTES.md`。
 
@@ -53,15 +70,19 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-4. 选择性创建 `.env` 文件（可选）：
+4. 复制 `.env.example` 为 `.env`，并根据实际情况填写所需环境变量：
 
-```text
-DATABASE_URL=postgresql+psycopg://postgres:dev@localhost:5432/autobooker
-JWT_SECRET=your-secret
-CORS_ORIGINS=http://localhost:5173
+```powershell
+copy .env.example .env
 ```
 
-5. 启动后端服务：
+5. 运行数据库迁移：
+
+```powershell
+alembic upgrade head
+```
+
+6. 启动后端服务：
 
 ```powershell
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8001

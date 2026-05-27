@@ -12,19 +12,24 @@ from xml.etree import ElementTree
 
 import httpx
 
+from app.services.literature_classic import classic_queries_for_text
+from app.services.literature_docs import search_official_docs
+from app.services.literature_normalize import normalize_paper, paper_url
 from app.services.literature_profiles import (
     PROFILE_ACADEMIC,
-    PROFILE_NONFICTION,
+    PROFILE_PRACTICAL,
+    PROFILE_POPULAR,
     PROFILE_TECHNICAL,
-    SOURCE_LABELS,
+    source_quota,
 )
+from app.services.literature_rerank import apply_must_filters, quality_gate, rerank_papers
 
 logger = logging.getLogger(__name__)
 
 CROSSREF_WORKS = "https://api.crossref.org/works"
 SEMANTIC_SCHOLAR = "https://api.semanticscholar.org/graph/v1/paper/search"
 _NS_ATOM = {"atom": "http://www.w3.org/2005/Atom"}
-_WIKI_UA = {"User-Agent": "AutoBooker/1.0 (literature search; contact: dev@local)"}
+from app.services.literature_http import WIKI_HEADERS, literature_client
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
@@ -33,50 +38,8 @@ def _has_cjk(text: str) -> bool:
     return bool(_CJK_RE.search(text))
 
 
-def paper_url(paper: dict[str, Any]) -> str:
-    """生成可跳转的外部链接。"""
-    if (paper.get("url") or "").strip():
-        return paper["url"].strip()
-    source = (paper.get("source") or "").lower()
-    ext_id = (paper.get("external_id") or "").strip()
-    if source == "wikipedia" and ext_id:
-        lang = (paper.get("wiki_lang") or "zh").strip() or "zh"
-        return f"https://{lang}.wikipedia.org/wiki/{quote(ext_id.replace(' ', '_'))}"
-    if source == "arxiv" and ext_id:
-        aid = ext_id.replace("arxiv:", "")
-        return f"https://arxiv.org/abs/{aid}"
-    if source == "github" and ext_id:
-        return f"https://github.com/{ext_id}"
-    doi = (paper.get("doi") or "").strip()
-    if doi:
-        return f"https://doi.org/{doi.removeprefix('https://doi.org/')}"
-    ss_id = (paper.get("semantic_scholar_id") or "").strip()
-    if ss_id:
-        return f"https://www.semanticscholar.org/paper/{ss_id}"
-    title = (paper.get("title") or "").strip()
-    if title:
-        return f"https://scholar.google.com/scholar?q={quote(title)}"
-    return ""
-
-
 def _normalize_paper(it: dict[str, Any], *, source: str) -> dict[str, Any]:
-    paper = {
-        "title": it.get("title") or "",
-        "year": it.get("year"),
-        "authors": list(it.get("authors") or []),
-        "journal": it.get("journal") or "",
-        "doi": (it.get("doi") or "").strip(),
-        "citations": int(it.get("citations") or 0),
-        "type": it.get("type"),
-        "source": source,
-        "source_label": SOURCE_LABELS.get(source, source),
-        "semantic_scholar_id": (it.get("semantic_scholar_id") or "").strip() or None,
-        "external_id": (it.get("external_id") or "").strip() or None,
-        "abstract_preview": (it.get("abstract_preview") or "").strip() or None,
-        "wiki_lang": it.get("wiki_lang"),
-    }
-    paper["url"] = paper_url(paper)
-    return paper
+    return normalize_paper(it, source=source)
 
 
 def _crossref_item_to_paper(it: dict[str, Any]) -> dict[str, Any]:
@@ -119,7 +82,7 @@ def search_crossref(query: str, rows: int = 30) -> list[dict[str, Any]]:
         "select": "DOI,title,author,issued,container-title,is-referenced-by-count,type,URL",
     }
     try:
-        with httpx.Client(timeout=25.0) as client:
+        with literature_client(timeout=25.0) as client:
             r = client.get(CROSSREF_WORKS, params=params)
             r.raise_for_status()
             data = r.json()
@@ -138,7 +101,7 @@ def search_semantic_scholar(query: str, rows: int = 30) -> list[dict[str, Any]]:
         "fields": "paperId,title,year,authors,venue,externalIds,citationCount,influentialCitationCount,url",
     }
     try:
-        with httpx.Client(timeout=25.0) as client:
+        with literature_client(timeout=25.0) as client:
             r = client.get(SEMANTIC_SCHOLAR, params=params)
             r.raise_for_status()
             data = r.json()
@@ -178,7 +141,7 @@ def lookup_crossref_by_doi(doi: str) -> dict[str, Any] | None:
         return None
     url = f"{CROSSREF_WORKS}/{doi}"
     try:
-        with httpx.Client(timeout=20.0) as client:
+        with literature_client(timeout=20.0) as client:
             r = client.get(url)
             r.raise_for_status()
             it = r.json().get("message") or {}
@@ -279,8 +242,8 @@ def search_wikipedia(query: str, rows: int = 15, *, lang: str | None = None) -> 
             "utf8": 1,
         }
         try:
-            with httpx.Client(timeout=20.0, headers=_WIKI_UA) as client:
-                r = client.get(api, params=params)
+            with literature_client(timeout=20.0) as client:
+                r = client.get(api, params=params, headers=WIKI_HEADERS)
                 r.raise_for_status()
                 data = r.json()
         except Exception as e:
@@ -317,9 +280,9 @@ def search_arxiv(query: str, rows: int = 20) -> list[dict[str, Any]]:
         "sortBy": "relevance",
         "sortOrder": "descending",
     }
-    url = "http://export.arxiv.org/api/query"
+    url = "https://export.arxiv.org/api/query"
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with literature_client(timeout=30.0) as client:
             r = client.get(url, params=params)
             r.raise_for_status()
             root = ElementTree.fromstring(r.text)
@@ -378,7 +341,7 @@ def search_github(query: str, rows: int = 15) -> list[dict[str, Any]]:
         headers["Authorization"] = f"Bearer {token}"
     params = {"q": query, "sort": "stars", "order": "desc", "per_page": min(rows, 30)}
     try:
-        with httpx.Client(timeout=25.0, headers=headers) as client:
+        with httpx.Client(timeout=25.0, follow_redirects=True, headers=headers) as client:
             r = client.get("https://api.github.com/search/repositories", params=params)
             r.raise_for_status()
             data = r.json()
@@ -411,6 +374,11 @@ def search_github(query: str, rows: int = 15) -> list[dict[str, Any]]:
 
 
 def format_paper_citation(paper: dict[str, Any], style: str, index: int | None = None) -> str:
+    from app.services.citation_formats import format_citation_by_source
+
+    src = (paper.get("source") or "").lower()
+    if src in ("github", "wikipedia", "official_doc"):
+        return format_citation_by_source(paper, style, index=index)
     authors = "; ".join(paper.get("authors", [])[:3])
     if len(paper.get("authors", [])) > 3:
         authors += " 等" if style == "gb_t7714" else " et al."
@@ -430,43 +398,95 @@ def format_paper_citation(paper: dict[str, Any], style: str, index: int | None =
     return f"{idx}{authors} ({year}). {title}."
 
 
+def _fetch_papers_bundle(queries: list[str], fetch_n: int) -> list[dict[str, Any]]:
+    """合并论文源；Semantic Scholar 仅首条 query 调用一次，避免 429。"""
+    merged: list[dict[str, Any]] = []
+    for i, q in enumerate(queries):
+        merged.extend(search_arxiv(q, rows=fetch_n))
+        if i == 0:
+            merged.extend(search_semantic_scholar(q, rows=fetch_n))
+        merged.extend(search_crossref(q, rows=fetch_n))
+    return merged
+
+
 class LiteratureAgent:
-    """按书类/profile 组合多源检索；综合被引量与年份排序。"""
+    """按体裁 profile 分 Tab 检索；桶内排序与 ReRank。"""
+
+    def search_tabbed(
+        self,
+        queries: list[str],
+        profile: str,
+        rows: int = 25,
+        *,
+        must_include: list[str] | None = None,
+        must_exclude: list[str] | None = None,
+    ) -> dict[str, Any]:
+        primary = (queries[0] if queries else "").strip()
+        if not primary and not queries:
+            return {
+                "papers": [],
+                "github": [],
+                "wiki": [],
+                "official_docs": [],
+                "refined_queries": queries,
+                "warnings": [],
+            }
+
+        quota = source_quota(profile, rows)
+        fetch_n = min(max(rows, 20), 40)
+        all_q = [q for q in queries if q.strip()] or [primary]
+        classic = classic_queries_for_text(" ".join(all_q))
+        paper_queries = list(dict.fromkeys(all_q + classic))
+
+        papers_raw: list[dict[str, Any]] = []
+        github_raw: list[dict[str, Any]] = []
+        wiki_raw: list[dict[str, Any]] = []
+        docs_raw: list[dict[str, Any]] = []
+
+        # 限制 query 数量，避免检索过慢导致前端超时
+        papers_raw = _fetch_papers_bundle(paper_queries[:2], max(10, quota.papers))
+        for q in all_q[:2]:
+            github_raw.extend(search_github(q, rows=max(quota.github * 2, 12)))
+            wiki_raw.extend(search_wikipedia(q, rows=max(quota.wikipedia * 2, 10)))
+            docs_raw.extend(search_official_docs(q, rows=max(4, quota.official_doc * 2)))
+
+        mi = must_include or []
+        me = must_exclude or []
+        warnings: list[str] = []
+
+        def _finish(
+            bucket: list[dict[str, Any]],
+            limit: int,
+            rerank_q: str,
+            *,
+            use_llm_rerank: bool = False,
+        ) -> list[dict[str, Any]]:
+            deduped = _dedupe_papers(bucket)
+            filtered = apply_must_filters(deduped, must_include=mi, must_exclude=me)
+            gated = [p for p in filtered if quality_gate(p, profile=profile)]
+            ranked = rank_papers(gated or filtered)
+            if use_llm_rerank and len(ranked) > 2:
+                reranked = rerank_papers(rerank_q, ranked, top_n=limit)
+            else:
+                reranked = ranked
+            return reranked[:limit]
+
+        if not papers_raw and profile in (PROFILE_ACADEMIC, PROFILE_POPULAR):
+            warnings.append("论文源部分不可用（arXiv/Semantic Scholar 限流或网络问题），已返回其他来源结果。")
+
+        return {
+            "papers": _finish(papers_raw, quota.papers, primary, use_llm_rerank=True),
+            "github": _finish(github_raw, quota.github, primary, use_llm_rerank=False),
+            "wiki": _finish(wiki_raw, quota.wikipedia, primary, use_llm_rerank=False),
+            "official_docs": _finish(docs_raw, quota.official_doc, primary, use_llm_rerank=False),
+            "refined_queries": queries,
+            "warnings": warnings,
+        }
 
     def search_by_profile(self, query: str, profile: str, rows: int = 20) -> list[dict[str, Any]]:
-        q = query.strip()
-        if not q:
-            return []
-        fetch_n = min(max(rows * 2, 24), 40)
-        merged: list[dict[str, Any]] = []
-
-        if profile == PROFILE_NONFICTION:
-            merged.extend(search_wikipedia(q, rows=fetch_n))
-            merged.extend(search_crossref(q, rows=fetch_n // 2))
-        elif profile == PROFILE_ACADEMIC:
-            merged.extend(search_arxiv(q, rows=fetch_n))
-            merged.extend(search_semantic_scholar(q, rows=fetch_n))
-            merged.extend(search_crossref(q, rows=fetch_n))
-        elif profile == PROFILE_TECHNICAL:
-            merged.extend(search_github(q, rows=fetch_n))
-            merged.extend(search_arxiv(q, rows=fetch_n))
-        else:
-            merged.extend(search_crossref(q, rows=fetch_n))
-            merged.extend(search_semantic_scholar(q, rows=fetch_n))
-
-        if _has_cjk(q) and profile in (PROFILE_ACADEMIC, PROFILE_NONFICTION):
-            ascii_q = re.sub(r"[\u4e00-\u9fff]+", " ", q).strip()
-            if len(ascii_q) >= 3:
-                if profile == PROFILE_ACADEMIC:
-                    merged.extend(search_arxiv(ascii_q, rows=fetch_n // 2))
-                    merged.extend(search_semantic_scholar(ascii_q, rows=fetch_n // 2))
-                    merged.extend(search_crossref(ascii_q, rows=fetch_n // 2))
-                elif profile == PROFILE_NONFICTION:
-                    merged.extend(search_crossref(ascii_q, rows=fetch_n // 2))
-
-        deduped = _dedupe_papers(merged)
-        ranked = rank_papers(deduped)
-        return ranked[:rows]
+        tabbed = self.search_tabbed([query], profile, rows=rows)
+        merged = tabbed["papers"] + tabbed["github"] + tabbed["wiki"] + tabbed["official_docs"]
+        return merged[:rows]
 
     def search(self, query: str, rows: int = 20, *, profile: str | None = None) -> list[dict[str, Any]]:
         prof = profile or PROFILE_ACADEMIC

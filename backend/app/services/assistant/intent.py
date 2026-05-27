@@ -7,6 +7,7 @@ from enum import Enum
 from app.config import settings
 from app.llm.client import LLMClient
 from app.services.assistant.context import AssistantContext
+from app.services.assistant.intent_rules import match_intent_by_rules
 
 
 class IntentType(str, Enum):
@@ -60,7 +61,12 @@ def classify_intent(ctx: AssistantContext) -> dict:
             "intent": ctx.explicit_intent,
             "confidence": 1.0,
             "extracted_params": {},
+            "needs_confirmation": False,
         }
+    ruled = match_intent_by_rules(ctx.user_text)
+    if ruled and ruled.get("confidence", 0) >= 0.85:
+        ruled["needs_confirmation"] = False
+        return ruled
     client = LLMClient()
     prompt = INTENT_CLASSIFY_PROMPT.format(
         book_type=ctx.book_type,
@@ -77,4 +83,19 @@ def classify_intent(ctx: AssistantContext) -> dict:
         max_tokens=300,
         temperature=0.1,
     )
-    return _parse_json(out)
+    data = _parse_json(out)
+    try:
+        conf = float(data.get("confidence", 0.5))
+    except (TypeError, ValueError):
+        conf = 0.5
+    data["confidence"] = conf
+    data["needs_confirmation"] = conf < 0.7
+    if data.get("needs_confirmation"):
+        data["confirmation_candidates"] = [
+            "gen_flowchart",
+            "gen_chart",
+            "gen_figure",
+            "polish",
+            "rewrite",
+        ]
+    return data
