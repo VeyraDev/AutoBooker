@@ -12,7 +12,11 @@ import fitz
 
 from app.services.publication.book_ast import BookAst
 from app.services.publication.publication_styles import PUBLICATION_CSS
-from app.services.tiptap_convert import _inline_to_markdown, _resolve_figure_local_path, _table_cell_text
+from app.services.tiptap_convert import (
+    _inline_to_markdown,
+    _resolve_figure_local_path,
+    _table_cell_inline_nodes,
+)
 
 
 def _figure_img_html(attrs: dict[str, Any]) -> str:
@@ -117,7 +121,8 @@ def _tiptap_node_to_html(node: dict[str, Any]) -> str:
             cell_tags: list[str] = []
             for cell in cells:
                 tag = "th" if cell.get("type") == "tableHeader" or ri == 0 else "td"
-                text = html.escape(_table_cell_text(cell))
+                inline_nodes = _table_cell_inline_nodes(cell)
+                text = _inline_to_html(inline_nodes) if inline_nodes else ""
                 cell_tags.append(f"<{tag}>{text}</{tag}>")
             rows_html.append(f"<tr>{''.join(cell_tags)}</tr>")
         return f"<table class='export-table'>{''.join(rows_html)}</table>"

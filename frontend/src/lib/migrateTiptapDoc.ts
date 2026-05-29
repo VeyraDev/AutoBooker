@@ -1,14 +1,16 @@
 import type { FigureBlockAttrs } from "@/lib/tiptap/FigureBlock";
 import { ANNOTATION_FULL_RE } from "@/lib/annotationPatterns";
+import { enrichInlineBoldInDoc } from "@/lib/enrichInlineBold";
 
 /** 将旧版 diagramBlock / mermaidBlock 迁移为 figureBlock 占位 */
 export function migrateTiptapDoc(doc: Record<string, unknown>): Record<string, unknown> {
   if (doc.type !== "doc" || !Array.isArray(doc.content)) return doc;
 
-  return {
+  const migrated = {
     ...doc,
     content: (doc.content as unknown[]).map((node) => migrateNode(node)),
   };
+  return enrichInlineBoldInDoc(migrated);
 }
 
 function diagramToFigure(attrs: Record<string, unknown>): Record<string, unknown> {

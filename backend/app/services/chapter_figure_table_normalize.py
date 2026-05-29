@@ -14,6 +14,7 @@ from app.services.figure_service import (
     get_chapter_figures,
     renumber_chapter_figures_from_tiptap,
 )
+from app.services.markdown_to_tiptap import _parse_inline_bold
 from app.services.table_caption_ai import suggest_table_caption
 from app.services.tiptap_convert import _inline_to_markdown, tiptap_json_to_markdown
 
@@ -69,7 +70,7 @@ def _table_title_from_node(table: dict[str, Any]) -> str:
 def _make_para(text: str, *, center: bool = False) -> dict[str, Any]:
     node: dict[str, Any] = {
         "type": "paragraph",
-        "content": [{"type": "text", "text": text}],
+        "content": _parse_inline_bold(text),
     }
     if center:
         node["attrs"] = {"textAlign": "center"}
@@ -98,7 +99,7 @@ def _replace_table_ref(text: str, chapter_index: int, seq: int) -> str:
 
 def _patch_para_text(node: dict[str, Any], new_text: str, *, center: bool | None = None) -> dict[str, Any]:
     out = copy.deepcopy(node)
-    out["content"] = [{"type": "text", "text": new_text}]
+    out["content"] = _parse_inline_bold(new_text)
     attrs = dict(out.get("attrs") or {})
     if center is True:
         attrs["textAlign"] = "center"
@@ -119,15 +120,36 @@ def _is_table_caption_para(node: dict[str, Any] | None) -> bool:
     return bool(TABLE_CAPTION_RE.match(_para_text(node)))
 
 
-def _context_from_out(out: list[dict[str, Any]]) -> str:
-    texts: list[str] = []
-    for n in out[-5:]:
-        if not isinstance(n, dict) or n.get("type") != "paragraph":
+def _context_before_table(
+    nodes: list[dict[str, Any]],
+    table_index: int,
+    *,
+    book: Book | None = None,
+    max_chars: int = 1200,
+) -> str:
+    """表格前的正文/标题节选（不单是表内数据）。"""
+    parts: list[str] = []
+    if book and book.title:
+        parts.append(f"书名：{book.title}")
+    for j in range(table_index - 1, -1, -1):
+        if j < 0:
+            break
+        n = nodes[j]
+        if not isinstance(n, dict):
             continue
-        t = _para_text(n)
-        if t and not _is_table_caption_para(n) and not _is_figure_caption_para(n):
-            texts.append(t)
-    return "\n".join(texts)
+        t = n.get("type")
+        if t == "heading":
+            text = _inline_to_markdown(n.get("content")).strip()
+            if text:
+                parts.insert(0, f"[标题] {text}")
+        elif t == "paragraph":
+            text = _para_text(n)
+            if text and not _is_table_caption_para(n) and not _is_figure_caption_para(n):
+                parts.insert(0, text)
+        joined = "\n".join(parts)
+        if len(joined) >= max_chars:
+            break
+    return "\n".join(parts)[-max_chars:]
 
 
 def apply_overview_caption_edits(
@@ -269,7 +291,7 @@ def normalize_chapter_figures_tables(
                     cap_title = suggest_table_caption(
                         node,
                         book=book,
-                        context=_context_from_out(out),
+                        context=_context_before_table(nodes, i, book=book),
                     )
                 elif not cap_title:
                     cap_title = "附表"
@@ -298,7 +320,7 @@ def normalize_chapter_figures_tables(
                     cap_title = suggest_table_caption(
                         node,
                         book=book,
-                        context=_context_from_out(out),
+                        context=_context_before_table(nodes, i, book=book),
                     )
                 else:
                     cap_title = "附表"

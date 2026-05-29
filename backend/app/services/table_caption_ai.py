@@ -46,12 +46,16 @@ def suggest_table_caption(
         "你是学术图书编辑。根据表格内容与上下文，生成简洁中文表题。"
         "只输出表题文字（8～24字），不要编号、不要引号、不要「表」字前缀。"
     )
-    user = f"上下文节选：\n{ctx or '（无）'}\n\n表格内容：\n{preview}\n\n表题："
+    user = (
+        f"上下文节选（表格前的正文/标题，供理解表格用途）：\n{ctx or '（无）'}\n\n"
+        f"表格内容（前若干行）：\n{preview}\n\n"
+        "请根据以上信息生成表题："
+    )
     try:
         client = LLMClient()
         raw = client.chat_completion(
-            resolve_book_ai_model(book),
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            model=resolve_book_ai_model(book),
             temperature=0.3,
             max_tokens=64,
         )

@@ -11,6 +11,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
+from app.services.markdown_to_tiptap import _parse_inline_bold
 from app.services.publication.publication_styles import FIRST_LINE_INDENT_PT
 
 BLACK = RGBColor(0, 0, 0)
@@ -290,6 +291,39 @@ def _table_cell_text(cell: dict[str, Any]) -> str:
     return " ".join(p for p in parts if p).strip()
 
 
+def _expand_bold_in_inline_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != "text":
+            out.append(node)
+            continue
+        marks = node.get("marks") or []
+        text = str(node.get("text") or "")
+        if not marks and "**" in text:
+            out.extend(_parse_inline_bold(text))
+        else:
+            out.append(node)
+    return out
+
+
+def _table_cell_inline_nodes(cell: dict[str, Any]) -> list[dict[str, Any]]:
+    """提取单元格内联节点；若仅有字面量 ** 则解析为 bold mark。"""
+    nodes: list[dict[str, Any]] = []
+    for sub in cell.get("content") or []:
+        if isinstance(sub, dict) and sub.get("type") == "paragraph":
+            content = sub.get("content") or []
+            if isinstance(content, list):
+                nodes.extend(content)
+    if nodes:
+        return _expand_bold_in_inline_nodes(nodes)
+    text = _table_cell_text(cell)
+    if not text:
+        return []
+    if "**" in text:
+        return _parse_inline_bold(text)
+    return [{"type": "text", "text": text}]
+
+
 def _resolve_figure_local_path(attrs: dict[str, Any]) -> Path | None:
     path = str(attrs.get("fileUrl") or attrs.get("file_url") or attrs.get("file_path") or "")
     if path.startswith("/static/figures/"):
@@ -353,12 +387,11 @@ def _docx_block(doc: Document, node: dict[str, Any]) -> None:
             cells = [c for c in (row.get("content") or []) if isinstance(c, dict)]
             for ci in range(max_cols):
                 cell = cells[ci] if ci < len(cells) else {}
-                text = _table_cell_text(cell) if cell else ""
                 cell_p = table.rows[ri].cells[ci].paragraphs[0]
                 cell_p.clear()
-                if text:
-                    run = cell_p.add_run(text)
-                    _style_run(run, size_pt=BODY_PT)
+                inline_nodes = _table_cell_inline_nodes(cell) if cell else []
+                if inline_nodes:
+                    _add_inline_to_paragraph(cell_p, inline_nodes, size_pt=BODY_PT)
         doc.add_paragraph("")
         return
     if t == "bulletList":
