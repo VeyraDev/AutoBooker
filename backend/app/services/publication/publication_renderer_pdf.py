@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
-import base64
 import html
 import io
 from pathlib import Path
 from typing import Any
 
 import fitz
+from PIL import Image, ImageOps
 
 from app.services.publication.book_ast import BookAst
-from app.services.publication.publication_styles import PUBLICATION_CSS
+from app.services.publication.publication_styles import (
+    PDF_CONTENT_HEIGHT_PT,
+    PDF_CONTENT_WIDTH_PT,
+    PDF_FIGURE_MAX_HEIGHT_PX,
+    PDF_FIGURE_WIDTH_PX,
+    PDF_PAGE_MARGIN_PT,
+    PUBLICATION_CSS,
+)
 from app.services.tiptap_convert import (
     _inline_to_markdown,
     _resolve_figure_local_path,
@@ -19,14 +26,162 @@ from app.services.tiptap_convert import (
 )
 
 
-def _figure_img_html(attrs: dict[str, Any]) -> str:
+def _trim_figure_margins(img: Image.Image, *, pad: int = 10) -> Image.Image:
+    """裁掉流程图/截图四周留白，避免导出后图形在页面上显得过小。"""
+    if img.mode in ("RGBA", "LA"):
+        bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+        bg.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+        img = bg.convert("RGB")
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+    bbox = ImageOps.invert(img).getbbox()
+    if not bbox:
+        return img
+    left, top, right, bottom = bbox
+    left = max(0, left - pad)
+    top = max(0, top - pad)
+    right = min(img.width, right + pad)
+    bottom = min(img.height, bottom + pad)
+    return img.crop((left, top, right, bottom))
+
+
+def _figure_image_for_pdf(local: Path) -> tuple[bytes, int, int]:
+    """裁边并缩放到正文栏宽，返回 (png_bytes, width_px, height_px)。"""
+    target_w = PDF_FIGURE_WIDTH_PX
+    max_h = PDF_FIGURE_MAX_HEIGHT_PX
+    with Image.open(local) as raw:
+        img = _trim_figure_margins(raw)
+        rgba = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+        if rgba:
+            img = img.convert("RGBA")
+        else:
+            img = img.convert("RGB")
+        w, h = img.size
+        if w <= 0 or h <= 0:
+            raise ValueError("invalid image size")
+        target_h = max(1, round(h * target_w / w))
+        if target_h > max_h:
+            target_h = max_h
+        resample = getattr(Image, "Resampling", Image).LANCZOS
+        img = img.resize((target_w, target_h), resample)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue(), target_w, target_h
+
+
+def _figure_img_html(archive_name: str, width_px: int, height_px: int) -> str:
+    return (
+        f"<p style='text-align:center;margin:0;'>"
+        f"<img width='{width_px}' height='{height_px}' "
+        f"style='width:{width_px}px;height:{height_px}px;border:none;' "
+        f"src='{archive_name}'/>"
+        f"</p>"
+    )
+
+
+def _prepare_figure_archive_entry(
+    attrs: dict[str, Any],
+    fig_idx: int,
+    archive: fitz.Archive,
+) -> tuple[str, int, int] | None:
     local = _resolve_figure_local_path(attrs)
     if not local:
-        return ""
-    ext = local.suffix.lower().lstrip(".") or "png"
-    mime = "jpeg" if ext in ("jpg", "jpeg") else ext if ext in ("png", "gif", "webp") else "png"
-    b64 = base64.b64encode(local.read_bytes()).decode("ascii")
-    return f"<p style='text-align:center;margin:8pt 0'><img src='data:image/{mime};base64,{b64}' style='max-width:100%;height:auto;'/></p>"
+        return None
+    name = f"figure-{fig_idx}.png"
+    try:
+        png_bytes, width_px, height_px = _figure_image_for_pdf(local)
+    except Exception:
+        png_bytes = local.read_bytes()
+        width_px = PDF_FIGURE_WIDTH_PX
+        height_px = max(1, width_px * 3 // 4)
+    archive.add(png_bytes, name)
+    return name, width_px, height_px
+
+
+
+def _detect_bad_figure_layout_ids(pdf_bytes: bytes) -> set[str]:
+    """检测贴页底被截断或宽度过窄的插图，触发换页重排。"""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    margin = PDF_PAGE_MARGIN_PT
+    bottom_threshold = 36
+    min_width_pt = PDF_CONTENT_WIDTH_PT * 0.72
+    bad: set[str] = set()
+    fig_idx = 0
+    try:
+        for page in doc:
+            content_bottom = page.rect.height - margin
+            rects: list[fitz.Rect] = []
+            for im in page.get_images(full=True):
+                rects.extend(page.get_image_rects(im[7]))
+            rects.sort(key=lambda r: r.y0)
+            for rect in rects:
+                fig_idx += 1
+                clipped = rect.height > 8 and rect.y1 >= content_bottom - bottom_threshold
+                too_narrow = rect.width < min_width_pt
+                if clipped or too_narrow:
+                    bad.add(f"figgrp-{fig_idx}")
+    finally:
+        doc.close()
+    return bad
+
+
+def _render_story_html_to_pdf(html_doc: str, archive: fitz.Archive | None = None) -> bytes:
+    story = fitz.Story(html=html_doc, user_css=PUBLICATION_CSS, archive=archive)
+    buf = io.BytesIO()
+    writer = fitz.DocumentWriter(buf)
+    mediabox = fitz.paper_rect("a4")
+    margin = PDF_PAGE_MARGIN_PT
+    where = mediabox + (margin, margin, -margin, -margin)
+    more = 1
+    while more:
+        device = writer.begin_page(mediabox)
+        more, _ = story.place(where)
+        story.draw(device)
+        writer.end_page()
+    writer.close()
+    return buf.getvalue()
+
+
+def _repair_undersized_pdf_figures(pdf_bytes: bytes) -> bytes:
+    """Story 在页末会把插图压成极小尺寸；用原图流按栏宽重绘。"""
+    min_width_pt = PDF_CONTENT_WIDTH_PT * 0.85
+    margin = PDF_PAGE_MARGIN_PT
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    repairs: list[tuple[int, fitz.Rect, bytes, int, int]] = []
+    try:
+        for pi, page in enumerate(doc):
+            for im in page.get_images(full=True):
+                info = doc.extract_image(im[0])
+                stream = info.get("image")
+                if not stream:
+                    continue
+                iw, ih = int(info["width"]), int(info["height"])
+                for rect in page.get_image_rects(im[7]):
+                    if rect.width >= min_width_pt:
+                        continue
+                    repairs.append((pi, fitz.Rect(rect), stream, iw, ih))
+
+        for pi, rect, stream, iw, ih in sorted(repairs, key=lambda r: r[0], reverse=True):
+            page = doc[pi]
+            page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
+            new_w = PDF_CONTENT_WIDTH_PT
+            new_h = new_w * (ih / max(iw, 1))
+            page_bottom = page.rect.height - margin
+            y0 = rect.y0
+            target_page = page
+            if y0 + new_h > page_bottom:
+                target_page = doc.new_page(
+                    pi + 1,
+                    width=page.rect.width,
+                    height=page.rect.height,
+                )
+                y0 = margin
+            new_rect = fitz.Rect(margin, y0, margin + new_w, y0 + new_h)
+            target_page.insert_image(new_rect, stream=stream)
+    finally:
+        out = doc.tobytes()
+        doc.close()
+    return out
 
 
 def _esc(s: str) -> str:
@@ -127,16 +282,54 @@ def _tiptap_node_to_html(node: dict[str, Any]) -> str:
             rows_html.append(f"<tr>{''.join(cell_tags)}</tr>")
         return f"<table class='export-table'>{''.join(rows_html)}</table>"
     if t == "figureBlock":
-        return _figure_img_html(node.get("attrs") or {})
+        return ""
     return ""
 
 
-def render_ast_to_pdf(ast: BookAst) -> bytes:
+def _build_publication_html(
+    ast: BookAst,
+    *,
+    page_break_figure_ids: set[str],
+    archive: fitz.Archive,
+) -> str:
     parts = ["<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>"]
-    for block in ast.blocks:
+    blocks = ast.blocks
+    fig_idx = 0
+    i = 0
+    while i < len(blocks):
+        block = blocks[i]
         role = block.role
         t = _esc(block.text)
         node = block.attrs.get("tiptap_node")
+
+        if role == "figure":
+            fig_idx += 1
+            fig_id = f"figgrp-{fig_idx}"
+            fig_html = ""
+            if isinstance(node, dict):
+                prepared = _prepare_figure_archive_entry(node.get("attrs") or {}, fig_idx, archive)
+                if prepared:
+                    name, width_px, height_px = prepared
+                    fig_html = _figure_img_html(name, width_px, height_px)
+            caption_html = ""
+            if i + 1 < len(blocks) and blocks[i + 1].role == "figure_caption":
+                cap = _esc(blocks[i + 1].text)
+                caption_html = f"<p class='caption'>{cap}</p>"
+                i += 1
+            if fig_html:
+                if fig_id in page_break_figure_ids:
+                    parts.append("<p style='page-break-before:always;margin:0'></p>")
+                parts.append(
+                    f"<div class='figure-group' id='{fig_id}'>"
+                    f"{fig_html}{caption_html}</div>"
+                )
+            i += 1
+            continue
+
+        if role == "figure_caption":
+            i += 1
+            continue
+
         if role == "book_title":
             parts.append(f"<h1 class='book-title'>{t}</h1>")
         elif role == "preface_title":
@@ -157,16 +350,12 @@ def render_ast_to_pdf(ast: BookAst) -> bytes:
                 chunk = _tiptap_node_to_html(node)
                 if chunk:
                     parts.append(chunk)
-                    continue
-            parts.append(f"<p class='body'>{t}</p>")
-        elif role in ("figure_caption", "table_caption"):
+                else:
+                    parts.append(f"<p class='body'>{t}</p>")
+            else:
+                parts.append(f"<p class='body'>{t}</p>")
+        elif role == "table_caption":
             parts.append(f"<p class='caption'>{t}</p>")
-        elif role == "figure":
-            if isinstance(node, dict):
-                chunk = _tiptap_node_to_html(node)
-                if chunk:
-                    parts.append(chunk)
-                    continue
         elif role == "table" and block.attrs.get("table_node"):
             table_node = block.attrs["table_node"]
             if isinstance(table_node, dict):
@@ -178,8 +367,10 @@ def render_ast_to_pdf(ast: BookAst) -> bytes:
                 chunk = _tiptap_node_to_html(node)
                 if chunk:
                     parts.append(chunk)
-                    continue
-            parts.append(f"<pre><code>{t}</code></pre>")
+                else:
+                    parts.append(f"<pre><code>{t}</code></pre>")
+            else:
+                parts.append(f"<pre><code>{t}</code></pre>")
         elif role == "list":
             if isinstance(node, dict):
                 chunk = _tiptap_node_to_html(node)
@@ -190,21 +381,25 @@ def render_ast_to_pdf(ast: BookAst) -> bytes:
                 chunk = _tiptap_node_to_html(node)
                 if chunk:
                     parts.append(chunk)
-                    continue
-            parts.append(f"<blockquote>{t}</blockquote>")
+                else:
+                    parts.append(f"<blockquote>{t}</blockquote>")
+            else:
+                parts.append(f"<blockquote>{t}</blockquote>")
+        i += 1
+
     parts.append("</body></html>")
-    html_doc = "".join(parts)
-    story = fitz.Story(html=html_doc, user_css=PUBLICATION_CSS)
-    buf = io.BytesIO()
-    writer = fitz.DocumentWriter(buf)
-    mediabox = fitz.paper_rect("a4")
-    margin = 56
-    where = mediabox + (margin, margin, -margin, -margin)
-    more = 1
-    while more:
-        device = writer.begin_page(mediabox)
-        more, _ = story.place(where)
-        story.draw(device)
-        writer.end_page()
-    writer.close()
-    return buf.getvalue()
+    return "".join(parts)
+
+
+def render_ast_to_pdf(ast: BookAst) -> bytes:
+    page_break_ids: set[str] = set()
+    pdf_bytes = b""
+    for _ in range(4):
+        archive = fitz.Archive()
+        html_doc = _build_publication_html(ast, page_break_figure_ids=page_break_ids, archive=archive)
+        pdf_bytes = _render_story_html_to_pdf(html_doc, archive)
+        bad = _detect_bad_figure_layout_ids(pdf_bytes)
+        if not bad - page_break_ids:
+            break
+        page_break_ids |= bad
+    return _repair_undersized_pdf_figures(pdf_bytes)

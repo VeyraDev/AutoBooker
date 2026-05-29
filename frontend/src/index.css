@@ -1576,10 +1576,11 @@ body.theme-dark {
 
   .toc-chapter-title {
     flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    line-height: 1.4;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+    line-height: 1.45;
   }
 
   .toc-generating-dot {
@@ -1611,9 +1612,11 @@ body.theme-dark {
   }
 
   .toc-section-title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+    line-height: 1.45;
   }
 
   .toc-add-btn {
