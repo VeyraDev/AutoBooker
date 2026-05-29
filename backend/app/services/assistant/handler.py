@@ -49,6 +49,7 @@ async def execute_image_generation(
     intent: dict,
     ctx: AssistantContext,
     book: Book,
+    chapter: Chapter | None,
     chapter_index: int,
     db: Session,
     params: dict,
@@ -58,6 +59,11 @@ async def execute_image_generation(
 
     if figure_id:
         fig = get_figure_or_404(UUID(figure_id), book.id, db)
+        new_desc = (params.get("_description") or ctx.user_text or "").strip()
+        if new_desc and i in ("regen_figure", "gen_figure", "gen_flowchart", "gen_chart"):
+            fig.raw_annotation = new_desc[:2000]
+            if not (fig.caption or "").strip():
+                fig.caption = new_desc[:500]
     else:
         type_map = {
             "gen_flowchart": FigureType.flowchart,
@@ -68,9 +74,32 @@ async def execute_image_generation(
         if i == "regen_figure":
             ftype = FigureType.figure
         desc = params.get("_description") or ctx.user_text or ctx.selected_text or ""
+        from app.models.figure import FigureSource
+
         fig = create_figure_from_annotation(
-            book.id, chapter_index, ftype, desc, db
+            book.id,
+            chapter_index,
+            ftype,
+            desc,
+            db,
+            figure_source=FigureSource.user_assistant,
         )
+        if params.get("sub_kind") == "chapter_summary":
+            from app.agents.figure_classifier_agent import (
+                apply_classification_to_figure,
+                classify_figure,
+            )
+
+            clf = classify_figure(
+                fig,
+                book_style_type=book.style_type,
+                chapter_title=(chapter.summary or "") if chapter else "",
+                subtype_hint="chapter_summary",
+            )
+            clf["image_type"] = "infographic"
+            clf["subtype"] = "chapter_summary"
+            clf["renderer"] = "image_api"
+            apply_classification_to_figure(fig, clf, db)
 
     if i == "gen_flowchart":
         fig.figure_type = FigureType.flowchart
@@ -163,6 +192,6 @@ async def handle_assistant_request(
 
     if intent.get("intent") in IMAGE_INTENTS or explicit_intent in IMAGE_INTENTS:
         return await execute_image_generation(
-            intent, ctx, book, chapter_index, db, params
+            intent, ctx, book, chapter, chapter_index, db, params
         )
     return await execute_text_processing(intent, system, user, book)

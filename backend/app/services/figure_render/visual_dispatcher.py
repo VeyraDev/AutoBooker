@@ -34,6 +34,27 @@ def resolve_pipeline(intent: str, sub_kind: str | None) -> str:
     return "image"
 
 
+def _pipeline_from_figure(fig: Figure, intent: str, sub_kind: str | None) -> str:
+    renderer = (fig.renderer or "").strip().lower()
+    if renderer == "need_data":
+        raise ValueError("数据可视化需要真实数值，请补充数据或改用文字描述")
+    if renderer == "upload":
+        raise ValueError("截图类型请手动上传")
+    if renderer == "matplotlib":
+        return "chart"
+    if renderer in ("mermaid", "graphviz"):
+        return "flowchart"
+    if renderer == "image_api":
+        return "image"
+    if intent == "regen_figure":
+        if fig.figure_type == FigureType.flowchart:
+            return "flowchart"
+        if fig.figure_type == FigureType.chart:
+            return "chart"
+        return resolve_pipeline("gen_figure", sub_kind)
+    return resolve_pipeline(intent, sub_kind)
+
+
 def render_figure_asset(
     fig: Figure,
     book: Book,
@@ -45,15 +66,7 @@ def render_figure_asset(
     model: str = "",
 ) -> tuple[str, Path]:
     description = (fig.raw_annotation or fig.caption or "").strip()
-    if intent == "regen_figure":
-        if fig.figure_type == FigureType.flowchart:
-            pipeline = "flowchart"
-        elif fig.figure_type == FigureType.chart:
-            pipeline = "chart"
-        else:
-            pipeline = resolve_pipeline("gen_figure", sub_kind)
-    else:
-        pipeline = resolve_pipeline(intent, sub_kind)
+    pipeline = _pipeline_from_figure(fig, intent, sub_kind)
     book_type = book.book_type.value if book.book_type else ""
 
     if pipeline == "flowchart":

@@ -167,6 +167,14 @@ def generate_outline(
             )
 
         book.title = outline.get("title", book.title)
+        from app.services.preface_service import get_preface, set_preface
+
+        preface_brief = (outline.get("preface_brief") or "").strip()
+        pf = get_preface(book)
+        if preface_brief:
+            pf["brief"] = preface_brief
+            pf["status"] = "ready"
+            set_preface(book, pf)
         book.status = BookStatus.outline_ready
         db.commit()
         db.refresh(book)

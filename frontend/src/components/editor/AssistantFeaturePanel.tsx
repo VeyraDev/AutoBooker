@@ -31,7 +31,13 @@ const IMAGE_FEATURES: FeatureSelection[] = [
   { intent: "gen_flowchart", label: "流程图", placeholder: "描述节点、流向与分支…" },
   { intent: "gen_figure", label: "架构示意图", placeholder: "描述系统组件与连接关系…", sub_kind: "architecture" },
   { intent: "gen_figure", label: "概念示意图", placeholder: "描述抽象概念与层级关系…", sub_kind: "concept_diagram" },
-  { intent: "gen_figure", label: "信息图", placeholder: "描述要点对比或章节总结…", sub_kind: "infographic" },
+  { intent: "gen_figure", label: "信息图", placeholder: "描述要点对比或结构化信息…", sub_kind: "infographic" },
+  {
+    intent: "gen_figure",
+    label: "章节总结图",
+    placeholder: "描述本章核心结论与视觉结构…",
+    sub_kind: "chapter_summary",
+  },
   { intent: "gen_figure", label: "场景插画", placeholder: "描述场景与视觉元素…", sub_kind: "illustration" },
 ];
 

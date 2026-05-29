@@ -2,7 +2,7 @@ import enum
 import uuid
 
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -20,6 +20,12 @@ class FigureStatus(str, enum.Enum):
     generated = "generated"
     uploaded = "uploaded"
     approved = "approved"
+
+
+class FigureSource(str, enum.Enum):
+    writing = "writing"
+    user_assistant = "user_assistant"
+    upload = "upload"
 
 
 class Figure(Base):
@@ -49,6 +55,17 @@ class Figure(Base):
 
     position_hint = Column(Text)
     sort_order = Column(Integer)
+
+    image_type = Column(String(64))
+    subtype = Column(String(64))
+    renderer = Column(String(32))
+    classification_json = Column(JSONB)
+    prompt_spec_json = Column(JSONB)
+    figure_source = Column(
+        Enum(FigureSource, name="figure_source"),
+        default=FigureSource.writing,
+        nullable=True,
+    )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

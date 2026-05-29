@@ -54,34 +54,12 @@ def build_markdown(book: Book, chapters: list[Chapter]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def build_docx_bytes(book: Book, chapters: list[Chapter]) -> bytes:
-    doc = Document()
-    black = RGBColor(0, 0, 0)
-    title_p = doc.add_heading(book.title, level=0)
-    for run in title_p.runs:
-        run.font.color.rgb = black
-    for ch in chapters:
-        ch_p = doc.add_heading(f"第 {ch.index} 章　{ch.title}", level=1)
-        for run in ch_p.runs:
-            run.font.color.rgb = black
-        if ch.summary:
-            p = doc.add_paragraph()
-            run = p.add_run(ch.summary.strip())
-            run.italic = True
-            run.font.size = Pt(11)
-            run.font.color.rgb = black
-        body_md = chapter_content_to_markdown(ch.content if isinstance(ch.content, dict) else None)
-        if body_md:
-            append_chapter_content_to_document(
-                doc,
-                ch.content if isinstance(ch.content, dict) else None,
-            )
-        else:
-            doc.add_paragraph("（本章暂无正文）")
-        doc.add_paragraph("")
-    buf = io.BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
+def build_docx_bytes(book: Book, chapters: list[Chapter], db: Session) -> bytes:
+    from app.services.publication.book_ast_builder import build_book_ast
+    from app.services.publication.publication_renderer_docx import render_ast_to_docx
+
+    ast = build_book_ast(book, chapters, db)
+    return render_ast_to_docx(ast)
 
 
 _PDF_CSS = """
@@ -139,27 +117,12 @@ hr {
 """
 
 
-def build_pdf_bytes(book: Book, chapters: list[Chapter]) -> bytes:
-    md = build_markdown(book, chapters)
-    body_html = markdown.markdown(md, extensions=["extra", "nl2br", "sane_lists"])
-    html = (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
-        f"<body>{body_html}</body></html>"
-    )
-    story = fitz.Story(html=html, user_css=_PDF_CSS)
-    buf = io.BytesIO()
-    writer = fitz.DocumentWriter(buf)
-    mediabox = fitz.paper_rect("a4")
-    margin = 56
-    where = mediabox + (margin, margin, -margin, -margin)
-    more = 1
-    while more:
-        device = writer.begin_page(mediabox)
-        more, _ = story.place(where)
-        story.draw(device)
-        writer.end_page()
-    writer.close()
-    return buf.getvalue()
+def build_pdf_bytes(book: Book, chapters: list[Chapter], db: Session) -> bytes:
+    from app.services.publication.book_ast_builder import build_book_ast
+    from app.services.publication.publication_renderer_pdf import render_ast_to_pdf
+
+    ast = build_book_ast(book, chapters, db)
+    return render_ast_to_pdf(ast)
 
 
 def export_book_bytes(book_id: UUID, export_format: str, user, db: Session) -> tuple[bytes, str, str]:
@@ -177,11 +140,11 @@ def export_book_bytes(book_id: UUID, export_format: str, user, db: Session) -> t
         return body, f"{base}.md", "text/markdown; charset=utf-8"
 
     if fmt == "docx":
-        body = build_docx_bytes(book, chapters)
+        body = build_docx_bytes(book, chapters, db)
         return body, f"{base}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
     if fmt == "pdf":
-        body = build_pdf_bytes(book, chapters)
+        body = build_pdf_bytes(book, chapters, db)
         return body, f"{base}.pdf", "application/pdf"
 
     raise HTTPException(

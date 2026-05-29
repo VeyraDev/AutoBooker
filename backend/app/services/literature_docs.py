@@ -58,7 +58,7 @@ def search_official_docs(query: str, rows: int = 8) -> list[dict[str, Any]]:
 def _duckduckgo_lite(query: str, limit: int = 3) -> list[tuple[str, str, str]]:
     """解析 DuckDuckGo lite HTML 结果（尽力而为）。"""
     url = "https://lite.duckduckgo.com/lite/"
-    with literature_client(timeout=15.0) as client:
+    with literature_client(timeout=8.0) as client:
         r = client.post(url, data={"q": query}, headers=WIKI_HEADERS)
         r.raise_for_status()
         html = r.text

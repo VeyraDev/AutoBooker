@@ -32,7 +32,7 @@ function StepIndicator({ step }: { step: 1 | 2 | 3 }) {
     { n: 3, label: "开始写作" },
   ];
   return (
-    <div className="mb-10 flex flex-wrap items-center justify-center gap-2 text-sm">
+    <div className="mb-4 flex flex-wrap items-center justify-center gap-1.5 text-sm">
       {items.map((it, i) => (
         <span key={it.n} className="flex items-center gap-2">
           {i > 0 ? <span className="text-slate-300">→</span> : null}
@@ -103,9 +103,9 @@ export default function PlanningWizard({
     outline?.chapters.reduce((s, c) => s + (c.estimated_words ?? 0), 0) ?? 0;
 
   return (
-    <div className="planning-wizard relative min-h-full pb-16 pt-8 sm:pb-20">
+    <div className="planning-wizard relative min-h-full pb-12 pt-4 sm:pb-16">
       <div className="mx-auto max-w-[860px]">
-        <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <header className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
             <Link
               to="/app/books"

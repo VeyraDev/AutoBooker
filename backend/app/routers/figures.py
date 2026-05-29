@@ -25,8 +25,16 @@ from app.schemas.figure import (
     FigureRefreshIn,
     FigureRefreshOut,
     FigureSyncOut,
+    FigureTableCaptionPatchIn,
+    FigureTableNormalizeIn,
+    FigureTableNormalizeOut,
+    FigureTableOverviewItem,
 )
 from app.services import book_service
+from app.services.chapter_figure_table_normalize import (
+    apply_overview_caption_edits,
+    normalize_chapter_figures_tables,
+)
 from app.services.figure_generate import generate_figure_asset, save_uploaded_figure
 from app.services.figure_service import (
     get_figure_list,
@@ -234,3 +242,96 @@ def sync_chapter_figures(
     if last_err:
         raise last_err
     raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "图表同步失败")
+
+
+@router.post(
+    "/{book_id}/chapters/{chapter_index}/figures/normalize-sort",
+    response_model=FigureTableNormalizeOut,
+)
+def normalize_chapter_figures_tables_route(
+    book_id: UUID,
+    chapter_index: int,
+    body: FigureTableNormalizeIn | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """识别本章图表与表格，重编号并补全引用、居中题注，返回总览。"""
+    book = book_service.get_book_or_404(book_id, user, db)
+    ch = (
+        db.query(Chapter)
+        .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
+        .first()
+    )
+    if not ch:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chapter not found")
+    meta = ch.content if isinstance(ch.content, dict) else {}
+    tiptap = None
+    if body and isinstance(body.tiptap_json, dict):
+        tiptap = body.tiptap_json
+    elif isinstance(meta.get("tiptap_json"), dict):
+        tiptap = meta["tiptap_json"]
+    if not tiptap:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "章节无 TipTap 内容可排序")
+    result = normalize_chapter_figures_tables(
+        book_id, chapter_index, tiptap, db, book=book
+    )
+    overview = [FigureTableOverviewItem(**row) for row in result["overview"]]
+    meta = dict(meta)
+    meta["tiptap_json"] = result["tiptap_json"]
+    meta["text"] = result["text"]
+    meta["figure_table_overview"] = result["overview"]
+    ch.content = meta
+    db.commit()
+    return FigureTableNormalizeOut(
+        tiptap_json=result["tiptap_json"],
+        text=result["text"],
+        overview=overview,
+    )
+
+
+@router.patch(
+    "/{book_id}/chapters/{chapter_index}/figures/overview-captions",
+    response_model=FigureTableNormalizeOut,
+)
+def patch_chapter_overview_captions(
+    book_id: UUID,
+    chapter_index: int,
+    body: FigureTableCaptionPatchIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """更新图表总览题注并写回章节正文。"""
+    book_service.get_book_or_404(book_id, user, db)
+    ch = (
+        db.query(Chapter)
+        .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
+        .first()
+    )
+    if not ch:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chapter not found")
+    doc = apply_overview_caption_edits(body.tiptap_json, [x.model_dump() for x in body.overview], chapter_index)
+    from app.services.tiptap_convert import tiptap_json_to_markdown
+    from app.services.figure_service import get_figure_or_404
+
+    for item in body.overview:
+        if item.kind == "figure" and item.figure_id:
+            try:
+                fig = get_figure_or_404(UUID(str(item.figure_id)), book_id, db)
+                fig.caption = item.title.strip()
+            except Exception:
+                pass
+
+    text = tiptap_json_to_markdown(doc).strip()
+    overview = [x.model_dump() for x in body.overview]
+    meta = ch.content if isinstance(ch.content, dict) else {}
+    meta = dict(meta)
+    meta["tiptap_json"] = doc
+    meta["text"] = text
+    meta["figure_table_overview"] = overview
+    ch.content = meta
+    db.commit()
+    return FigureTableNormalizeOut(
+        tiptap_json=doc,
+        text=text,
+        overview=[FigureTableOverviewItem(**row) for row in overview],
+    )

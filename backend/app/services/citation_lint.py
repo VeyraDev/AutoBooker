@@ -23,6 +23,8 @@ _PAREN_CITE = re.compile(
     r"\(([A-Za-z\u4e00-\u9fff][^,()]{0,40}?)\s*,\s*(\d{4}|n\.d\.)\)",
 )
 _BRACKET_CITE = re.compile(r"\[(\d{1,3})\]")
+_FENCE_RE = re.compile(r"```[\s\S]*?```", re.MULTILINE)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 
 
 @dataclass
@@ -70,12 +72,19 @@ def _match_bracket(index: int, rows: list[Citation]) -> bool:
     return False
 
 
+def _strip_code_regions(text: str) -> str:
+    s = _FENCE_RE.sub(" ", text)
+    return _INLINE_CODE_RE.sub(" ", s)
+
+
 def lint_chapter_citations(
     body: str,
     db: Session,
     book_id: uuid.UUID,
+    *,
+    bracket_style: bool = True,
 ) -> list[CitationLintIssue]:
-    text = (body or "").strip()
+    text = _strip_code_regions((body or "").strip())
     if not text:
         return []
 
@@ -116,7 +125,11 @@ def lint_chapter_citations(
             )
 
     for m in _BRACKET_CITE.finditer(text):
+        if not bracket_style:
+            continue
         idx = int(m.group(1))
+        if idx < 1:
+            continue
         if rows and not _match_bracket(idx, rows):
             key = f"br:{idx}"
             if key in seen:

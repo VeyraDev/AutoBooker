@@ -22,7 +22,8 @@
 - `DATABASE_URL`
 - `JWT_SECRET`
 - `CORS_ORIGINS`
-- `UPLOAD_DIR`
+- `UPLOAD_DIR`（用户资料 PDF/DOCX，按 `uploads/{book_id}/` 存储）
+- `FIGURES_DIR` 或默认 `uploads/figures`（生成图片 `/static/figures/{book_id}/`）
 - `DASHSCOPE_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `KIMI_API_KEY` / `DOUBAO_API_KEY` / `BAIDU_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `GROK_API_KEY`
 - `FIGURE_IMAGE_PROVIDER`
 
@@ -38,6 +39,7 @@
 - `literature`
 - `citations`
 - `review`
+- `preface`
 - `outline`
 - `chapters`
 - `figures`

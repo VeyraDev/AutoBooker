@@ -59,3 +59,30 @@ class FigureRefreshIn(BaseModel):
 
 class FigureRefreshOut(BaseModel):
     items: list[FigureOut]
+
+
+class FigureTableOverviewItem(BaseModel):
+    kind: str
+    seq: int
+    number: str
+    label: str
+    title: str
+    has_reference: bool
+    has_caption: bool
+    figure_id: str | None = None
+    status: str | None = None
+
+
+class FigureTableNormalizeIn(BaseModel):
+    tiptap_json: dict | None = None
+
+
+class FigureTableNormalizeOut(BaseModel):
+    tiptap_json: dict
+    text: str
+    overview: list[FigureTableOverviewItem]
+
+
+class FigureTableCaptionPatchIn(BaseModel):
+    tiptap_json: dict
+    overview: list[FigureTableOverviewItem]

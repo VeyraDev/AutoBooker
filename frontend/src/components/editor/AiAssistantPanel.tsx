@@ -41,6 +41,8 @@ type Props = {
     status: string;
     caption: string | null;
     figure_type: string;
+    replace_only?: boolean;
+    target_figure_id?: string;
   }) => void;
 };
 
@@ -107,7 +109,12 @@ export default function AiAssistantPanel({
         selected_text: displaySelection || undefined,
         figure_id: quotedFigureId ?? undefined,
         cursor_paragraph: cursorParagraph || chapterContext.slice(0, 400) || undefined,
-        explicit_intent: intent,
+        explicit_intent:
+          quotedFigureId && isImageFeature
+            ? "regen_figure"
+            : quotedFigureId && !intent && message.trim()
+              ? "regen_figure"
+              : intent,
         chart_type: activeFeature?.chart_type,
         sub_kind: activeFeature?.sub_kind,
       };
@@ -127,8 +134,10 @@ export default function AiAssistantPanel({
           status: res.status,
           caption: res.caption,
           figure_type: res.figure_type,
+          replace_only: Boolean(quotedFigureId),
+          target_figure_id: quotedFigureId ?? res.figure_id,
         });
-        toast.success("图表已生成并更新");
+        toast.success(quotedFigureId ? "新图已生成，请查看正文中的图表" : "图表已生成");
       } else {
         const quote = displaySelection || cursorParagraph.slice(0, 200) || "选中内容";
         onPreviewReady({

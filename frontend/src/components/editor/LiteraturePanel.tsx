@@ -20,6 +20,12 @@ import {
   type LiteratureTab,
 } from "@/types/literature";
 
+function isShortEnglishQuery(text: string): boolean {
+  const q = text.trim();
+  if (!q || /[\u4e00-\u9fff]/.test(q)) return false;
+  return /^[A-Za-z0-9+_.# -]+$/.test(q) && q.split(/\s+/).length <= 3;
+}
+
 const TAB_LABELS: Record<LiteratureTab, string> = {
   papers: "论文",
   github: "GitHub",
@@ -70,6 +76,8 @@ export default function LiteraturePanel({
   const [tab, setTab] = useState<LiteratureTab>("papers");
   const [tabbed, setTabbed] = useState<Record<LiteratureTab, LiteraturePaper[]>>(emptyTabbed);
   const [refinedQueries, setRefinedQueries] = useState<string[]>([]);
+  const [mustInclude, setMustInclude] = useState<string[]>([]);
+  const [mustExclude, setMustExclude] = useState<string[]>([]);
   const [sourceHint, setSourceHint] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<CitationRecord[]>([]);
@@ -130,7 +138,9 @@ export default function LiteraturePanel({
         rawQuery: query.trim(),
       });
       setRefinedQueries(res.refined_queries);
-      if (res.refined_queries.length) {
+      setMustInclude(res.must_include ?? []);
+      setMustExclude(res.must_exclude ?? []);
+      if (res.refined_queries.length && !isShortEnglishQuery(query)) {
         setQuery(res.refined_queries[0]);
       }
       toast.success("已生成检索词");
@@ -147,25 +157,36 @@ export default function LiteraturePanel({
       toast.error("请输入检索词或先生成检索词");
       return;
     }
+    const shortEn = isShortEnglishQuery(q);
     const gen = ++searchGen.current;
     setSearching(true);
     setSelected(new Set());
+    setTabbed(emptyTabbed());
     const signal = beginSearchAbort();
     try {
       const res = await searchLiterature(bookId, {
         query: q,
         rows: 25,
-        refined_queries: refinedQueries.length ? refinedQueries : undefined,
-        skip_refine: refinedQueries.length > 0,
+        refined_queries: shortEn ? undefined : refinedQueries.length ? refinedQueries : undefined,
+        must_include: shortEn ? undefined : mustInclude.length ? mustInclude : undefined,
+        must_exclude: shortEn ? undefined : mustExclude.length ? mustExclude : undefined,
+        skip_refine: shortEn || refinedQueries.length > 0,
         signal,
       });
+      if (gen !== searchGen.current) return;
       setTabbed({
         papers: res.papers ?? [],
         github: res.github ?? [],
         wiki: res.wiki ?? [],
         official_docs: res.official_docs ?? [],
       });
-      setRefinedQueries(res.refined_queries ?? refinedQueries);
+      if (shortEn) {
+        setRefinedQueries([]);
+        setMustInclude([]);
+        setMustExclude([]);
+      } else {
+        setRefinedQueries(res.refined_queries ?? refinedQueries);
+      }
       setSourceHint(res.source_hint || "");
       const total =
         (res.papers?.length ?? 0) +
@@ -176,7 +197,17 @@ export default function LiteraturePanel({
         toast(res.warnings[0], { icon: "⚠️", duration: 5000 });
       }
       if (!total) toast("未找到相关文献，可尝试英文关键词或换检索词");
-      else toast.success(`检索完成，共 ${total} 条`);
+      else {
+        const gh = res.github?.length ?? 0;
+        const parts = [
+          `论文 ${res.papers?.length ?? 0}`,
+          gh ? `GitHub ${gh}` : "",
+          `百科 ${res.wiki?.length ?? 0}`,
+          `文档 ${res.official_docs?.length ?? 0}`,
+        ].filter(Boolean);
+        toast.success(`检索完成：${parts.join(" · ")}${gh ? "（仓库见 GitHub 标签）" : ""}`);
+        if (gh > 0 && shortEn) setTab("github");
+      }
     } catch (err) {
       if (axios.isCancel(err)) return;
       if (axios.isAxiosError(err) && err.code === "ECONNABORTED") {
@@ -349,11 +380,17 @@ export default function LiteraturePanel({
         </div>
       </div>
 
-      {(tabbed.papers.length > 0 ||
+      {(searching || tabbed.papers.length > 0 ||
         tabbed.github.length > 0 ||
         tabbed.wiki.length > 0 ||
         tabbed.official_docs.length > 0) ? (
         <div className="space-y-2">
+          {searching ? (
+            <p className="flex items-center gap-2 text-xs text-violet-600">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              检索中，请稍候…
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-1">
             {(Object.keys(TAB_LABELS) as LiteratureTab[]).map((k) => (
               <button

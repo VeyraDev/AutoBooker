@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.llm.providers import resolve_book_ai_model
 from app.models.book import Book
-from app.models.figure import Figure, FigureStatus, FigureType
+from app.models.figure import Figure, FigureSource, FigureStatus, FigureType
 from app.services.figure_render.visual_dispatcher import render_figure_asset
 
 
@@ -46,6 +46,21 @@ def generate_figure_asset(
     description = (fig.raw_annotation or fig.caption or "").strip()
     if not description:
         raise ValueError("缺少图片描述")
+
+    if not fig.classification_json:
+        from app.agents.figure_classifier_agent import apply_classification_to_figure, classify_figure
+        from app.services.figure_service import _LEGACY_TAG_BY_TYPE
+
+        legacy = _LEGACY_TAG_BY_TYPE.get(fig.figure_type)
+        clf = classify_figure(
+            fig,
+            book_style_type=book.style_type,
+            legacy_tag=legacy,
+        )
+        apply_classification_to_figure(fig, clf, db)
+
+    if (fig.renderer or "").strip().lower() == "need_data":
+        raise ValueError("数据图缺少可解析的数值，请编辑标注后重试")
 
     out_path = _figure_output_path(book.id, fig.id)
     if out_path.is_file():
@@ -119,6 +134,7 @@ def create_figure_from_annotation(
     db: Session,
     *,
     sort_order: int = 0,
+    figure_source: FigureSource = FigureSource.writing,
 ) -> Figure:
     fig = Figure(
         id=uuid.uuid4(),
@@ -128,6 +144,7 @@ def create_figure_from_annotation(
         status=FigureStatus.pending,
         raw_annotation=raw_annotation.strip(),
         sort_order=sort_order,
+        figure_source=figure_source,
     )
     db.add(fig)
     db.commit()

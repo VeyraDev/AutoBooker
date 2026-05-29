@@ -3,15 +3,15 @@ QUERY_REFINE_PROMPT = """
 
 只返回 JSON：
 {{
-  "refined_queries": ["英文或中文技术检索词", "..."],
+  "refined_queries": ["中文技术检索词", "英文技术检索词", "..."],
   "must_include": ["必须包含的关键词"],
   "must_exclude": ["应排除的多义词或跑题词"]
 }}
 
 要求：
-- 去掉口语（如「怎样培养」→ fine-tuning / LLM training）
-- 至少 2 条英文技术词，必要时保留 1 条中文
-- refined_queries 3~6 条，从宽泛到精确
+- 去掉口语（如「怎样培养」→ 大模型微调 / LLM fine-tuning）
+- refined_queries 共 5~8 条：2~3 条中文放前面（维基等），**必须保留至少 3 条英文**（GitHub / CrossRef / arXiv 必需，不可省略）
+- 英文词用技术术语，不要用纯中文翻译重复同一词条
 - must_exclude 用于避免多义词跑题（如「培养」排除教育学）
 
 书名：{book_title}

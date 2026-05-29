@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
 
 import { applyReviewIssue, reviewChapter } from "@/api/review";
-import { editChapterSelection, type SelectionEditMode } from "@/api/chapters";
+import { dedupeChapter } from "@/api/chapters";
 import { cleanSuggestionText } from "@/lib/cleanSuggestion";
 import type { EditorAiPreviewPayload } from "@/types/aiPreview";
 import type {
@@ -22,10 +22,10 @@ type Props = {
   bookId: string;
   chapterIndex: number | null;
   chapterTitle?: string;
-  /** 编辑器当前选区纯文本 */
-  selectionText?: string;
   onApplySuggestion?: (quote: string, suggestion: string) => void;
   onAiPreviewReady?: (payload: EditorAiPreviewPayload) => boolean | void;
+  /** 本章全文降 AI 率完成后写入编辑器 */
+  onChapterMarkdownReplace?: (markdown: string) => void;
   chapterContext?: string;
 };
 
@@ -39,18 +39,23 @@ export default function ReviewPanel({
   bookId,
   chapterIndex,
   chapterTitle,
-  selectionText = "",
   onApplySuggestion,
   onAiPreviewReady,
+  onChapterMarkdownReplace,
   chapterContext = "",
 }: Props) {
   const [reviewing, setReviewing] = useState(false);
   const [dedupeBusy, setDedupeBusy] = useState(false);
+  const [dedupePreview, setDedupePreview] = useState<{
+    original: string;
+    suggestion: string;
+  } | null>(null);
   const [report, setReport] = useState<ChapterReviewResult | null>(null);
 
   useEffect(() => {
     if (chapterIndex == null) {
       setReport(null);
+      setDedupePreview(null);
       return;
     }
     try {
@@ -97,39 +102,40 @@ export default function ReviewPanel({
     }
   }
 
-  async function runDedupeOnSelection() {
-    const text = selectionText.trim();
-    if (!text) {
-      toast.error("请先在正文中选中需要降重的段落");
-      return;
-    }
+  async function runDedupeChapter() {
     if (chapterIndex == null) {
       toast.error("请先选择章节");
       return;
     }
     setDedupeBusy(true);
+    setDedupePreview(null);
     try {
-      const { text: out } = await editChapterSelection(bookId, chapterIndex, {
-        mode: "dedupe" as SelectionEditMode,
-        text,
-      });
+      const { text: out, original_text: original } = await dedupeChapter(bookId, chapterIndex);
       const cleaned = cleanSuggestionText(out);
-      if (
-        onAiPreviewReady?.({
-          quote: text,
-          suggestion: cleaned,
-          kind: "replace",
-        })
-      ) {
-        toast.success("已生成预览，请确认后应用");
-      } else {
-        onApplySuggestion?.(text, cleaned);
-        toast.success("已生成降重文本，请确认后保留");
+      if (!cleaned.trim()) {
+        toast.error("改写结果为空");
+        return;
       }
+      setDedupePreview({
+        original: original.trim(),
+        suggestion: cleaned,
+      });
+      toast.success("已生成预览，请确认后应用");
     } catch {
-      toast.error("降重失败");
+      toast.error("改写失败，请稍后重试");
     } finally {
       setDedupeBusy(false);
+    }
+  }
+
+  function applyDedupePreview() {
+    if (!dedupePreview) return;
+    if (onChapterMarkdownReplace) {
+      onChapterMarkdownReplace(dedupePreview.suggestion);
+      setDedupePreview(null);
+      toast.success("已应用改写，请检查后保存");
+    } else {
+      toast.error("无法写入编辑器");
     }
   }
 
@@ -142,24 +148,47 @@ export default function ReviewPanel({
   return (
     <div className="space-y-5 text-sm">
       <section>
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">AI 降重</p>
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">降 AI 率</p>
         <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-          在正文选中一段文字，点击下方按钮进行语义降重（保留原意，改写表述）。
+          对本章已保存正文整体改写 AI 痕迹（保留原意）。生成后先预览，确认后再替换正文。
         </p>
         <button
           type="button"
           className="btn-primary mt-3 flex h-9 w-full items-center justify-center gap-2 text-xs"
-          disabled={dedupeBusy || !selectionText.trim()}
-          onClick={() => void runDedupeOnSelection()}
+          disabled={dedupeBusy || chapterIndex == null}
+          onClick={() => void runDedupeChapter()}
         >
           {dedupeBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-          对选区降重
+          对本章降 AI 率
         </button>
-        {selectionText.trim() ? (
-          <p className="mt-2 line-clamp-2 text-[10px] text-slate-400">已选：{selectionText.slice(0, 80)}…</p>
-        ) : (
-          <p className="mt-2 text-[10px] text-slate-400">当前无选区</p>
-        )}
+        {dedupePreview ? (
+          <div className="mt-3 space-y-2 rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+            <p className="text-xs font-medium text-violet-900">降 AI 率预览</p>
+            <p className="text-[10px] leading-relaxed text-violet-800/90">
+              以下为改写结果摘要。应用后将替换本章正文，图表占位与表格结构会尽量保留。
+            </p>
+            <div className="max-h-40 overflow-y-auto rounded border border-violet-100 bg-white/80 p-2 text-[10px] leading-relaxed text-slate-700 whitespace-pre-wrap">
+              {dedupePreview.suggestion.slice(0, 2400)}
+              {dedupePreview.suggestion.length > 2400 ? "…" : ""}
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="btn-primary h-8 flex-1 text-[11px]"
+                onClick={applyDedupePreview}
+              >
+                应用替换
+              </button>
+              <button
+                type="button"
+                className="btn-secondary h-8 flex-1 text-[11px]"
+                onClick={() => setDedupePreview(null)}
+              >
+                放弃
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <hr className="border-slate-100" />

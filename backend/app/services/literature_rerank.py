@@ -14,6 +14,18 @@ from app.utils.json_llm import parse_llm_json
 logger = logging.getLogger(__name__)
 
 _RELEVANCE_THRESHOLD = 4.0
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(_CJK_RE.search(text))
+
+
+def must_include_for_bucket(must_include: list[str], bucket: str) -> list[str]:
+    """GitHub / 官方文档为英文源，中文 must_include 会误杀全部结果。"""
+    if bucket in ("github", "official_docs"):
+        return [x for x in must_include if x and not _has_cjk(x)]
+    return must_include
 
 
 def _text_blob(p: dict[str, Any]) -> str:

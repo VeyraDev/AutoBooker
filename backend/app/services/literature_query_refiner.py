@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Any
@@ -18,15 +17,68 @@ from app.utils.json_llm import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
+_MIN_ENGLISH_QUERIES = 3
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", text))
+
+
+def _is_english_query(text: str) -> bool:
+    t = text.strip()
+    if not t:
+        return False
+    if _has_cjk(t):
+        return False
+    return bool(re.search(r"[A-Za-z]", t))
+
+
+def _order_queries(queries: list[str]) -> list[str]:
+    """中文在前，英文在后；两类都保留。"""
+    cn = [q for q in queries if _has_cjk(q)]
+    en = [q for q in queries if _is_english_query(q)]
+    other = [q for q in queries if q not in cn and q not in en]
+    return list(dict.fromkeys(cn + en + other))
+
+
+def _fallback_english_queries(raw: str) -> list[str]:
+    q = (raw or "").strip()
+    out: list[str] = []
+    if "大模型" in q or "模型" in q:
+        out.extend(["large language model", "LLM fine-tuning", "transformer architecture"])
+    elif "AI" in q.upper() or "人工智能" in q:
+        out.extend(["artificial intelligence", "machine learning", "deep learning"])
+    elif q and _is_english_query(q):
+        out.append(q)
+    else:
+        out.extend(["machine learning", "software engineering"])
+    return out
+
+
+def _ensure_english_queries(queries: list[str], raw: str) -> list[str]:
+    en = [q for q in queries if _is_english_query(q)]
+    if len(en) >= _MIN_ENGLISH_QUERIES:
+        return queries
+    for fb in _fallback_english_queries(raw):
+        if fb not in queries:
+            queries.append(fb)
+        if len([q for q in queries if _is_english_query(q)]) >= _MIN_ENGLISH_QUERIES:
+            break
+    return queries
+
 
 def _fallback_refine(raw: str) -> dict[str, Any]:
     q = (raw or "").strip()
     if not q:
         return {"refined_queries": [], "must_include": [], "must_exclude": []}
-    # 简单去口语
     cleaned = re.sub(r"^(怎样|如何|怎么)", "", q).strip()
+    cn = cleaned or q
+    queries = _order_queries([cn, *_fallback_english_queries(q)])
+    if cleaned != q and cleaned:
+        queries = _order_queries(list(dict.fromkeys([*queries, q])))
+    queries = _ensure_english_queries(queries, q)[:8]
     return {
-        "refined_queries": [cleaned, q] if cleaned != q else [q],
+        "refined_queries": queries,
         "must_include": [],
         "must_exclude": ["教育学", "pedagogy"] if "培养" in q and "模型" in q else [],
     }
@@ -84,7 +136,10 @@ def refine_literature_query(
     queries = data.get("refined_queries") or []
     if not isinstance(queries, list):
         queries = []
-    queries = [str(x).strip() for x in queries if str(x).strip()][:8]
+    queries = [str(x).strip() for x in queries if str(x).strip()]
+    queries = _order_queries(queries)
+    queries = _ensure_english_queries(queries, raw_query or book.title or "")
+    queries = queries[:8]
     if not queries:
         data_fb = _fallback_refine(raw_query or book.title or "")
         queries = data_fb["refined_queries"]

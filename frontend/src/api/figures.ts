@@ -140,3 +140,43 @@ export async function refreshChapterFigures(
   );
   return data.items;
 }
+
+export type FigureTableOverviewItem = {
+  kind: "figure" | "table" | string;
+  seq: number;
+  number: string;
+  label: string;
+  title: string;
+  has_reference: boolean;
+  has_caption: boolean;
+  figure_id: string | null;
+  status: string | null;
+};
+
+export async function normalizeChapterFiguresTables(
+  bookId: string,
+  chapterIndex: number,
+  tiptapJson: Record<string, unknown>,
+) {
+  const { data } = await client.post<{
+    tiptap_json: Record<string, unknown>;
+    text: string;
+    overview: FigureTableOverviewItem[];
+  }>(`/books/${bookId}/chapters/${chapterIndex}/figures/normalize-sort`, {
+    tiptap_json: tiptapJson,
+  });
+  return data;
+}
+
+export async function patchChapterOverviewCaptions(
+  bookId: string,
+  chapterIndex: number,
+  payload: { tiptap_json: Record<string, unknown>; overview: FigureTableOverviewItem[] },
+) {
+  const { data } = await client.patch<{
+    tiptap_json: Record<string, unknown>;
+    text: string;
+    overview: FigureTableOverviewItem[];
+  }>(`/books/${bookId}/chapters/${chapterIndex}/figures/overview-captions`, payload);
+  return data;
+}

@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import { createPortal } from "react-dom";
 
 import OutlineChapterListEditor from "@/components/editor/OutlineChapterListEditor";
+import PrefaceOutlineChapterCard from "@/components/editor/PrefaceOutlineChapterCard";
 import type { Book } from "@/types/book";
 import type { OutlineBookResponse } from "@/types/outline";
 
@@ -153,6 +154,7 @@ export default function OutlineReviewPanel({
             onDeleteChapter={(idx) => void onDeleteChapter(idx)}
             onReorder={onReorder}
             dragDisabled={dragDisabled}
+            prefaceSlot={<PrefaceOutlineChapterCard bookId={bookId} />}
           />
 
           <p className="mt-4 text-xs text-slate-500">

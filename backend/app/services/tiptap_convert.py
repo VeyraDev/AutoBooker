@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from docx import Document
-from docx.enum.text import WD_LINE_SPACING
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
+from app.services.publication.publication_styles import FIRST_LINE_INDENT_PT
+
 BLACK = RGBColor(0, 0, 0)
+CODE_SHADING = "F5F5F5"
 HEADING_PT = {1: 22, 2: 18, 3: 16, 4: 14, 5: 13, 6: 12}
 BODY_PT = 12
 CODE_PT = 10
@@ -109,6 +115,32 @@ def _block_to_markdown(node: dict[str, Any], depth: int = 0) -> str:
                     lines_o.append(f"{pad}   {line}")
             idx += 1
         return "\n".join(lines_o)
+    if t == "table":
+        rows_in = [
+            r for r in (node.get("content") or []) if isinstance(r, dict) and r.get("type") == "tableRow"
+        ]
+        if not rows_in:
+            return ""
+        md_rows: list[str] = []
+        sep_added = False
+        for ri, row in enumerate(rows_in):
+            cells = [
+                c
+                for c in (row.get("content") or [])
+                if isinstance(c, dict) and c.get("type") in ("tableCell", "tableHeader")
+            ]
+            texts = []
+            for cell in cells:
+                parts: list[str] = []
+                for sub in cell.get("content") or []:
+                    if isinstance(sub, dict) and sub.get("type") == "paragraph":
+                        parts.append(_inline_to_markdown(sub.get("content")))
+                texts.append(" ".join(p for p in parts if p).strip())
+            md_rows.append("| " + " | ".join(texts) + " |")
+            if ri == 0 and not sep_added:
+                md_rows.append("| " + " | ".join(["---"] * max(1, len(texts))) + " |")
+                sep_added = True
+        return "\n".join(md_rows)
     if t in ("diagramBlock", "mermaidBlock"):
         attrs = node.get("attrs") or {}
         engine = str(attrs.get("engine") or "graphviz")
@@ -117,16 +149,17 @@ def _block_to_markdown(node: dict[str, Any], depth: int = 0) -> str:
         return f"```{lang}\n{code}\n```"
     if t == "figureBlock":
         attrs = node.get("attrs") or {}
-        num = str(attrs.get("figureNumber") or "")
-        caption = str(attrs.get("caption") or attrs.get("rawAnnotation") or "")
-        url = str(attrs.get("fileUrl") or "")
-        label = f"图 {num}" if num else "图"
-        if url:
-            return f"![{label}]({url})\n\n*{label} 图解：{caption}*"
-        raw = str(attrs.get("rawAnnotation") or caption)
-        ftype = str(attrs.get("figureType") or "figure").upper()
-        tag = "FLOWCHART" if ftype == "FLOWCHART" else "CHART" if ftype == "CHART" else "SCREENSHOT" if ftype == "SCREENSHOT" else "FIGURE"
-        return f"[{tag}: {raw}]"
+        raw = str(attrs.get("rawAnnotation") or attrs.get("caption") or "").strip()
+        ftype = str(attrs.get("figureType") or "figure").lower()
+        if ftype == "screenshot":
+            tag = "SCREENSHOT"
+        elif ftype == "flowchart":
+            tag = "FLOWCHART"
+        elif ftype == "chart":
+            tag = "CHART"
+        else:
+            tag = "DIAGRAM"
+        return f"[{tag}: {raw}]" if raw else f"[{tag}: ]"
     if t == "listItem":
         return _list_item_body(node, depth)
     return ""
@@ -152,12 +185,17 @@ def tiptap_json_to_markdown(doc: dict[str, Any] | None) -> str:
 def chapter_content_to_markdown(content: dict[str, Any] | None) -> str:
     if not content or not isinstance(content, dict):
         return ""
+    tx = content.get("text")
+    text_md = tx.strip() if isinstance(tx, str) else ""
     tj = content.get("tiptap_json")
     if isinstance(tj, dict):
-        return tiptap_json_to_markdown(tj).strip()
-    tx = content.get("text")
-    if isinstance(tx, str) and tx.strip():
-        return tx.strip()
+        tj_md = tiptap_json_to_markdown(tj).strip()
+        if text_md and "|" in text_md and '"table"' not in str(tj):
+            return text_md
+        if tj_md:
+            return tj_md
+    if text_md:
+        return text_md
     return ""
 
 
@@ -195,11 +233,33 @@ def _add_inline_to_paragraph(paragraph, nodes: list[dict[str, Any]] | None, *, s
             _style_run(run, size_pt=size_pt)
 
 
-def _body_paragraph_format(p) -> None:
+def _body_paragraph_format(p, *, indent: bool = True) -> None:
     pf = p.paragraph_format
     pf.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
     pf.line_spacing = 1.5
     pf.space_after = Pt(6)
+    if indent:
+        pf.first_line_indent = Pt(FIRST_LINE_INDENT_PT)
+
+
+def _set_paragraph_shading(paragraph, fill: str = CODE_SHADING) -> None:
+    p_pr = paragraph._p.get_or_add_pPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), fill)
+    p_pr.append(shd)
+
+
+def _add_code_paragraph(doc: Document, text: str) -> None:
+    p = doc.add_paragraph()
+    p.paragraph_format.left_indent = Pt(12)
+    p.paragraph_format.right_indent = Pt(6)
+    p.paragraph_format.space_before = Pt(6)
+    p.paragraph_format.space_after = Pt(6)
+    _set_paragraph_shading(p)
+    run = p.add_run(text)
+    _style_run(run, size_pt=CODE_PT, mono=True)
 
 
 def _add_paragraph_bullet(doc: Document, content: list[dict[str, Any]] | None) -> None:
@@ -230,20 +290,50 @@ def _table_cell_text(cell: dict[str, Any]) -> str:
     return " ".join(p for p in parts if p).strip()
 
 
+def _resolve_figure_local_path(attrs: dict[str, Any]) -> Path | None:
+    path = str(attrs.get("fileUrl") or attrs.get("file_url") or attrs.get("file_path") or "")
+    if path.startswith("/static/figures/"):
+        from app.config import settings
+
+        local = settings.figures_path / path.replace("/static/figures/", "", 1)
+        if local.is_file():
+            return local
+    return None
+
+
+def docx_figure_image_only(doc: Document, node: dict[str, Any]) -> bool:
+    """仅插入图片，不写「图 1-1」「图解：」等（题注由 AST figure_caption 负责）。"""
+    attrs = node.get("attrs") or {}
+    local = _resolve_figure_local_path(attrs)
+    if not local:
+        return False
+    pic_p = doc.add_paragraph()
+    pic_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    pic_p.add_run().add_picture(str(local), width=Inches(5.5))
+    return True
+
+
 def _docx_block(doc: Document, node: dict[str, Any]) -> None:
     t = node.get("type")
     if t == "paragraph":
+        attrs = node.get("attrs") or {}
+        center = attrs.get("textAlign") == "center"
         p = doc.add_paragraph()
-        _body_paragraph_format(p)
+        if center:
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _body_paragraph_format(p, indent=not center)
         _add_inline_to_paragraph(p, node.get("content"))
         return
     if t == "heading":
         level = int((node.get("attrs") or {}).get("level") or 1)
         level = max(1, min(6, level))
-        h = doc.add_heading(_inline_to_markdown(node.get("content")), level=min(level, 3))
-        for para in h.paragraphs:
-            for run in para.runs:
-                _style_run(run, size_pt=HEADING_PT.get(level, 14), bold=True)
+        try:
+            p = doc.add_paragraph(style=f"Heading {min(level, 3)}")
+        except Exception:
+            p = doc.add_paragraph()
+        _add_inline_to_paragraph(p, node.get("content"), size_pt=HEADING_PT.get(level, 14))
+        for run in p.runs:
+            run.bold = True
         return
     if t == "table":
         rows_in = [r for r in (node.get("content") or []) if isinstance(r, dict) and r.get("type") == "tableRow"]
@@ -300,19 +390,13 @@ def _docx_block(doc: Document, node: dict[str, Any]) -> None:
                 _add_inline_to_paragraph(p, sub.get("content"))
         return
     if t == "codeBlock":
-        p = doc.add_paragraph()
-        _body_paragraph_format(p)
-        run = p.add_run(_inline_to_markdown(node.get("content")))
-        _style_run(run, size_pt=CODE_PT, mono=True)
+        _add_code_paragraph(doc, _inline_to_markdown(node.get("content")))
         return
     if t in ("diagramBlock", "mermaidBlock"):
         attrs = node.get("attrs") or {}
         code = str(attrs.get("code") or "").strip()
         lang = str(attrs.get("engine") or "mermaid")
-        p = doc.add_paragraph()
-        _body_paragraph_format(p)
-        run = p.add_run(f"[{lang}]\n{code}")
-        _style_run(run, size_pt=CODE_PT, mono=True)
+        _add_code_paragraph(doc, f"[{lang}]\n{code}")
         return
     if t == "horizontalRule":
         p = doc.add_paragraph("—" * 24)
@@ -320,29 +404,14 @@ def _docx_block(doc: Document, node: dict[str, Any]) -> None:
             _style_run(run)
         return
     if t == "figureBlock":
-        attrs = node.get("attrs") or {}
-        path = str(attrs.get("fileUrl") or attrs.get("file_path") or "")
-        caption = str(attrs.get("caption") or attrs.get("rawAnnotation") or "")
-        num = str(attrs.get("figureNumber") or "")
-        label = f"图 {num}" if num else "图"
-        if path.startswith("/static/figures/"):
-            from app.config import settings
-
-            local = settings.figures_path / path.replace("/static/figures/", "", 1)
-            if local.is_file():
-                lp = doc.add_paragraph(label)
-                for run in lp.runs:
-                    _style_run(run, bold=True)
-                doc.add_picture(str(local), width=Inches(5.5))
-                if caption:
-                    cp = doc.add_paragraph(f"图解：{caption}")
-                    cp.paragraph_format.space_before = Pt(6)
-                    for run in cp.runs:
-                        _style_run(run, italic=True)
-                return
-        p = doc.add_paragraph(f"[{label}: {caption or '待生成'}]")
-        for run in p.runs:
-            _style_run(run)
+        if not docx_figure_image_only(doc, node):
+            attrs = node.get("attrs") or {}
+            num = str(attrs.get("figureNumber") or "")
+            label = f"图{num}" if num else "图"
+            p = doc.add_paragraph(f"【{label} 待生成】")
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in p.runs:
+                _style_run(run)
         return
 
 
@@ -351,7 +420,10 @@ def append_tiptap_to_document(doc: Document, tiptap: dict[str, Any] | None) -> N
         return
     for node in tiptap.get("content") or []:
         if isinstance(node, dict):
-            _docx_block(doc, node)
+            docx_block(doc, node)
+
+
+docx_block = _docx_block
 
 
 def append_chapter_content_to_document(doc: Document, content: dict[str, Any] | None) -> None:

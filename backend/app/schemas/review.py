@@ -18,6 +18,8 @@ class ReviewCategory(str, Enum):
     structure = "structure"
     hallucination = "hallucination"
     figure = "figure"
+    code = "code"
+    consistency = "consistency"
     other = "other"
 
 

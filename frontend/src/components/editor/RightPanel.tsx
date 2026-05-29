@@ -1,11 +1,9 @@
-import { BookOpen, ClipboardList, GraduationCap, MessageSquareText, PenLine, ShieldCheck, X } from "lucide-react";
-import { useEffect, useState } from "react";
-import toast from "react-hot-toast";
+import { ClipboardList, GraduationCap, ImageIcon, MessageSquareText, PenLine, ShieldCheck, X } from "lucide-react";
 
 import type { LlmModelsResponse } from "@/api/config";
-import { searchReferences } from "@/api/references";
 import AiAssistantPanel from "@/components/editor/AiAssistantPanel";
 import type { EditorAiPreviewPayload } from "@/types/aiPreview";
+import FigureQuickPanel from "@/components/editor/FigureQuickPanel";
 import LiteraturePanel from "@/components/editor/LiteraturePanel";
 import ReviewPanel from "@/components/editor/ReviewPanel";
 import type { AutoSaveUi } from "@/components/editor/EditorTopBar";
@@ -39,6 +37,7 @@ type Props = {
   chapterContext?: string;
   onApplyReviewFix?: (quote: string, suggestion: string) => void;
   onAiPreviewReady?: (payload: EditorAiPreviewPayload) => boolean | void;
+  onChapterMarkdownReplace?: (markdown: string) => void;
   quotedFigureId?: string | null;
   quotedFigureAnnotation?: string;
   onClearFigureQuote?: () => void;
@@ -49,9 +48,20 @@ type Props = {
     status: string;
     caption: string | null;
     figure_type: string;
+    replace_only?: boolean;
+    target_figure_id?: string;
   }) => void;
   /** 打开全局大纲以编辑章节元信息 */
   onOpenOutlineEditor?: () => void;
+  onFiguresChanged?: () => void;
+  onFigureGenerated?: (fig: import("@/api/figures").FigureOut) => void;
+  figureTableOverview?: import("@/api/figures").FigureTableOverviewItem[];
+  getChapterTiptapJson?: () => Record<string, unknown> | null;
+  onApplyChapterContent?: (payload: {
+    tiptap_json: Record<string, unknown>;
+    text: string;
+    overview?: import("@/api/figures").FigureTableOverviewItem[];
+  }) => void;
 };
 
 export default function RightPanel({
@@ -69,34 +79,26 @@ export default function RightPanel({
   assistantSeed,
   onConsumeAssistantSeed,
   citationStyle = null,
-  onInsertReference,
+  onInsertReference: _onInsertReference,
   onPreviewCitationInsert,
   chapterIndex = null,
   editorSelectionText = "",
   chapterContext = "",
   onApplyReviewFix,
   onAiPreviewReady,
+  onChapterMarkdownReplace,
   quotedFigureId = null,
   quotedFigureAnnotation = "",
   onClearFigureQuote,
   onFigureReady,
   onOpenOutlineEditor,
+  onFiguresChanged,
+  onFigureGenerated,
+  figureTableOverview = [],
+  getChapterTiptapJson,
+  onApplyChapterContent,
 }: Props) {
-  const [refHits, setRefHits] = useState<{ content: string; filename: string }[]>([]);
-  const [refsLoading, setRefsLoading] = useState(false);
-
-  useEffect(() => {
-    if (activeTab !== "refs" || !activeChapter?.title?.trim()) {
-      setRefHits([]);
-      return;
-    }
-    setRefsLoading(true);
-    searchReferences(bookId, { query: activeChapter.title.trim(), top_k: 5 })
-      .then((r) => setRefHits(r.hits ?? []))
-      .catch(() => setRefHits([]))
-      .finally(() => setRefsLoading(false));
-  }, [activeTab, bookId, activeChapter?.title]);
-
+  void _onInsertReference;
   function tabBtn(id: RightPanelTab, icon: React.ReactNode, label: string) {
     return (
       <button
@@ -117,7 +119,7 @@ export default function RightPanel({
     <aside className="right-panel" aria-label="辅助面板">
       <div className="right-panel-tab-bar">
         {tabBtn("detail", <ClipboardList className="h-4 w-4" aria-hidden />, "章节细则")}
-        {tabBtn("refs", <BookOpen className="h-4 w-4" aria-hidden />, "资料片段")}
+        {tabBtn("refs", <ImageIcon className="h-4 w-4" aria-hidden />, "图表速查")}
         {tabBtn("literature", <GraduationCap className="h-4 w-4" aria-hidden />, "文献搜索")}
         {tabBtn("ai", <MessageSquareText className="h-4 w-4" aria-hidden />, "AI 助手")}
         {tabBtn("review", <ShieldCheck className="h-4 w-4" aria-hidden />, "审阅")}
@@ -175,33 +177,15 @@ export default function RightPanel({
         )}
 
         {activeTab === "refs" && (
-          <div className="space-y-3 text-sm">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">已上传资料（RAG）</p>
-            {refsLoading ? (
-              <p className="text-slate-500">检索中…</p>
-            ) : refHits.length === 0 ? (
-              <p className="text-xs text-slate-500">暂无匹配片段。请先在书稿设定中上传并等待解析完成。</p>
-            ) : (
-              <ul className="space-y-3">
-                {refHits.map((h, i) => (
-                  <li key={i} className="rounded-lg border border-slate-100 bg-white/80 p-2 text-xs text-slate-700">
-                    <p className="max-h-28 overflow-y-auto whitespace-pre-wrap leading-relaxed">{h.content}</p>
-                    <p className="mt-1 text-[10px] text-slate-400">{h.filename}</p>
-                    <button
-                      type="button"
-                      className="mt-2 text-xs font-medium text-violet-700 hover:underline"
-                      onClick={() => {
-                        onInsertReference?.(h.content, h.filename);
-                        toast.success("已插入引用块");
-                      }}
-                    >
-                      插入
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          <FigureQuickPanel
+            bookId={bookId}
+            chapterIndex={chapterIndex ?? null}
+            initialOverview={figureTableOverview}
+            onFiguresChanged={onFiguresChanged}
+            onFigureGenerated={onFigureGenerated}
+            getChapterTiptapJson={getChapterTiptapJson}
+            onApplyChapterContent={onApplyChapterContent}
+          />
         )}
 
         <div className={activeTab === "literature" ? "" : "hidden"}>
@@ -244,10 +228,10 @@ export default function RightPanel({
             bookId={bookId}
             chapterIndex={chapterIndex}
             chapterTitle={activeChapter?.title}
-            selectionText={editorSelectionText}
             chapterContext={chapterContext}
             onApplySuggestion={onApplyReviewFix}
             onAiPreviewReady={onAiPreviewReady}
+            onChapterMarkdownReplace={onChapterMarkdownReplace}
           />
         )}
       </div>

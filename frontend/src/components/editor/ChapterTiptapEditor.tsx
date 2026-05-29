@@ -5,12 +5,16 @@ import { Bold, Loader2, MoreHorizontal } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import toast from "react-hot-toast";
 
 import { TextSelection, type EditorState } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 
 import EditorErrorBoundary from "@/components/common/EditorErrorBoundary";
+import { ANNOTATION_TEST_RE } from "@/lib/annotationPatterns";
 import {
   figureFileVersion,
   refreshChapterFigures,
@@ -26,22 +30,27 @@ import {
   buildTiptapDocWithFigures,
   enrichSyncedTiptapDoc,
   extractFigureBlocksFromDoc,
+  tiptapHasFigureBlocks,
   tiptapHasRichStructure,
+  tiptapMissingMarkdownFeatures,
 } from "@/lib/buildTiptapDocWithFigures";
 import { cleanSuggestionText } from "@/lib/cleanSuggestion";
 import { migrateTiptapDoc } from "@/lib/migrateTiptapDoc";
 import type { EditorAiPreviewPayload } from "@/types/aiPreview";
+import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
+import { tiptapDocToMarkdown } from "@/lib/tiptapDocToMarkdown";
 import { isRichMarkdown, markdownToTiptapDoc } from "@/lib/markdownToTiptapDoc";
-import {
-  plainTextMarkdownToTiptapDoc,
-  shouldParseAsMarkdown,
-} from "@/lib/plainTextMarkdownToTiptap";
+import { normalizeGfmMarkdown } from "@/lib/normalizeGfmMarkdown";
+import { plainTextMarkdownToTiptapDoc, shouldParseAsMarkdown } from "@/lib/plainTextMarkdownToTiptap";
 import type { Chapter } from "@/types/chapter";
 
 export type ChapterEditorHandle = {
   appendText: (t: string) => void;
   clear: () => void;
   applyPlainMarkdown: (raw: string) => void;
+  /** 应用服务端已组装的章节内容（优先 tiptap_json） */
+  applyServerContent: (content: Record<string, unknown> | null | undefined) => void;
+  scrollToSectionAnchor: (anchorId: string) => boolean;
   getSerialized: () => { json: Record<string, unknown>; text: string } | null;
   insertReferenceQuote: (body: string, filename: string) => void;
   insertCitationMarks: (marks: string[]) => void;
@@ -57,15 +66,18 @@ export type ChapterEditorHandle = {
   applySyncedDoc: (doc: Record<string, unknown>, markdownText?: string) => void;
   updateFigureBlock: (figureId: string, patch: Record<string, unknown>) => void;
   insertFigureBlock: (attrs: Record<string, unknown>) => void;
-  applyFigureResult: (fig: {
-    figure_id: string;
-    file_url: string | null;
-    figure_number: string | null;
-    status: string;
-    caption: string | null;
-    figure_type: string;
-    updated_at?: string | null;
-  }) => void;
+  applyFigureResult: (
+    fig: {
+      figure_id: string;
+      file_url: string | null;
+      figure_number: string | null;
+      status: string;
+      caption: string | null;
+      figure_type: string;
+      updated_at?: string | null;
+    },
+    options?: { replaceOnly?: boolean; targetFigureId?: string },
+  ) => void;
 };
 
 type Props = {
@@ -86,22 +98,8 @@ const EMPTY_DOC: Record<string, unknown> = { type: "doc", content: [] };
 function initialContent(ch: Chapter): string | Record<string, unknown> {
   try {
     const c = ch.content as Record<string, unknown> | null | undefined;
-    if (c?.tiptap_json && typeof c.tiptap_json === "object") {
-      return migrateTiptapDoc(c.tiptap_json as Record<string, unknown>);
-    }
-    const text = typeof c?.text === "string" ? c.text : "";
-    if (!text) return "";
-    if (isRichMarkdown(text)) {
-      try {
-        return markdownToTiptapDoc(text);
-      } catch {
-        /* fall through */
-      }
-    }
-    if (shouldParseAsMarkdown(text)) {
-      return plainTextMarkdownToTiptapDoc(text);
-    }
-    return text;
+    if (!c) return "";
+    return resolveChapterEditorContent(c);
   } catch {
     return EMPTY_DOC;
   }
@@ -256,9 +254,11 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
       },
     },
     onUpdate: ({ editor: ed }) => {
+      const json = ed.getJSON() as unknown as Record<string, unknown>;
+      const md = tiptapDocToMarkdown(json);
       onChange({
-        json: ed.getJSON() as unknown as Record<string, unknown>,
-        text: ed.getText(),
+        json,
+        text: md || ed.getText(),
         characters: ed.storage.characterCount?.characters() ?? ed.getText().length,
       });
     },
@@ -353,8 +353,11 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     const text = typeof c?.text === "string" ? c.text : "";
     const tj = c?.tiptap_json;
     if (!text.trim() || !tj || typeof tj !== "object") return;
+    const tjRecord = tj as Record<string, unknown>;
+    const incomplete = tiptapMissingMarkdownFeatures(text, tjRecord);
+    if (!incomplete && tiptapHasRichStructure(tjRecord)) return;
+    if (!incomplete && tiptapHasFigureBlocks(tjRecord)) return;
     if (!isRichMarkdown(text)) return;
-    if (tiptapHasRichStructure(tj as Record<string, unknown>)) return;
     if (formatRecoveredChapterRef.current === chapter.id) return;
     formatRecoveredChapterRef.current = chapter.id;
     const figBlocks = extractFigureBlocksFromDoc(tj as Record<string, unknown>);
@@ -366,7 +369,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     if (!bookId || !chapterIndex || readOnly || !editor) return;
     const c = chapter.content as Record<string, unknown> | null | undefined;
     const text = typeof c?.text === "string" ? c.text : "";
-    const hasAnnotation = /\[(?:FLOWCHART|CHART|FIGURE|SCREENSHOT):/i.test(text);
+    const hasAnnotation = ANNOTATION_TEST_RE.test(text);
     if (!hasAnnotation) return;
 
     const editorJson = JSON.stringify(editor.getJSON());
@@ -450,20 +453,44 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
       },
       applyPlainMarkdown: (raw: string) => {
         if (!editor) return;
-        if (!raw.trim()) return;
-        if (isRichMarkdown(raw)) {
+        const normalized = normalizeGfmMarkdown(raw);
+        if (!normalized.trim()) return;
+        if (isRichMarkdown(normalized)) {
           try {
-            safeSetContent(markdownToTiptapDoc(raw));
+            safeSetContent(markdownToTiptapDoc(normalized));
             return;
           } catch {
             /* fall through */
           }
         }
-        if (shouldParseAsMarkdown(raw)) {
-          safeSetContent(plainTextMarkdownToTiptapDoc(raw));
+        if (shouldParseAsMarkdown(normalized)) {
+          safeSetContent(plainTextMarkdownToTiptapDoc(normalized));
         } else {
-          safeSetContent(raw);
+          safeSetContent(normalized);
         }
+      },
+      applyServerContent: (content) => {
+        if (!editor) return;
+        safeSetContent(resolveChapterEditorContent(content));
+      },
+      scrollToSectionAnchor: (anchorId) => {
+        if (!editor || !anchorId) return false;
+        let anchorPos: number | null = null;
+        editor.state.doc.descendants((node, pos) => {
+          if (anchorPos != null) return false;
+          if (node.type.name === "heading" && node.attrs.id === anchorId) {
+            anchorPos = pos;
+            return false;
+          }
+          return true;
+        });
+        if (anchorPos == null) return false;
+        const el = editor.view.dom.querySelector(`#${CSS.escape(anchorId)}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        editor.chain().focus().setTextSelection(anchorPos + 1).run();
+        return true;
       },
       getSerialized: () => {
         if (!editor) return null;
@@ -566,8 +593,9 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
       insertFigureBlock: (attrs: Record<string, unknown>) => {
         editor?.commands.insertFigureBlock(attrs);
       },
-      applyFigureResult: (fig) => {
+      applyFigureResult: (fig, options) => {
         if (!editor) return;
+        const nextVersion = Date.now();
         const patch = {
           figureId: fig.figure_id,
           fileUrl: fig.file_url ?? "",
@@ -575,19 +603,46 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
           status: fig.status as FigureStatus,
           caption: fig.caption ?? "",
           figureType: fig.figure_type as FigureType,
-          fileVersion: Date.now(),
+          fileVersion: nextVersion,
         };
-        let found = false;
-        editor.state.doc.descendants((node) => {
-          if (node.type.name === "figureBlock" && node.attrs.figureId === fig.figure_id) {
-            found = true;
-          }
-        });
-        if (found) {
-          editor.commands.updateFigureBlockAttrs(fig.figure_id, patch);
-        } else {
-          editor.commands.insertFigureBlock(patch);
+        const targetId = options?.targetFigureId || fig.figure_id;
+        let updated = false;
+
+        const tryUpdate = (matchId: string) => {
+          let hit = false;
+          editor.state.doc.descendants((node, pos) => {
+            if (hit || node.type.name !== "figureBlock") return;
+            if (String(node.attrs.figureId ?? "") !== matchId) return;
+            editor.view.dispatch(
+              editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, ...patch }),
+            );
+            hit = true;
+            updated = true;
+          });
+          return hit;
+        };
+
+        if (targetId) tryUpdate(targetId);
+
+        if (!updated) {
+          editor.state.doc.descendants((node, pos) => {
+            if (updated || node.type.name !== "figureBlock") return;
+            const id = String(node.attrs.figureId ?? "");
+            if (id) return;
+            editor.view.dispatch(
+              editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, ...patch }),
+            );
+            updated = true;
+          });
         }
+
+        if (!updated && !options?.replaceOnly) {
+          editor.commands.insertFigureBlock(patch);
+        } else if (!updated) {
+          toast.error("未在正文中找到对应图表块，请先在正文中引用该图");
+          return;
+        }
+
         void syncFigureNumbersFromEditor();
       },
     }),
@@ -814,7 +869,9 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
         </>
       ) : (
         <div className="chapter-md-preview book-md-body prose prose-slate max-w-none px-1 py-2 prose-headings:font-semibold">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingMarkdown}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+            {streamingMarkdown}
+          </ReactMarkdown>
         </div>
       )}
       </div>

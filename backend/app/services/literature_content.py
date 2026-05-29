@@ -9,6 +9,8 @@ from xml.etree import ElementTree
 
 import httpx
 
+from app.utils.zh_convert import to_simplified
+
 logger = logging.getLogger(__name__)
 
 _NS_ATOM = {"atom": "http://www.w3.org/2005/Atom"}
@@ -39,6 +41,7 @@ def fetch_wikipedia_snippet(title: str, *, lang: str = "zh") -> str:
         "exintro": 1,
         "titles": title.strip(),
         "redirects": 1,
+        "variant": "zh-cn",
     }
     headers = {"User-Agent": "AutoBooker/1.0 (literature citation; contact: dev@local)"}
     try:
@@ -53,7 +56,7 @@ def fetch_wikipedia_snippet(title: str, *, lang: str = "zh") -> str:
     for _pid, page in pages.items():
         extract = (page.get("extract") or "").strip()
         if extract:
-            return _trim_snippet(extract)
+            return _trim_snippet(to_simplified(extract))
     return ""
 
 

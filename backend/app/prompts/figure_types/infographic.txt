@@ -1,5 +1,5 @@
-Editorial infographic for book chapter, information hierarchy clear.
-Layout: grid or vertical sections, icons and blocks without readable text.
-Style: clean infographic, white background, limited palette (#1B4F72 #2E86C1 #EBF5FB).
-Subject: {description}
-Negative: no poster style, no 3D hype, no dense paragraphs of text in image, no cartoon mascots.
+书籍章节信息图，信息层级分明。
+布局：网格或纵向分区，图标与色块组合，图中不出现可读文字。
+风格：简洁信息图，白底，有限配色（#1B4F72 #2E86C1 #EBF5FB）。
+主题：{description}
+禁止：海报风、3D 炫光、图中大段文字、卡通吉祥物。

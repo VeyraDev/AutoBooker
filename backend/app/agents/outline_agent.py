@@ -12,7 +12,12 @@ import jsonschema
 from jsonschema import ValidationError
 
 from app.llm.client import LLMClient
-from app.prompts.outline import OUTLINE_FALLBACK_STYLE, OUTLINE_JSON_INSTRUCTION, OUTLINE_JSON_SCHEMA
+from app.prompts.outline import (
+    OUTLINE_FALLBACK_STYLE,
+    OUTLINE_JSON_INSTRUCTION,
+    OUTLINE_JSON_SCHEMA,
+    OUTLINE_TITLE_RULES,
+)
 from app.prompts.style_prompts import get_outline_style_prompt
 from app.utils.json_llm import parse_llm_json
 
@@ -48,7 +53,7 @@ class OutlineAgent:
         frag = get_outline_style_prompt(style_type or "")
         if not frag.strip():
             frag = OUTLINE_FALLBACK_STYLE
-        return frag + "\n\n" + OUTLINE_JSON_INSTRUCTION
+        return frag + "\n\n" + OUTLINE_TITLE_RULES + "\n\n" + OUTLINE_JSON_INSTRUCTION
 
     def generate(self, book_config: dict[str, Any], reference_snippets: list[str] | None = None, *, model: str | None = None) -> dict[str, Any]:
         reference_snippets = reference_snippets or []
@@ -119,4 +124,9 @@ class OutlineAgent:
         if snippets:
             parts.append("参考资料摘录（请结合这些内容规划大纲）：")
             parts.extend([f"---\n{s}" for s in snippets[:5]])
+        parts.append(
+            "再次强调：每章 sections 的 title 必须带章号小节号前缀（如 1.1、1.2、2.1），"
+            "禁止冒号对仗式标题，摘要只写在 summary；"
+            "preface_brief 必填 2-4 句前言写作要点（散文语气，与主题和大纲结构呼应，不要条目标签）。"
+        )
         return "\n".join(parts)

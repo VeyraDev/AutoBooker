@@ -10,7 +10,6 @@ import {
   formatFigureLabel,
   generateFigure,
   resolveFigureUrl,
-  shortenFigureCaption,
   uploadFigure,
   type FigureType,
 } from "@/api/figures";
@@ -119,12 +118,44 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
     Boolean(imgSrc) &&
     (status === "generated" || status === "uploaded" || status === "approved");
   const showImage = hasFile && !imgFailed;
-  const shortCaption = shortenFigureCaption(caption || rawAnnotation);
+  const diagramDesc = rawAnnotation.trim();
+  const diagramLabel = (() => {
+    if (!diagramDesc) return "";
+    if (isScreenshot) return `[SCREENSHOT: ${diagramDesc}]`;
+    if (figureType === "flowchart") return `[FLOWCHART: ${diagramDesc}]`;
+    if (figureType === "chart") return `[CHART: ${diagramDesc}]`;
+    return `[DIAGRAM: ${diagramDesc}]`;
+  })();
+
+  const loadFreshImageBlob = useCallback(async (url: string) => {
+    if (!url) return;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    setBlobSrc((prev) => {
+      if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(blob);
+    });
+  }, []);
 
   useEffect(() => {
     const v = Number(node.attrs.fileVersion ?? 0);
     if (v > 0) setImgEpoch(v);
   }, [node.attrs.fileVersion]);
+
+  useEffect(() => {
+    if (!fileUrl) return;
+    if (!(status === "generated" || status === "uploaded" || status === "approved")) return;
+    const url = resolveFigureUrl(fileUrl, imgEpoch || fileVersion || Date.now());
+    if (!url) return;
+    let cancelled = false;
+    void loadFreshImageBlob(url).catch(() => {
+      if (!cancelled) setBlobSrc(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fileUrl, fileVersion, imgEpoch, status, loadFreshImageBlob]);
 
   useEffect(() => {
     setImgFailed(false);
@@ -135,17 +166,6 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
       if (blobSrc?.startsWith("blob:")) URL.revokeObjectURL(blobSrc);
     };
   }, [blobSrc]);
-
-  async function loadFreshImageBlob(url: string) {
-    if (!url) return;
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-    setBlobSrc((prev) => {
-      if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
-      return URL.createObjectURL(blob);
-    });
-  }
 
   const applyPatch = useCallback(
     (patch: Record<string, unknown>) => {
@@ -280,14 +300,12 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
           }}
         />
 
-        <div className="px-3 pt-2 text-center text-xs font-medium text-slate-600">{label}</div>
-
-        <div className="relative flex min-h-[140px] items-center justify-center p-4">
+        <div className="relative flex min-h-[140px] items-center justify-center p-4 pt-6">
           {showImage ? (
             <img
               key={`${figureId}-${imgEpoch}`}
               src={imgSrc}
-              alt={shortCaption || label}
+              alt={diagramDesc || label}
               className="max-h-[360px] w-full cursor-zoom-in object-contain"
               onDoubleClick={() => setFullscreen(true)}
               onError={() => setImgFailed(true)}
@@ -298,7 +316,7 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
                 <p className="text-xs text-amber-700">图片加载失败，请重新生成或上传替换</p>
               ) : (
                 <p className="line-clamp-4 text-xs leading-relaxed text-slate-500">
-                  {shortCaption || "待生成图表"}
+                  {diagramLabel || "待生成图表"}
                 </p>
               )}
               {!isScreenshot ? (
@@ -324,9 +342,9 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
           )}
         </div>
 
-        {showImage && shortCaption ? (
-          <p className="border-t border-slate-200/80 px-3 py-2 text-center text-xs text-slate-600">
-            图解：{shortCaption}
+        {diagramLabel ? (
+          <p className="border-t border-slate-200/80 px-3 py-2 text-center text-[11px] leading-relaxed text-slate-500">
+            {diagramLabel}
           </p>
         ) : null}
       </div>

@@ -9,6 +9,8 @@ export type ReviewCategory =
   | "structure"
   | "hallucination"
   | "figure"
+  | "code"
+  | "consistency"
   | "other";
 
 export interface ReviewIssue {
@@ -53,6 +55,8 @@ export const REVIEW_CATEGORY_LABEL: Record<ReviewCategory, string> = {
   structure: "结构",
   hallucination: "幻觉/无来源",
   figure: "图表",
+  code: "代码",
+  consistency: "风格一致",
   other: "其他",
 };
 

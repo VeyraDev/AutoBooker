@@ -18,13 +18,24 @@ def _load_template(name: str) -> str:
     path = _TEMPLATES_DIR / f"{name}.txt"
     if path.is_file():
         return path.read_text(encoding="utf-8").strip()
-    return "Professional book illustration. {description}"
+    return "专业书籍插图。{description}"
 
 
 def classify_figure_sub_kind(description: str, hint: str = "") -> str:
     h = (hint or "").strip().lower()
-    if h in ("architecture", "concept_diagram", "illustration", "infographic", "scene_illustration"):
-        return "scene_illustration" if h == "illustration" else h
+    if h in (
+        "architecture",
+        "concept_diagram",
+        "illustration",
+        "infographic",
+        "scene_illustration",
+        "chapter_summary",
+    ):
+        if h == "illustration":
+            return "scene_illustration"
+        if h == "chapter_summary":
+            return "infographic"
+        return h
     d = (description or "").casefold()
     if any(k in d for k in ("架构", "模块", "系统", "部署", "agent")):
         return "architecture"
@@ -47,7 +58,7 @@ def build_figure_prompt_from_template(
 
     template_name = sk if sk != "illustration" else "scene_illustration"
     tpl = _load_template(template_name)
-    style_hint = STYLE_MAP.get(style_type, "Professional publishing illustration")
+    style_hint = STYLE_MAP.get(style_type, "专业出版插图风格")
     prompt = tpl.format(description=description.strip(), style_hint=style_hint)
     return prompt
 
@@ -63,7 +74,7 @@ def llm_expand_image_prompt(description: str, style_type: str, sub_kind: str) ->
             [
                 {
                     "role": "user",
-                    "content": f"将下列图像需求扩写为英文 image generation prompt（一段，无 markdown）：\n{base}",
+                    "content": f"将下列图像需求扩写为中文图像生成提示词（一段，无 markdown，描述画面内容与风格）：\n{base}",
                 }
             ],
             model=settings.intent_model,

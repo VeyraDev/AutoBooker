@@ -1,6 +1,6 @@
-Book scene illustration, approachable flat design, consistent with nonfiction publishing.
-Layout: balanced composition, focal subject clear.
-Style: {style_hint}, soft colors, professional not poster-like.
-Subject: {description}
-Negative: no cartoon exaggeration, no photorealistic faces, no readable text in image, no watermark, no movie poster composition.
-Minimal text glyphs; leave margin for figure caption.
+书籍场景插图，亲和扁平设计，与非虚构出版物风格一致。
+布局：构图均衡，主体明确。
+风格：{style_hint}，柔和配色，专业克制，非海报感。
+主题：{description}
+禁止：卡通夸张、写实人脸、图中可读文字、水印、电影海报式构图。
+为图注留出页边空白。

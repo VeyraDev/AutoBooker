@@ -59,7 +59,7 @@ async function openGenerateStream(
 
 export type ChapterStreamCallbacks = {
   onToken: (token: string) => void;
-  onDone: () => void;
+  onDone: (payload?: { markdown?: string }) => void;
   onError: (err: Error) => void;
   /** 请求被中止（例如切换章节） */
   onAbort?: () => void;
@@ -93,7 +93,10 @@ export function useChapterStream() {
             return;
           }
           if (typeof obj.token === "string") cb.onToken(obj.token);
-          if (obj.done === true) cb.onDone();
+          if (obj.done === true) {
+            const markdown = typeof obj.markdown === "string" ? obj.markdown : undefined;
+            cb.onDone(markdown !== undefined ? { markdown } : undefined);
+          }
         });
         if (!errored && !sawDone && !ac.signal.aborted) {
           cb.onError(new Error("连接已结束但未收到完成标记，请刷新或重试本章"));

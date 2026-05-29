@@ -78,7 +78,12 @@ def review_chapter(
     )
 
     issues = [ReviewIssueOut.model_validate(x) for x in result.get("issues") or []]
-    lint_raw = lint_chapter_citations(md, db, book.id)
+    lint_raw = lint_chapter_citations(
+        md,
+        db,
+        book.id,
+        bracket_style=(book.citation_style and book.citation_style.value == "gb_t7714"),
+    )
     citation_issues = [CitationLintIssueOut.model_validate(x.to_dict()) for x in lint_raw]
     return ChapterReviewOut(
         chapter_index=chapter_index,

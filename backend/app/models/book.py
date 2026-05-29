@@ -44,6 +44,7 @@ class Book(Base):
     topic_tags = Column(JSONB, nullable=True)
     user_material = Column(Text, nullable=True)
     narrative_constitution = Column(Text, nullable=True)
+    preface = Column(JSONB, nullable=True)
     status = Column(Enum(BookStatus, name="book_status"), default=BookStatus.setup, nullable=False)
     ai_model = Column(String(80), default="deepseek:deepseek-chat")
     last_literature_query = Column(JSONB, nullable=True)

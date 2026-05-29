@@ -72,3 +72,18 @@ export async function editChapterSelection(
   );
   return data;
 }
+
+const CHAPTER_DEDUPE_TIMEOUT_MS = 300_000;
+
+/** 对本章全文降 AI 率（非选区） */
+export async function dedupeChapter(
+  bookId: string,
+  chapterIndex: number,
+): Promise<{ text: string; original_text: string }> {
+  const { data } = await client.post<{ text: string; original_text: string }>(
+    `/books/${bookId}/chapters/${chapterIndex}/dedupe-chapter`,
+    {},
+    { timeout: CHAPTER_DEDUPE_TIMEOUT_MS },
+  );
+  return data;
+}

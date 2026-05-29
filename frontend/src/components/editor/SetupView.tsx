@@ -196,8 +196,9 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
   }
 
   return (
-    <div className="setup-view flex flex-col gap-8">
-      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
+    <div className="setup-view">
+      <div className="card divide-y divide-slate-200/80 border border-slate-200/80 bg-white/70 shadow-sm">
+      <section className="p-5">
         <h3 className="text-sm font-semibold text-ink">基础信息</h3>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <div className="text-sm">
@@ -211,8 +212,8 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
         </div>
       </section>
 
-      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
-        <h3 className="text-sm font-semibold text-ink">体裁与标签</h3>
+      <section className="p-5">
+        <h3 className="text-sm font-semibold text-ink">体例风格</h3>
         <p className="mt-1 text-xs text-slate-500">二级体裁决定大纲与章节专用 prompt；三级标签写入全书上下文。</p>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <label className="block text-sm md:col-span-2">
@@ -287,8 +288,8 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
         </div>
       </section>
 
-      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
-        <h3 className="text-sm font-semibold text-ink">写作参数</h3>
+      <section className="p-5">
+        <h3 className="text-sm font-semibold text-ink">写作定位</h3>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <label className="block text-sm">
             <span className="text-slate-600">目标读者</span>
@@ -304,22 +305,7 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
             <input className="input mt-1" value={discipline} onChange={(e) => setDiscipline(e.target.value)} />
           </label>
           <label className="block text-sm">
-            <span className="text-slate-600">引用格式</span>
-            <select
-              className="input mt-1"
-              value={citation}
-              onChange={(e) => setCitation(e.target.value as CitationStyle | "")}
-            >
-              <option value="">无需引用</option>
-              {CITATION_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block text-sm">
-            <span className="text-slate-600">目标字数</span>
+            <span className="text-slate-600">全书目标字数</span>
             <div className="mt-1 flex gap-2">
               <button
                 type="button"
@@ -351,11 +337,24 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
         </div>
       </section>
 
-      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
-        <h3 className="text-sm font-semibold text-ink">文献检索</h3>
-        <p className="mt-1 text-xs text-slate-500">
-          提前检索并勾选文献加入引用库；请先在上方「写作参数」选择引用格式并保存设定。
-        </p>
+      <section className="p-5">
+        <h3 className="text-sm font-semibold text-ink">引用与资料</h3>
+        <label className="mt-3 block text-sm">
+          <span className="text-slate-600">引用格式</span>
+          <select
+            className="input mt-1"
+            value={citation}
+            onChange={(e) => setCitation(e.target.value as CitationStyle | "")}
+          >
+            <option value="">无需引用</option>
+            {CITATION_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="mt-3 text-xs text-slate-500">文献检索：勾选后加入引用库（摘录后台补全）。</p>
         <div className="mt-4">
           <LiteraturePanel
             bookId={book.id}
@@ -367,8 +366,8 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
         </div>
       </section>
 
-      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
-        <h3 className="text-sm font-semibold text-ink">主题要点</h3>
+      <section className="p-5">
+        <h3 className="text-sm font-semibold text-ink">主题说明</h3>
         <p className="mt-1 text-xs text-slate-500">将用于生成大纲；可先保存设定再生成。</p>
         <div className="mt-3 flex flex-wrap gap-2">
           {TOPIC_INSPIRATION_PRESETS.map((p) => (
@@ -383,17 +382,16 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
           onChange={(e) => setTopicBrief(e.target.value)}
           placeholder="希望全书覆盖哪些论点、案例类型、语气风格等…"
         />
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" className="btn-secondary" onClick={() => void saveMeta()}>
+            保存设定
+          </button>
+        </div>
       </section>
 
-      <div className="flex flex-wrap gap-2">
-        <button type="button" className="btn-secondary" onClick={() => void saveMeta()}>
-          保存设定
-        </button>
-      </div>
-
-      <section className="card border border-slate-200/80 bg-white/70 p-5 shadow-sm">
+      <section className="p-5">
         <h3 className="text-sm font-semibold text-ink">
-          上传文件 <span className="font-normal text-slate-500">（{files.length} 个）</span>
+          资料上传 <span className="font-normal text-slate-500">（{files.length} 个）</span>
         </h3>
         <p className="mt-2 text-xs text-slate-500">
           分区上传可指定处理路径；选「自动」时系统按字数与学术特征分流。支持 PDF、DOCX、TXT。
@@ -525,6 +523,7 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
           )}
         </ul>
       </section>
+      </div>
     </div>
   );
 }

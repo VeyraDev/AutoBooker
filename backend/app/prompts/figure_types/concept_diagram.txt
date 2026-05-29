@@ -1,6 +1,6 @@
-Book-style concept diagram, clean vector illustration, white background.
-Layout: hierarchical or left-to-right flow, clear information layers.
-Style: soft academic color palette (#1B4F72 #EBF5FB), minimal flat design.
-Subject: {description}
-Negative: no cartoon, no photorealistic, no poster hype, no decorative sci-fi glow, no text labels in image, no complex shadows.
-Leave empty space for captions and annotations outside the image.
+书籍内页概念示意图，白底简洁矢量风格。
+布局：层级或自左向右信息流，信息层次清晰。
+风格：学术配色（#1B4F72 #EBF5FB），扁平简约。
+主题：{description}
+禁止：卡通、照片写实、海报式夸张、科幻光效、图中可读文字、复杂阴影。
+为图注与标注留出页边空白。

@@ -23,6 +23,8 @@ type Props = {
   onDeleteChapter?: (chapterIndex: number) => void;
   onReorder: (items: { chapter_id: string; new_index: number }[]) => void | Promise<void>;
   dragDisabled?: boolean;
+  /** 章节列表末尾（如前言） */
+  prefaceSlot?: React.ReactNode;
 };
 
 function SortableChapterCard({
@@ -280,6 +282,7 @@ export default function OutlineChapterListEditor({
   onDeleteChapter,
   onReorder,
   dragDisabled = false,
+  prefaceSlot,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [metaExpanded, setMetaExpanded] = useState<Set<number>>(new Set());
@@ -330,7 +333,8 @@ export default function OutlineChapterListEditor({
   }
 
   async function addSection(ch: OutlineChapter) {
-    const nextSections = [...ch.sections, { title: "新小节", summary: "" }];
+    const n = ch.sections.length + 1;
+    const nextSections = [...ch.sections, { title: `${ch.index}.${n} 新小节`, summary: "" }];
     await saveChapterInline(ch, { sections: nextSections });
     toast.success("已添加小节");
   }
@@ -378,6 +382,7 @@ export default function OutlineChapterListEditor({
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => void handleDragEnd(e)}>
         <SortableContext items={ordered.map((c) => c.id)} strategy={verticalListSortingStrategy}>
           <div className="outline-chapter-list outline-chapter-list-tight space-y-2">
+            {prefaceSlot}
             {ordered.map((ch) => (
               <SortableChapterCard
                 key={ch.id}

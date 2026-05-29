@@ -5,21 +5,36 @@ OUTLINE_FALLBACK_STYLE = """
 你的任务是根据用户提供的主题和要求，生成一份详细的书籍大纲。
 """.strip()
 
+OUTLINE_TITLE_RULES = """
+【章/节标题规范（必须遵守）】
+- 禁止使用「主题：副标题」「概念：说明」等冒号对仗式标题（AI 味重）
+- 禁止使用破折号拼接两个抽象短语（如「认知跃迁——理解大模型」）
+- 章标题可带「第X章」前缀；章标题 6-20 字单句，不要副标题
+- 【小节编号强制】sections 中每个 title 必须以「{章index}.{节序号} 」开头：
+  · 第 1 章第 1 节 → "1.1 具体标题"
+  · 第 3 章第 2 节 → "3.2 具体标题"
+  · 全章所有小节必须连续编号，不可省略，不可用「第一节」「一、」「1、」代替
+- 小节摘要写在 summary 字段，不要写进 title
+- 标题应像人写的篇名，不要营销口号
+""".strip()
+
 OUTLINE_JSON_INSTRUCTION = """
 输出格式要求（严格遵守，只返回 JSON，不要任何解释文字、不要代码块）：
 {
   "title": "书名建议",
+  "preface_brief": "前言写作要点2-4句（必填，散文语气，不要条目结构，与全书主题和大纲呼应）",
   "total_chapters": 数字,
   "estimated_words": 数字,
   "chapters": [
     {
       "index": 1,
-      "title": "第一章 章节标题",
+      "title": "第一章 当机器开始读懂上下文",
       "summary": "本章核心内容摘要（100-150字）",
       "key_points": ["核心论点1", "核心论点2"],
       "estimated_words": 数字,
       "sections": [
-        {"title": "1.1 节标题", "summary": "节摘要（50字）"}
+        {"title": "1.1 注意力机制为何改变一切", "summary": "本节摘要（50字）"},
+        {"title": "1.2 从静态词向量到上下文窗口", "summary": "本节摘要（50字）"}
       ]
     }
   ]
@@ -27,14 +42,15 @@ OUTLINE_JSON_INSTRUCTION = """
 """.strip()
 
 # 兼容旧代码引用：体裁缺失时的默认系统词 = 泛用编辑 + JSON
-OUTLINE_SYSTEM_PROMPT = (OUTLINE_FALLBACK_STYLE + "\n\n" + OUTLINE_JSON_INSTRUCTION).strip()
+OUTLINE_SYSTEM_PROMPT = (OUTLINE_FALLBACK_STYLE + "\n\n" + OUTLINE_TITLE_RULES + "\n\n" + OUTLINE_JSON_INSTRUCTION).strip()
 
 # jsonschema draft-07 minimal validation for outline root
 OUTLINE_JSON_SCHEMA: dict = {
     "type": "object",
-    "required": ["title", "total_chapters", "estimated_words", "chapters"],
+    "required": ["title", "preface_brief", "total_chapters", "estimated_words", "chapters"],
     "properties": {
         "title": {"type": "string"},
+        "preface_brief": {"type": "string"},
         "total_chapters": {"type": "integer", "minimum": 1},
         "estimated_words": {"type": "integer", "minimum": 1000},
         "chapters": {

@@ -22,7 +22,12 @@ from app.services.literature_profiles import (
     PROFILE_TECHNICAL,
     source_quota,
 )
-from app.services.literature_rerank import apply_must_filters, quality_gate, rerank_papers
+from app.services.literature_rerank import (
+    apply_must_filters,
+    must_include_for_bucket,
+    quality_gate,
+    rerank_papers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +35,131 @@ CROSSREF_WORKS = "https://api.crossref.org/works"
 SEMANTIC_SCHOLAR = "https://api.semanticscholar.org/graph/v1/paper/search"
 _NS_ATOM = {"atom": "http://www.w3.org/2005/Atom"}
 from app.services.literature_http import WIKI_HEADERS, literature_client
+from app.utils.zh_convert import to_simplified
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_EN_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+_.#-]*")
+_GITHUB_EN_STOP = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "into",
+        "using",
+        "based",
+        "about",
+        "how",
+        "what",
+        "when",
+        "where",
+        "application",
+        "applications",
+        "guide",
+        "model",
+        "models",
+        "learning",
+        "deep",
+        "large",
+        "language",
+        "practice",
+        "practices",
+        "engineering",
+    }
+)
 
 
 def _has_cjk(text: str) -> bool:
     return bool(_CJK_RE.search(text))
+
+
+def _is_github_worthy_token(token: str) -> bool:
+    t = token.strip()
+    if not t or len(t) < 2:
+        return False
+    if t.lower() in _GITHUB_EN_STOP:
+        return False
+    if t[0].isupper() or t.isupper():
+        return True
+    if any(c.isdigit() for c in t):
+        return True
+    return len(t) >= 4
+
+
+def _extract_english_keywords(text: str) -> list[str]:
+    return [t for t in _EN_TOKEN_RE.findall(text or "") if _is_github_worthy_token(t)]
+
+
+def _should_skip_auto_refine(raw_query: str) -> bool:
+    """短英文检索词视为专有名词，不自动扩写为中文长句。"""
+    q = raw_query.strip()
+    if not q or _has_cjk(q):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9+_.# -]+", q):
+        return False
+    return len(q.split()) <= 3
+
+
+def _preserve_english_raw_query(raw_query: str, queries: list[str]) -> list[str]:
+    raw = raw_query.strip()
+    cleaned = [q.strip() for q in queries if q and q.strip()]
+    if raw and not _has_cjk(raw) and re.search(r"[A-Za-z]", raw):
+        return list(dict.fromkeys([raw, *cleaned]))
+    return cleaned
+
+
+def _github_english_queries(
+    queries: list[str],
+    primary: str,
+    *,
+    raw_query: str = "",
+) -> list[str]:
+    """GitHub 固定走英文；从混合检索词中提取专有名词，避免被泛化扩展覆盖。"""
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def _push(q: str) -> None:
+        q = q.strip()
+        if not q or _has_cjk(q) or not re.search(r"[A-Za-z]", q):
+            return
+        key = q.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(q)
+
+    src = list(
+        dict.fromkeys(
+            [
+                *(q.strip() for q in queries if q and q.strip()),
+                primary.strip(),
+                raw_query.strip(),
+            ]
+        )
+    )
+    for q in src:
+        if not _has_cjk(q):
+            _push(q)
+    for q in src:
+        for token in _extract_english_keywords(q):
+            _push(token)
+
+    if out:
+        return out[:5]
+    return _fallback_english_from_queries(queries, primary)[:3]
+
+
+def _fallback_english_from_queries(queries: list[str], primary: str) -> list[str]:
+    for q in queries:
+        if not _has_cjk(q) and re.search(r"[A-Za-z]", q):
+            return [q]
+    text = " ".join(queries) or primary
+    if "大模型" in text or "模型" in text:
+        return ["large language model fine-tuning"]
+    if "AI" in text.upper() or "人工智能" in text:
+        return ["artificial intelligence applications"]
+    return ["machine learning"]
 
 
 def _normalize_paper(it: dict[str, Any], *, source: str) -> dict[str, Any]:
@@ -227,7 +351,7 @@ def rank_papers(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def search_wikipedia(query: str, rows: int = 15, *, lang: str | None = None) -> list[dict[str, Any]]:
-    langs = [lang] if lang else (["zh", "en"] if _has_cjk(query) else ["en", "zh"])
+    langs = [lang] if lang else (["zh"] if _has_cjk(query) else ["en", "zh"])
     out: list[dict[str, Any]] = []
     for lg in langs:
         if len(out) >= rows:
@@ -241,6 +365,8 @@ def search_wikipedia(query: str, rows: int = 15, *, lang: str | None = None) -> 
             "srlimit": min(rows, 20),
             "utf8": 1,
         }
+        if lg == "zh":
+            params["variant"] = "zh-cn"
         try:
             with literature_client(timeout=20.0) as client:
                 r = client.get(api, params=params, headers=WIKI_HEADERS)
@@ -250,8 +376,8 @@ def search_wikipedia(query: str, rows: int = 15, *, lang: str | None = None) -> 
             logger.warning("wikipedia search failed %s: %s", lg, e)
             continue
         for hit in (data.get("query") or {}).get("search") or []:
-            title = hit.get("title") or ""
-            snippet = re.sub(r"<[^>]+>", "", hit.get("snippet") or "")
+            title = to_simplified(hit.get("title") or "")
+            snippet = to_simplified(re.sub(r"<[^>]+>", "", hit.get("snippet") or ""))
             out.append(
                 _normalize_paper(
                     {
@@ -420,6 +546,7 @@ class LiteratureAgent:
         *,
         must_include: list[str] | None = None,
         must_exclude: list[str] | None = None,
+        raw_query: str = "",
     ) -> dict[str, Any]:
         primary = (queries[0] if queries else "").strip()
         if not primary and not queries:
@@ -435,6 +562,9 @@ class LiteratureAgent:
         quota = source_quota(profile, rows)
         fetch_n = min(max(rows, 20), 40)
         all_q = [q for q in queries if q.strip()] or [primary]
+        en_q = [q for q in all_q if not _has_cjk(q)] or _fallback_english_from_queries(all_q, primary)
+        github_q = _github_english_queries(all_q, primary, raw_query=raw_query)
+        cn_q = [q for q in all_q if _has_cjk(q)] or all_q[:2]
         classic = classic_queries_for_text(" ".join(all_q))
         paper_queries = list(dict.fromkeys(all_q + classic))
 
@@ -445,24 +575,30 @@ class LiteratureAgent:
 
         # 限制 query 数量，避免检索过慢导致前端超时
         papers_raw = _fetch_papers_bundle(paper_queries[:2], max(10, quota.papers))
-        for q in all_q[:2]:
+        for q in github_q[:3]:
             github_raw.extend(search_github(q, rows=max(quota.github * 2, 12)))
+        if quota.official_doc > 0:
+            for q in en_q[:1]:
+                docs_raw.extend(search_official_docs(q, rows=max(4, quota.official_doc * 2)))
+        for q in cn_q[:2]:
             wiki_raw.extend(search_wikipedia(q, rows=max(quota.wikipedia * 2, 10)))
-            docs_raw.extend(search_official_docs(q, rows=max(4, quota.official_doc * 2)))
 
         mi = must_include or []
         me = must_exclude or []
         warnings: list[str] = []
+        fast_en = _should_skip_auto_refine(raw_query)
 
         def _finish(
             bucket: list[dict[str, Any]],
             limit: int,
             rerank_q: str,
             *,
+            bucket_name: str,
             use_llm_rerank: bool = False,
         ) -> list[dict[str, Any]]:
             deduped = _dedupe_papers(bucket)
-            filtered = apply_must_filters(deduped, must_include=mi, must_exclude=me)
+            mi_bucket = must_include_for_bucket(mi, bucket_name)
+            filtered = apply_must_filters(deduped, must_include=mi_bucket, must_exclude=me)
             gated = [p for p in filtered if quality_gate(p, profile=profile)]
             ranked = rank_papers(gated or filtered)
             if use_llm_rerank and len(ranked) > 2:
@@ -474,11 +610,23 @@ class LiteratureAgent:
         if not papers_raw and profile in (PROFILE_ACADEMIC, PROFILE_POPULAR):
             warnings.append("论文源部分不可用（arXiv/Semantic Scholar 限流或网络问题），已返回其他来源结果。")
 
+        github_done = _finish(github_raw, quota.github, primary, bucket_name="github")
+        if github_raw and not github_done:
+            warnings.append("GitHub 未返回结果，可尝试更简短的英文专有名词检索。")
+
         return {
-            "papers": _finish(papers_raw, quota.papers, primary, use_llm_rerank=True),
-            "github": _finish(github_raw, quota.github, primary, use_llm_rerank=False),
-            "wiki": _finish(wiki_raw, quota.wikipedia, primary, use_llm_rerank=False),
-            "official_docs": _finish(docs_raw, quota.official_doc, primary, use_llm_rerank=False),
+            "papers": _finish(
+                papers_raw,
+                quota.papers,
+                primary,
+                bucket_name="papers",
+                use_llm_rerank=not fast_en,
+            ),
+            "github": github_done,
+            "wiki": _finish(wiki_raw, quota.wikipedia, primary, bucket_name="wiki"),
+            "official_docs": _finish(
+                docs_raw, quota.official_doc, primary, bucket_name="official_docs"
+            ),
             "refined_queries": queries,
             "warnings": warnings,
         }

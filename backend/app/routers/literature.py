@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.agents.literature_agent import LiteratureAgent, format_paper_citation
+from app.agents.literature_agent import (
+    LiteratureAgent,
+    _preserve_english_raw_query,
+    _should_skip_auto_refine,
+    format_paper_citation,
+)
 from app.database import get_db
 from app.models.citation import CitationSource
 from app.models.user import User
@@ -88,17 +93,25 @@ def literature_search(
     profile = literature_profile(book.book_type, book.style_type)
     agent = LiteratureAgent()
 
-    queries = body.refined_queries or []
+    raw_q = body.query.strip()
     must_inc = body.must_include or []
     must_exc = body.must_exclude or []
 
-    if not queries and not body.skip_refine:
-        refined = refine_literature_query(db, book, raw_query=body.query)
-        queries = refined["refined_queries"]
-        must_inc = refined.get("must_include") or must_inc
-        must_exc = refined.get("must_exclude") or must_exc
-    elif not queries:
-        queries = [body.query.strip()] if body.query.strip() else []
+    if _should_skip_auto_refine(raw_q):
+        # 短英文专有名词：忽略 session/前端带来的旧 refined_queries
+        queries = [raw_q]
+        must_inc = []
+        must_exc = []
+    else:
+        queries = body.refined_queries or []
+        if not queries and not body.skip_refine:
+            refined = refine_literature_query(db, book, raw_query=raw_q)
+            queries = refined["refined_queries"]
+            must_inc = refined.get("must_include") or must_inc
+            must_exc = refined.get("must_exclude") or must_exc
+        elif not queries:
+            queries = [raw_q] if raw_q else []
+        queries = _preserve_english_raw_query(raw_q, queries)
 
     if not queries:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "请提供检索词或先生成检索词")
@@ -109,6 +122,7 @@ def literature_search(
         rows=body.rows,
         must_include=must_inc,
         must_exclude=must_exc,
+        raw_query=raw_q,
     )
 
     papers = _to_papers(tabbed["papers"])
@@ -150,22 +164,37 @@ def literature_format(
     return LiteratureFormatOut(citation=text)
 
 
+def _enrich_citation_snippet_task(citation_id: UUID, paper_payload: dict) -> None:
+    from app.database import SessionLocal
+    from app.models.citation import Citation
+
+    db = SessionLocal()
+    try:
+        row = db.get(Citation, citation_id)
+        if not row or (row.quotable_snippet or "").strip():
+            return
+        snippet, _ = fetch_paper_quotable_snippet(paper_payload)
+        if snippet:
+            row.quotable_snippet = snippet
+            db.commit()
+    finally:
+        db.close()
+
+
 @router.post("/{book_id}/literature/add-selected", response_model=CitationListOut)
 def literature_add_selected(
     book_id: UUID,
     body: CitationBatchIn,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """将用户勾选的检索结果写入引用库（不插入正文）。"""
+    """将用户勾选的检索结果写入引用库（先入库元数据，摘录后台补全）。"""
     book = book_service.get_book_or_404(book_id, user, db)
     style = book.citation_style.value if book.citation_style else "apa"
     created: list = []
     for p in body.papers:
         payload = _paper_payload(p)
-        snippet, _ = fetch_paper_quotable_snippet(payload)
-        if snippet:
-            payload["quotable_snippet"] = snippet
         row = create_citation_from_paper(
             db,
             book,
@@ -173,6 +202,7 @@ def literature_add_selected(
             source=CitationSource.literature_search,
         )
         created.append(row)
+        background_tasks.add_task(_enrich_citation_snippet_task, row.id, dict(payload))
     return CitationListOut(
         items=[
             CitationOut.model_validate(r).model_copy(update={"formatted": formatted_line(r, style)})

@@ -13,28 +13,27 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 FIGURE_STYLE_PREFIX = """
-Technical illustration, clean vector style,
-flat design, blue and white color scheme (#1B4F72 and #EBF5FB),
-no text, no letters, no numbers, no labels, no dollar signs, no currency symbols,
-no mathematical glyphs, professional publishing quality,
-consistent with other figures in the same book.
+技术插图，简洁矢量风格，
+扁平设计，蓝白配色（#1B4F72 与 #EBF5FB），
+图中无文字、无字母、无数字、无标签、无货币符号，
+专业出版品质，与全书其他插图风格一致。
 """.strip()
 
 STYLE_MAP = {
-    "textbook": "Academic textbook illustration style, precise and clean",
-    "popular_science": "Modern infographic style, approachable and colorful",
-    "practical_guide": "Technical diagram style, step-by-step clarity",
-    "入门科普": "Modern infographic style, approachable and colorful",
-    "技术深度分析": "Academic technical illustration, precise",
-    "实战操作": "Step-by-step technical diagram",
-    "教科书": "Academic textbook illustration style",
+    "textbook": "学术教材插图风格，精确简洁",
+    "popular_science": "现代信息图风格，亲和明快",
+    "practical_guide": "技术图解风格，步骤清晰",
+    "入门科普": "现代信息图风格，亲和明快",
+    "技术深度分析": "学术技术插图，精确严谨",
+    "实战操作": "分步技术图解",
+    "教科书": "学术教材插图风格",
 }
 
 ARCHITECTURE_SUFFIX = (
-    "Technical architecture diagram, abstract geometric blocks and arrows only, "
-    "no readable text, no labels, no dollar or currency symbols, clean lines, professional."
+    "系统架构示意图，抽象几何块与箭头，"
+    "无可读文字与标签，无货币符号，线条简洁，专业风格。"
 )
-ILLUSTRATION_SUFFIX = "Scene illustration, flat design, approachable, no text in image."
+ILLUSTRATION_SUFFIX = "场景插图，扁平设计，亲和易懂，图中无文字。"
 
 
 def build_figure_prompt(
@@ -43,7 +42,7 @@ def build_figure_prompt(
     *,
     sub_kind: str = "figure",
 ) -> str:
-    style_prefix = STYLE_MAP.get(style_type, "Professional publishing illustration")
+    style_prefix = STYLE_MAP.get(style_type, "专业出版插图风格")
     suffix = ARCHITECTURE_SUFFIX if sub_kind == "architecture" else ILLUSTRATION_SUFFIX
     return f"{style_prefix}. {FIGURE_STYLE_PREFIX}. {suffix}. {description}"
 

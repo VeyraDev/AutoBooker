@@ -12,6 +12,7 @@ from app.routers import assistant as assistant_router
 from app.routers import review as review_router
 from app.routers import literature as literature_router
 from app.routers import outline as outline_router
+from app.routers import preface as preface_router
 from app.routers import references as references_router
 
 app = FastAPI(title="AutoBooker API", version="0.1.0")
@@ -35,6 +36,7 @@ app.include_router(outline_router.router)
 app.include_router(chapters_router.router)
 app.include_router(figures_router.router)
 app.include_router(assistant_router.router)
+app.include_router(preface_router.router)
 
 settings.figures_path.mkdir(parents=True, exist_ok=True)
 app.mount(

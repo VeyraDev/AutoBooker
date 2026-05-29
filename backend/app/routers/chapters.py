@@ -29,6 +29,7 @@ from app.llm.client import LLMClient
 from app.schemas.book import NarrativeEnsureOut
 from app.schemas.chapter import (
     ChapterCreateIn,
+    ChapterDedupeOut,
     ChapterOut,
     ChapterReorderIn,
     ChapterUpdate,
@@ -36,7 +37,14 @@ from app.schemas.chapter import (
     SelectionEditOut,
 )
 from app.services import book_service
-from app.services.figure_service import extract_and_store_figures, renumber_figures
+from app.services.figure_service import (
+    extract_and_store_figures,
+    renumber_figures,
+    refresh_chapter_figures,
+    sync_figures_to_tiptap,
+)
+from app.services.section_assembler import process_chapter_generation_result
+from app.services.tiptap_convert import chapter_content_to_markdown
 from app.services.memory_service import build_book_memory, extract_chapter_memory
 from app.services.outline_text import serialize_book_outline_markdown
 
@@ -58,10 +66,14 @@ def _get_chapter(book_id: UUID, chapter_index: int, db: Session) -> Chapter:
 
 def _chapter_payload(ch: Chapter, total_chapters: int) -> dict:
     meta = ch.content if isinstance(ch.content, dict) else {}
+    sections = meta.get("sections") or []
+    if not isinstance(sections, list):
+        sections = []
     return {
         "title": ch.title,
         "summary": ch.summary or "",
         "key_points": list(meta.get("key_points") or []),
+        "sections": sections,
         "estimated_words": int(meta.get("estimated_words") or 3000),
         "chapter_index": ch.index,
         "total_chapters": max(int(total_chapters), 1),
@@ -422,21 +434,50 @@ async def generate_chapter_stream(
                 .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
                 .first()
             )
+            md_text = full_text
             if row:
                 meta = dict(row.content) if isinstance(row.content, dict) else {}
-                meta["text"] = full_text
+                outline_sections = meta.get("sections") or []
+                if not isinstance(outline_sections, list):
+                    outline_sections = []
+                tiptap_doc = None
+                try:
+                    tiptap_doc, md_text, wc = process_chapter_generation_result(
+                        full_text,
+                        chapter_index=chapter_index,
+                        outline_sections=outline_sections,
+                    )
+                except Exception:
+                    logger.exception("chapter assemble failed book=%s ch=%s", book_id, chapter_index)
+                    md_text = full_text
+                    wc = len(full_text)
+                meta["text"] = md_text
+                if tiptap_doc:
+                    meta["tiptap_json"] = tiptap_doc
                 row.content = meta
-                row.word_count = len(full_text)
+                row.word_count = wc
                 row.status = ChapterStatus.done
                 db.commit()
                 try:
-                    extract_and_store_figures(book_id, chapter_index, full_text, db)
+                    extract_and_store_figures(book_id, chapter_index, md_text, db)
+                    if md_text.strip():
+                        tiptap_doc = sync_figures_to_tiptap(
+                            book_id, chapter_index, md_text, db
+                        )
+                        meta["tiptap_json"] = tiptap_doc
+                        row.content = meta
+                        db.commit()
+                    elif tiptap_doc:
+                        refresh_chapter_figures(book_id, chapter_index, tiptap_doc, db)
                 except Exception:
                     logger.exception(
                         "extract figures failed book=%s ch=%s", book_id, chapter_index
                     )
-            asyncio.create_task(asyncio.to_thread(_memory_background, book_id, chapter_index, full_text))
-            yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+            asyncio.create_task(
+                asyncio.to_thread(_memory_background, book_id, chapter_index, md_text)
+            )
+            done_payload: dict = {"done": True, "markdown": md_text}
+            yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
         except Exception:
             logger.exception("chapter generate failed")
             row = (
@@ -537,3 +578,74 @@ def edit_selection(
         temperature=temp,
     )
     return SelectionEditOut(text=out.strip())
+
+
+_DEDUPE_PROMPT = (
+    "请对以下文字做「降重」改写：在完整保留原意、事实与专业术语的前提下，"
+    "调整句式与用词，降低与常见表述的雷同度，使表达更原创。"
+    "不要添加新观点，不要删减关键信息。保留原有 Markdown 结构（标题、列表、表格等）。"
+    "只输出改写后的正文。"
+)
+_DEDUPE_CHUNK_CHARS = 8000
+
+
+def _dedupe_markdown_chunks(md: str, client: LLMClient, chat_model: str) -> str:
+    system = "你是专业中文编辑，只输出改写结果，不要加引号、标题或前言。"
+    if len(md) <= _DEDUPE_CHUNK_CHARS:
+        out = client.chat_completion(
+            [{"role": "system", "content": system}, {"role": "user", "content": f"{_DEDUPE_PROMPT}\n\n---\n{md.strip()}"}],
+            model=chat_model,
+            max_tokens=8192,
+            temperature=0.55,
+        )
+        return out.strip()
+
+    parts: list[str] = []
+    buf: list[str] = []
+    size = 0
+    for para in md.split("\n\n"):
+        chunk_len = len(para) + (2 if buf else 0)
+        if buf and size + chunk_len > _DEDUPE_CHUNK_CHARS:
+            parts.append("\n\n".join(buf))
+            buf = [para]
+            size = len(para)
+        else:
+            buf.append(para)
+            size += chunk_len
+    if buf:
+        parts.append("\n\n".join(buf))
+
+    rewritten: list[str] = []
+    for part in parts:
+        out = client.chat_completion(
+            [{"role": "system", "content": system}, {"role": "user", "content": f"{_DEDUPE_PROMPT}\n\n---\n{part.strip()}"}],
+            model=chat_model,
+            max_tokens=8192,
+            temperature=0.55,
+        )
+        rewritten.append(out.strip())
+    return "\n\n".join(rewritten)
+
+
+@router.post(
+    "/{book_id}/chapters/{chapter_index}/dedupe-chapter",
+    response_model=ChapterDedupeOut,
+)
+def dedupe_chapter(
+    book_id: UUID,
+    chapter_index: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """对本章全文做降 AI 率改写（保留原意与 Markdown 结构）。"""
+    book = book_service.get_book_or_404(book_id, user, db)
+    ch = _get_chapter(book_id, chapter_index, db)
+    content = ch.content if isinstance(ch.content, dict) else {}
+    md = chapter_content_to_markdown(content)
+    if not md.strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "本章暂无正文")
+
+    client = LLMClient()
+    chat_model = _chat_model_for_book(book)
+    out = _dedupe_markdown_chunks(md, client, chat_model)
+    return ChapterDedupeOut(text=out, original_text=md)

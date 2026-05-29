@@ -20,7 +20,9 @@ import type { OutlineChapter } from "@/types/outline";
 export type OutlineSelection =
   | { type: "setup" }
   | { type: "outline_preview" }
-  | { type: "chapter"; index: number };
+  | { type: "preface" }
+  | { type: "chapter"; index: number }
+  | { type: "section"; chapterIndex: number; sectionIndex: number };
 
 export type OutlineNavBodyProps = {
   chapters: OutlineChapter[];
@@ -42,6 +44,13 @@ export type OutlineNavBodyProps = {
   chapterGenMode?: ChapterGenMode;
   /** 全书批量是否在跑（与顶栏批量按钮一致） */
   autoGenerating?: boolean;
+  /** 写作页：是否显示前言目录项 */
+  prefaceEnabled?: boolean;
+  prefaceHasBody?: boolean;
+  prefaceStatus?: string;
+  streamingPreface?: boolean;
+  onPrefaceStreamPrimary?: () => void;
+  onPrefaceDelete?: () => void;
 };
 
 function SortableChapterBlock({
@@ -49,6 +58,7 @@ function SortableChapterBlock({
   isCollapsed,
   hasSections,
   chapterActive,
+  selection,
   streamingHere,
   toggleCollapse,
   onSelect,
@@ -69,6 +79,7 @@ function SortableChapterBlock({
   isCollapsed: boolean;
   hasSections: boolean;
   chapterActive: boolean;
+  selection: OutlineSelection;
   streamingHere: boolean;
   toggleCollapse: (idx: number, e: MouseEvent) => void;
   onSelect: (s: OutlineSelection) => void;
@@ -232,13 +243,182 @@ function SortableChapterBlock({
         ch.sections.map((sec, i) => (
           <div
             key={i}
-            className="toc-section-row"
-            onClick={() => onSelect({ type: "chapter", index: ch.index })}
+            className={`toc-section-row ${
+              selection.type === "section" &&
+              selection.chapterIndex === ch.index &&
+              selection.sectionIndex === i
+                ? "toc-active"
+                : ""
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect({ type: "section", chapterIndex: ch.index, sectionIndex: i });
+            }}
             title={sec.summary || sec.title}
           >
             <span className="toc-section-title">{sec.title || `${i + 1}、小节`}</span>
           </div>
         ))}
+    </div>
+  );
+}
+
+function prefaceStreamPrimaryIntent(opts: {
+  streamingPreface: boolean;
+  hasBody: boolean;
+  status: string;
+  autoGenerating: boolean;
+  streamingChapterIndex: number | null;
+  chapterGenMode: ChapterGenMode;
+}): "generate" | "regenerate" | "busy" | "waiting" {
+  if (opts.streamingPreface) return "busy";
+  const orphaned = opts.status === "generating" && !opts.streamingPreface;
+  if (opts.status === "done" || opts.hasBody) {
+    return opts.hasBody ? "regenerate" : "generate";
+  }
+  if (opts.status === "pending" || opts.status === "ready" || opts.status === "empty" || orphaned) {
+    if (
+      opts.chapterGenMode === "auto" &&
+      opts.autoGenerating &&
+      opts.streamingChapterIndex != null
+    ) {
+      return "waiting";
+    }
+    return "generate";
+  }
+  return opts.hasBody ? "regenerate" : "generate";
+}
+
+function PrefaceNavBlock({
+  selection,
+  onSelect,
+  onPrefaceStreamPrimary,
+  onPrefaceDelete,
+  streamingPreface,
+  prefaceHasBody,
+  prefaceStatus,
+  chapterGenMode,
+  autoGenerating,
+  streamingChapterIndex,
+}: {
+  selection: OutlineSelection;
+  onSelect: (s: OutlineSelection) => void;
+  onPrefaceStreamPrimary?: () => void;
+  onPrefaceDelete?: () => void;
+  streamingPreface: boolean;
+  prefaceHasBody: boolean;
+  prefaceStatus: string;
+  chapterGenMode: ChapterGenMode;
+  autoGenerating: boolean;
+  streamingChapterIndex: number | null;
+}) {
+  const prefaceActive = selection.type === "preface";
+  const statusClass =
+    prefaceStatus === "done" || prefaceHasBody
+      ? "toc-ch-done"
+      : streamingPreface
+        ? "toc-ch-generating"
+        : "toc-ch-pending";
+
+  const streamIntent = prefaceStreamPrimaryIntent({
+    streamingPreface,
+    hasBody: prefaceHasBody,
+    status: prefaceStatus,
+    autoGenerating,
+    streamingChapterIndex,
+    chapterGenMode,
+  });
+
+  return (
+    <div className={`toc-chapter-group ${statusClass}`}>
+      <div
+        className={`toc-chapter-row group/row ${prefaceActive ? "toc-active" : ""}`}
+        onClick={() => onSelect({ type: "preface" })}
+      >
+        <button
+          type="button"
+          className="toc-toggle"
+          aria-hidden
+          tabIndex={-1}
+          style={{ visibility: "hidden" }}
+        >
+          ▶
+        </button>
+        <span className="toc-chapter-title">前言</span>
+        {streamingPreface ? <span className="toc-generating-dot" title="生成中" /> : null}
+
+        <div className="toc-row-actions">
+          <button
+            type="button"
+            className="toc-row-icon opacity-30"
+            title="前言位置固定"
+            disabled
+            onClick={(e) => e.stopPropagation()}
+          >
+            ⠿
+          </button>
+          <button
+            type="button"
+            className="toc-row-icon opacity-30"
+            title="前言标题固定"
+            disabled
+            onClick={(e) => e.stopPropagation()}
+          >
+            ✎
+          </button>
+          <button
+            type="button"
+            className="toc-row-icon toc-row-icon--stream"
+            title={
+              streamIntent === "generate"
+                ? "生成前言"
+                : streamIntent === "regenerate"
+                  ? "重新生成"
+                  : streamIntent === "busy"
+                    ? "生成中…"
+                    : "等待中"
+            }
+            aria-label={
+              streamIntent === "generate"
+                ? "生成前言"
+                : streamIntent === "regenerate"
+                  ? "重新生成前言"
+                  : streamIntent === "busy"
+                    ? "生成中"
+                    : "等待生成"
+            }
+            disabled={streamIntent === "busy" || streamIntent === "waiting" || !onPrefaceStreamPrimary}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (streamIntent === "busy" || streamIntent === "waiting") return;
+              onPrefaceStreamPrimary?.();
+            }}
+          >
+            {streamIntent === "busy" ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-violet-500" aria-hidden />
+            ) : streamIntent === "waiting" ? (
+              <span className="text-xs font-semibold tracking-tight text-slate-400" aria-hidden>
+                ⋯
+              </span>
+            ) : streamIntent === "generate" ? (
+              <Play className="h-3.5 w-3.5 shrink-0 fill-current text-emerald-600" aria-hidden />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5 shrink-0 text-slate-600" aria-hidden />
+            )}
+          </button>
+          <button
+            type="button"
+            className="toc-row-icon text-red-600 hover:text-red-700"
+            title="关闭前言"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (window.confirm("确定关闭本书前言？可在全局大纲中重新启用。")) onPrefaceDelete?.();
+            }}
+          >
+            🗑
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -260,6 +440,12 @@ export default function OutlineNavBody({
   chapterGenMode = "auto",
   autoGenerating = false,
   dragDisabled = false,
+  prefaceEnabled = true,
+  prefaceHasBody = false,
+  prefaceStatus = "empty",
+  streamingPreface = false,
+  onPrefaceStreamPrimary,
+  onPrefaceDelete,
 }: OutlineNavBodyProps) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -297,6 +483,22 @@ export default function OutlineNavBody({
 
   const chapterIds = chapters.map((c) => c.id);
 
+  const prefaceBlock =
+    prefaceEnabled ? (
+      <PrefaceNavBlock
+        selection={selection}
+        onSelect={onSelect}
+        onPrefaceStreamPrimary={onPrefaceStreamPrimary}
+        onPrefaceDelete={onPrefaceDelete}
+        streamingPreface={streamingPreface}
+        prefaceHasBody={prefaceHasBody}
+        prefaceStatus={prefaceStatus}
+        chapterGenMode={chapterGenMode}
+        autoGenerating={autoGenerating}
+        streamingChapterIndex={streamingChapterIndex}
+      />
+    ) : null;
+
   const writingStickyTop =
     writingMode && onOpenGlobalOutline ? (
       <div className="toc-writing-strip -mx-1 border-b border-slate-200/35 bg-[var(--bg-page)] px-1 pb-2 pt-0">
@@ -317,11 +519,14 @@ export default function OutlineNavBody({
     ) : null;
 
   const chapterListInner =
-    chapters.length === 0 ? (
+    chapters.length === 0 && !prefaceEnabled ? (
       <p className="toc-empty">暂无章节</p>
+    ) : chapters.length === 0 && prefaceEnabled ? (
+      prefaceBlock
     ) : writingMode ? (
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={chapterIds} strategy={verticalListSortingStrategy}>
+          {prefaceBlock}
           {chapters.map((ch) => {
             const isCollapsed = collapsed.has(ch.index);
             const chapterActive = selection.type === "chapter" && selection.index === ch.index;
@@ -334,6 +539,7 @@ export default function OutlineNavBody({
                 isCollapsed={isCollapsed}
                 hasSections={!!hasSections}
                 chapterActive={chapterActive}
+                selection={selection}
                 streamingHere={streamingHere}
                 toggleCollapse={toggleCollapse}
                 onSelect={onSelect}
@@ -355,7 +561,9 @@ export default function OutlineNavBody({
         </SortableContext>
       </DndContext>
     ) : (
-      chapters.map((ch) => {
+      <>
+        {prefaceBlock}
+        {chapters.map((ch) => {
         const isCollapsed = collapsed.has(ch.index);
         const chapterActive = selection.type === "chapter" && selection.index === ch.index;
         const hasSections = ch.sections && ch.sections.length > 0;
@@ -391,8 +599,17 @@ export default function OutlineNavBody({
               ch.sections.map((sec, i) => (
                 <div
                   key={i}
-                  className="toc-section-row"
-                  onClick={() => onSelect({ type: "chapter", index: ch.index })}
+                  className={`toc-section-row ${
+                    selection.type === "section" &&
+                    selection.chapterIndex === ch.index &&
+                    selection.sectionIndex === i
+                      ? "toc-active"
+                      : ""
+                  }`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelect({ type: "section", chapterIndex: ch.index, sectionIndex: i });
+                  }}
                   title={sec.summary || sec.title}
                 >
                   <span className="toc-section-title">{sec.title || `${i + 1}、小节`}</span>
@@ -400,7 +617,8 @@ export default function OutlineNavBody({
               ))}
           </div>
         );
-      })
+      })}
+      </>
     );
 
   return (

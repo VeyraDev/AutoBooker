@@ -51,3 +51,8 @@ class SelectionEditIn(BaseModel):
 
 class SelectionEditOut(BaseModel):
     text: str
+
+
+class ChapterDedupeOut(BaseModel):
+    text: str
+    original_text: str = ""
