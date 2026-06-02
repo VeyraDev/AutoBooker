@@ -29,6 +29,7 @@ const statusProgress: Record<Book["status"], number> = {
   setup: 12,
   outline_generating: 28,
   outline_ready: 44,
+  auto_generating: 55,
   writing: 72,
   review_ready: 88,
   completed: 100,

@@ -6,6 +6,7 @@ import BookEditorPage from "@/pages/BookEditorPage";
 import BooksPage from "@/pages/BooksPage";
 import HomePage from "@/pages/HomePage";
 import LandingPage from "@/pages/LandingPage";
+import LibraryPage from "@/pages/LibraryPage";
 import LoginPage from "@/pages/LoginPage";
 import ProfilePage from "@/pages/ProfilePage";
 import RegisterPage from "@/pages/RegisterPage";
@@ -22,6 +23,7 @@ export default function App() {
           <Route index element={<Navigate to="/app/home" replace />} />
           <Route path="home" element={<HomePage />} />
           <Route path="books" element={<BooksPage />} />
+          <Route path="library" element={<LibraryPage />} />
           <Route path="books/:bookId" element={<BookEditorPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="stats" element={<StatsPage />} />

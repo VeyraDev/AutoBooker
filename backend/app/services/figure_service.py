@@ -134,27 +134,8 @@ def extract_and_store_figures(
 
 
 def classify_chapter_figures(book_id: UUID, chapter_index: int, db: Session) -> None:
-    """Run classifier on pending figures from writing (not user_assistant uploads)."""
-    from app.agents.figure_classifier_agent import apply_classification_to_figure, classify_figure
-
-    book = db.get(Book, book_id)
-    style = book.style_type if book else None
-    ch = db.query(Chapter).filter_by(book_id=book_id, index=chapter_index).first()
-    ch_title = ch.title if ch else ""
-    figures = get_chapter_figures(book_id, chapter_index, db)
-    for fig in figures:
-        if fig.figure_source == FigureSource.user_assistant:
-            continue
-        if fig.classification_json:
-            continue
-        legacy = _LEGACY_TAG_BY_TYPE.get(fig.figure_type)
-        clf = classify_figure(
-            fig,
-            book_style_type=style,
-            chapter_title=ch_title,
-            legacy_tag=legacy,
-        )
-        apply_classification_to_figure(fig, clf, db)
+    """提取占位符时不做分类；完整 Diagram Pipeline 延迟到 generate 时执行。"""
+    return
 
 
 def _walk_tiptap_figure_blocks(doc: dict[str, Any] | None, visit) -> None:

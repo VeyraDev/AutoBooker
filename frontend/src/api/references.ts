@@ -12,11 +12,15 @@ export async function uploadReference(
   bookId: string,
   file: File,
   ingestHint: UploadIngestHint = "auto",
+  shareToLibrary = false,
 ): Promise<{ id: string }> {
   const form = new FormData();
   form.append("file", file);
   if (ingestHint !== "auto") {
     form.append("ingest_hint", ingestHint);
+  }
+  if (shareToLibrary) {
+    form.append("share_to_library", "true");
   }
   const { data } = await client.post<{ id: string; filename: string; parse_status: string }>(
     `/books/${bookId}/references/upload`,

@@ -22,6 +22,14 @@ export interface ReviewIssue {
   quote: string;
   suggestion: string;
   action_type?: ReviewActionType;
+  paragraph_index?: number | null;
+  char_offset?: number | null;
+  dimension?: string | null;
+}
+
+export interface ReviewDimension {
+  score: number;
+  summary?: string;
 }
 
 export interface ReviewApplyResult {
@@ -42,9 +50,12 @@ export interface ChapterReviewResult {
   chapter_title: string;
   summary: string;
   score: number;
+  dimensions?: Record<string, ReviewDimension>;
   issues: ReviewIssue[];
   citation_issues?: CitationLintIssue[];
   word_count: number;
+  review_id?: string | null;
+  snapshot_md?: string | null;
 }
 
 export const REVIEW_CATEGORY_LABEL: Record<ReviewCategory, string> = {

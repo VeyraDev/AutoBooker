@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     """Graphviz bin 目录（可选；未在 PATH 时后端会自动探测 Windows 默认安装路径）。"""
     GRAPHVIZ_BIN_DIR: str = ""
 
+    # AI 检测第三方 API（留空则使用内部规则分）
+    AI_DETECT_API_URL: str = ""
+    AI_DETECT_API_KEY: str = ""
+
+    # 社群二维码图片 URL
+    COMMUNITY_QR_URL: str = ""
+
     # 可选：提高 GitHub API 限额
     GITHUB_TOKEN: str = ""
 

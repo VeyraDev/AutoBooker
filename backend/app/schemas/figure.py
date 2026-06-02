@@ -14,6 +14,7 @@ class FigureOut(BaseModel):
     caption: str | None
     raw_annotation: str | None
     file_url: str | None
+    svg_url: str | None = None
     position_hint: str | None
     sort_order: int | None
     updated_at: datetime | None = None

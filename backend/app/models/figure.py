@@ -52,6 +52,7 @@ class Figure(Base):
     render_source = Column(Text)
     file_path = Column(String(500))
     file_url = Column(String(500))
+    svg_url = Column(String(500))
 
     position_hint = Column(Text)
     sort_order = Column(Integer)

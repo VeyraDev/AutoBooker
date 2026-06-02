@@ -17,6 +17,7 @@ class BookStatus(str, enum.Enum):
     setup = "setup"
     outline_generating = "outline_generating"
     outline_ready = "outline_ready"
+    auto_generating = "auto_generating"
     writing = "writing"
     review_ready = "review_ready"
     completed = "completed"

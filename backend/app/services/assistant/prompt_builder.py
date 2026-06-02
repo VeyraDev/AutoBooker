@@ -40,35 +40,9 @@ def build_execution_prompt(intent: dict, ctx: AssistantContext) -> tuple[str, st
         system = "你是术语编辑，检查术语一致性并给出修改建议，直接输出修订后全文。"
         user = f"全书风格：{ctx.style_type}\n\n{ctx.selected_text or ctx.cursor_paragraph}"
 
-    elif i in ("gen_flowchart", "regen_figure"):
+    elif i in ("gen_flowchart", "gen_chart", "gen_figure", "regen_figure"):
         description = ctx.figure_annotation or ctx.selected_text or ctx.user_text
-        system = "将流程描述转换为Graphviz DOT代码，只返回代码。"
-        user = f"""书型：{ctx.book_type}
-配色风格：专业技术书籍，蓝白配色
-流程描述：{description}"""
-        params = {**params, "_pipeline": "flowchart", "_description": description}
-
-    elif i == "gen_chart":
-        description = ctx.figure_annotation or ctx.user_text
-        system = "将图表描述解析为matplotlib绘图规格JSON，只返回JSON。"
-        user = f"图表描述：{description}"
-        params = {**params, "_pipeline": "chart", "_description": description}
-
-    elif i == "gen_figure":
-        description = ctx.figure_annotation or ctx.user_text
-        style_prefix = {
-            "textbook": "Academic technical illustration",
-            "popular_science": "Modern infographic style",
-            "practical_guide": "Step-by-step technical diagram",
-        }.get(ctx.style_type, "Professional publishing illustration")
-        system = "生成图像prompt，只返回prompt文本。"
-        user = f"风格：{style_prefix}\n内容：{description}"
-        params = {
-            **params,
-            "_pipeline": "figure",
-            "_description": description,
-            "sub_kind": params.get("sub_kind", "figure"),
-        }
+        params = {**params, "_description": description}
 
     else:
         system = "你是一位专业的图书写作助手。"

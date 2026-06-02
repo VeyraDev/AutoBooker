@@ -30,6 +30,11 @@ class ReviewActionType(str, Enum):
     revise = "revise"
 
 
+class ReviewDimensionOut(BaseModel):
+    score: int = Field(ge=0, le=100)
+    summary: str = ""
+
+
 class ReviewIssueOut(BaseModel):
     id: str
     severity: ReviewSeverity
@@ -39,6 +44,9 @@ class ReviewIssueOut(BaseModel):
     quote: str = ""
     suggestion: str = ""
     action_type: ReviewActionType = ReviewActionType.replace
+    paragraph_index: int | None = None
+    char_offset: int | None = None
+    dimension: str | None = None
 
 
 class ReviewApplyIssueIn(BaseModel):
@@ -72,6 +80,9 @@ class ChapterReviewOut(BaseModel):
     chapter_title: str
     summary: str
     score: int = Field(ge=0, le=100)
+    dimensions: dict[str, ReviewDimensionOut] = {}
     issues: list[ReviewIssueOut]
     citation_issues: list[CitationLintIssueOut] = []
     word_count: int = 0
+    review_id: str | None = None
+    snapshot_md: str | None = None

@@ -378,6 +378,32 @@ export default function LiteraturePanel({
             搜索
           </button>
         </div>
+        {(refinedQueries.length > 0 || mustInclude.length > 0 || mustExclude.length > 0) ? (
+          <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-2 text-[10px] text-slate-600">
+            {refinedQueries.length > 0 ? (
+              <p className="mb-1">
+                <span className="font-medium">检索词：</span>
+                {refinedQueries.map((q) => (
+                  <span key={q} className="mr-1 inline-block rounded bg-white px-1.5 py-0.5 border border-slate-200">
+                    {q}
+                  </span>
+                ))}
+              </p>
+            ) : null}
+            {mustInclude.length > 0 ? (
+              <p className="mb-1">
+                <span className="font-medium text-emerald-700">必须包含：</span>
+                {mustInclude.join(" · ")}
+              </p>
+            ) : null}
+            {mustExclude.length > 0 ? (
+              <p>
+                <span className="font-medium text-red-700">排除：</span>
+                {mustExclude.join(" · ")}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {(searching || tabbed.papers.length > 0 ||

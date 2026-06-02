@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 
 import { applyReviewIssue, reviewChapter } from "@/api/review";
 import { dedupeChapter } from "@/api/chapters";
+import ReviewRadarChart from "@/components/editor/ReviewRadarChart";
 import { cleanSuggestionText } from "@/lib/cleanSuggestion";
 import type { EditorAiPreviewPayload } from "@/types/aiPreview";
 import type {
@@ -151,6 +152,7 @@ export default function ReviewPanel({
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">降 AI 率</p>
         <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
           对本章已保存正文整体改写 AI 痕迹（保留原意）。生成后先预览，确认后再替换正文。
+          选中段落可在编辑器气泡菜单使用「降重」做局部改写。
         </p>
         <button
           type="button"
@@ -196,7 +198,7 @@ export default function ReviewPanel({
       <section>
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">章节审校</p>
         <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-          基于出版规范与本书设定，对本章已保存正文生成审校报告（逻辑、文风、语病、引用等）。
+          基于出版规范与本书设定生成本章审校报告（逻辑、文风、语病、引用、AI 特征等维度）。
         </p>
         {chapterTitle ? (
           <p className="mt-2 text-xs font-medium text-ink">{chapterTitle}</p>
@@ -218,6 +220,9 @@ export default function ReviewPanel({
             <span className="text-xs text-slate-500">质量评分</span>
             <span className={`text-lg font-semibold ${scoreColor(report.score)}`}>{report.score}</span>
           </div>
+          {report.dimensions && Object.keys(report.dimensions).length > 0 ? (
+            <ReviewRadarChart dimensions={report.dimensions} />
+          ) : null}
           <p className="text-xs leading-relaxed text-slate-600">{report.summary}</p>
           {report.citation_issues && report.citation_issues.length > 0 ? (
             <div className="space-y-2">
@@ -308,6 +313,8 @@ function IssueCard({
           quote: res.quote || issue.quote,
           suggestion,
           kind: previewKind,
+          char_offset: issue.char_offset ?? undefined,
+          paragraph_index: issue.paragraph_index ?? undefined,
         })
       ) {
         toast.success(

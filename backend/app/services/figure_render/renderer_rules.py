@@ -22,8 +22,19 @@ def style_profile_for_book(style_type: str | None) -> str:
 
 def infer_image_type_from_text(description: str) -> str:
     d = description.lower()
+    if re.search(r"决策树|decision\s*tree|decision_tree", description, re.I):
+        return "decision_tree"
+    if re.search(r"根节点", description) and re.search(r"→|->", description):
+        return "decision_tree"
+    arrow_branches = len(re.findall(r"→|->", description))
+    if arrow_branches >= 2 and re.search(r"选择|核心优势|分支", description):
+        return "decision_tree"
+    if re.search(r"注意力矩阵|滑动窗口|n\s*[×x]\s*n|attention\s*matrix|sliding\s*window", d, re.I):
+        return "matrix_diagram"
     if re.search(r"柱状图|折线图|饼图|散点图|热力图|%\s*\d|数据可视化|chart|bar chart|line chart", d):
         return "data_visualization"
+    if re.search(r"transformer|编码器.*解码器|encoder.*decoder|残差.*层归一化", d, re.I):
+        return "mechanism_diagram"
     if re.search(r"架构|系统组成|模块|rag|agent\s*loop|topology|architecture", d, re.I):
         return "system_architecture"
     if re.search(r"流程|步骤|pipeline|工作流|→|->", d):
@@ -34,9 +45,7 @@ def infer_image_type_from_text(description: str) -> str:
         return "taxonomy_map"
     if re.search(r"时间线|路线图|roadmap|演进", d):
         return "timeline_roadmap"
-    if re.search(r"决策树|decision", d, re.I):
-        return "decision_tree"
-    if re.search(r"机制|原理|attention|transformer|反向传播", d, re.I):
+    if re.search(r"机制|原理|attention|反向传播", d, re.I):
         return "mechanism_diagram"
     if re.search(r"场景|插图|氛围|插画", d):
         return "scene_illustration"
@@ -45,25 +54,48 @@ def infer_image_type_from_text(description: str) -> str:
     return "concept_diagram"
 
 
-def resolve_renderer(image_type: str, *, has_numeric_data: bool) -> str:
+def is_transformer_architecture(description: str) -> bool:
+    d = description.lower()
+    return bool(
+        re.search(r"transformer", d, re.I)
+        and re.search(r"编码器|解码器|encoder|decoder", d, re.I)
+    )
+
+
+def resolve_renderer(
+    image_type: str,
+    *,
+    has_numeric_data: bool,
+    description: str = "",
+    render_spec: dict | None = None,
+) -> str:
+    from app.services.figure_render.figure_structure import has_structured_graph
+
+    if render_spec and has_structured_graph(render_spec):
+        return "structured_template"
+    if image_type == "matrix_diagram":
+        return "matrix_template"
+    if image_type == "decision_tree":
+        return "structured_template"
+    if image_type == "mechanism_diagram" and is_transformer_architecture(description):
+        return "transformer_template"
     if image_type == "data_visualization":
         return "matplotlib" if has_numeric_data else "need_data"
     if image_type in (
         "process_flow",
         "system_architecture",
         "taxonomy_map",
-        "decision_tree",
         "timeline_roadmap",
         "comparison_matrix",
         "mechanism_diagram",
         "concept_diagram",
     ):
-        return "mermaid"
+        return "graphviz"
     if image_type == "scene_illustration":
         return "image_api"
     if image_type == "infographic":
         return "image_api"
-    return "mermaid"
+    return "graphviz"
 
 
 def has_numeric_data_signal(text: str) -> bool:
@@ -92,14 +124,15 @@ def build_classification(
         image_type = "infographic"
     elif legacy_tag:
         ft = legacy_tag_to_figure_type(legacy_tag)
+        inferred = infer_image_type_from_text(description)
         if ft == "chart":
             image_type = "data_visualization"
         elif ft == "flowchart":
-            image_type = "process_flow"
+            image_type = inferred if inferred not in ("concept_diagram", "scene_illustration", "infographic") else "process_flow"
         elif ft == "screenshot":
             image_type = "screenshot"
         else:
-            image_type = infer_image_type_from_text(description)
+            image_type = inferred
     else:
         image_type = infer_image_type_from_text(description)
 
@@ -107,7 +140,7 @@ def build_classification(
         image_type = "screenshot"
 
     numeric = has_numeric_data_signal(description)
-    renderer = resolve_renderer(image_type, has_numeric_data=numeric)
+    renderer = resolve_renderer(image_type, has_numeric_data=numeric, description=description)
     if image_type == "screenshot":
         renderer = "upload"
 

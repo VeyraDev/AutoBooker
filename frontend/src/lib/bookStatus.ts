@@ -4,7 +4,8 @@ export type Phase = "SETUP" | "WRITING" | "COMPLETED";
 
 export function phaseOf(book: Book): Phase {
   if (book.status === "completed") return "COMPLETED";
-  if (book.status === "writing" || book.status === "review_ready") return "WRITING";
+  if (book.status === "writing" || book.status === "review_ready" || book.status === "auto_generating")
+    return "WRITING";
   return "SETUP";
 }
 
@@ -30,6 +31,7 @@ export function statusLabelBackend(s: BookStatus): string {
     setup: "设定中",
     outline_generating: "大纲生成中",
     outline_ready: "大纲就绪",
+    auto_generating: "一键生成中",
     writing: "写作中",
     review_ready: "待审校",
     completed: "已完成",

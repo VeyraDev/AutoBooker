@@ -73,6 +73,7 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
   const [styleType, setStyleType] = useState<StyleType>("popular_science");
   const [topicTags, setTopicTags] = useState<string[]>([]);
   const [customTagInput, setCustomTagInput] = useState("");
+  const [shareToLibrary, setShareToLibrary] = useState(false);
 
   const styleOpts = styleOptionsFor(book.book_type);
 
@@ -181,7 +182,7 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
     if (!fileList?.length) return;
     for (const f of Array.from(fileList)) {
       try {
-        await uploadReference(book.id, f, ingestHint);
+        await uploadReference(book.id, f, ingestHint, shareToLibrary);
         toast.success(`已上传 ${f.name}`);
       } catch {
         toast.error(`上传失败：${f.name}`);
@@ -460,6 +461,17 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
             />
           </label>
         </div>
+        <label className="mt-3 flex items-start gap-2 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={shareToLibrary}
+            onChange={(e) => setShareToLibrary(e.target.checked)}
+          />
+          <span>
+            同意将该文献元数据及摘要加入 AutoBooker 公共书库（默认不勾选；勾选后需审核通过才公开展示）
+          </span>
+        </label>
         <ul className="mt-4 space-y-2 text-left text-sm">
           {files.length === 0 ? (
             <li className="text-slate-400">暂无文件</li>

@@ -4,6 +4,7 @@ export type BookStatus =
   | "setup"
   | "outline_generating"
   | "outline_ready"
+  | "auto_generating"
   | "writing"
   | "review_ready"
   | "completed";

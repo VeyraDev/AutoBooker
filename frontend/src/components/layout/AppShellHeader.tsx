@@ -1,13 +1,17 @@
-import { Bell, Coins, LogOut, Menu, Moon, Plus, Sparkles, Sun, UserRound, X } from "lucide-react";
+import { Bell, Coins, LogOut, Menu, MessageSquarePlus, Moon, Plus, Sparkles, Sun, UserRound, X } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 
+import FeedbackDialog from "@/components/common/FeedbackDialog";
 import NewBookDialog from "@/components/common/NewBookDialog";
+import { listNotifications, markNotificationRead } from "@/api/notifications";
 import { useAuthStore } from "@/stores/authStore";
 
 const navItems = [
   { to: "/app/home", label: "主页" },
   { to: "/app/books", label: "图书管理" },
+  { to: "/app/library", label: "系统书库" },
   { to: "/app/profile", label: "个人主页" },
   { to: "/app/stats", label: "数据统计" },
 ];
@@ -18,8 +22,17 @@ export default function AppShellHeader() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [newBookOpen, setNewBookOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [noticeOpen, setNoticeOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const qc = useQueryClient();
+
+  const { data: noticeData } = useQuery({
+    queryKey: ["notifications"],
+    queryFn: listNotifications,
+    refetchInterval: 60000,
+  });
   const [theme, setTheme] = useState<"frost" | "warm" | "dark">(() => {
     if (typeof window === "undefined") return "frost";
     return (window.localStorage.getItem("autoBookerTheme") as "frost" | "warm" | "dark") ?? "frost";
@@ -98,12 +111,58 @@ export default function AppShellHeader() {
               <Coins className="h-4 w-4 text-amber-400" />
               <span>98</span>
             </div>
-            <button type="button" className="icon-button icon-button-notice hidden sm:inline-flex" aria-label="消息通知" title="消息通知">
-              <Bell className="h-4.5 w-4.5" />
-              <span className="icon-badge" aria-hidden>
-                3
-              </span>
+            <button
+              type="button"
+              className="icon-button hidden sm:inline-flex"
+              aria-label="意见反馈"
+              title="意见反馈"
+              onClick={() => setFeedbackOpen(true)}
+            >
+              <MessageSquarePlus className="h-4.5 w-4.5" />
             </button>
+            <div className="relative hidden sm:block">
+              <button
+                type="button"
+                className="icon-button icon-button-notice"
+                aria-label="消息通知"
+                title="消息通知"
+                onClick={() => setNoticeOpen((v) => !v)}
+              >
+                <Bell className="h-4.5 w-4.5" />
+                {(noticeData?.unread_count ?? 0) > 0 ? (
+                  <span className="icon-badge" aria-hidden>
+                    {noticeData!.unread_count > 9 ? "9+" : noticeData!.unread_count}
+                  </span>
+                ) : null}
+              </button>
+              {noticeOpen ? (
+                <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-80 rounded-xl border border-slate-200 bg-white py-2 shadow-xl">
+                  <p className="border-b border-slate-100 px-3 pb-2 text-xs font-medium text-slate-500">通知</p>
+                  <ul className="max-h-64 overflow-y-auto">
+                    {(noticeData?.items ?? []).slice(0, 20).map((n) => (
+                      <li key={n.id}>
+                        <button
+                          type="button"
+                          className={`w-full px-3 py-2 text-left text-xs hover:bg-slate-50 ${n.is_read ? "text-slate-500" : "text-ink font-medium"}`}
+                          onClick={() => {
+                            void markNotificationRead(n.id).then(() => qc.invalidateQueries({ queryKey: ["notifications"] }));
+                            const bid = n.payload_json?.book_id;
+                            if (typeof bid === "string") navigate(`/app/books/${bid}`);
+                            setNoticeOpen(false);
+                          }}
+                        >
+                          <p>{n.title}</p>
+                          {n.body ? <p className="mt-0.5 text-[10px] text-slate-400 line-clamp-2">{n.body}</p> : null}
+                        </button>
+                      </li>
+                    ))}
+                    {!noticeData?.items?.length ? (
+                      <li className="px-3 py-4 text-center text-xs text-slate-400">暂无通知</li>
+                    ) : null}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
 
             <div className="relative" ref={userMenuRef}>
               <button
@@ -203,6 +262,7 @@ export default function AppShellHeader() {
         )}
       </header>
       <NewBookDialog open={newBookOpen} onClose={() => setNewBookOpen(false)} />
+      <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </>
   );
 }

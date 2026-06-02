@@ -37,6 +37,7 @@ from app.services.chapter_figure_table_normalize import (
 )
 from app.services.figure_generate import generate_figure_asset, save_uploaded_figure
 from app.services.figure_service import (
+    _LEGACY_TAG_BY_TYPE,
     get_figure_list,
     get_figure_or_404,
     refresh_chapter_figures,
@@ -60,6 +61,7 @@ def _figure_out(fig) -> FigureOut:
         caption=fig.caption,
         raw_annotation=fig.raw_annotation,
         file_url=fig.file_url,
+        svg_url=getattr(fig, "svg_url", None),
         position_hint=fig.position_hint,
         sort_order=fig.sort_order,
         updated_at=fig.updated_at,
@@ -109,6 +111,7 @@ def generate_figure(
             db,
             chart_type=opts.chart_type,
             sub_kind=opts.sub_kind,
+            legacy_tag=_LEGACY_TAG_BY_TYPE.get(fig.figure_type),
         )
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e

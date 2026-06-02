@@ -64,6 +64,7 @@ async def upload_reference(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     ingest_hint: str | None = Form(default=None),
+    share_to_library: bool = Form(default=False),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -103,6 +104,7 @@ async def upload_reference(
         storage_path=str(dest),
         file_type=file_type,
         parse_status=ParseStatus.pending,
+        share_to_library="pending" if share_to_library else "private",
     )
     db.add(ref)
     db.commit()

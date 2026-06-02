@@ -128,11 +128,15 @@ def generate_chart(
     *,
     model: str,
     chart_type_hint: str | None = None,
+    render_spec: dict | None = None,
 ) -> tuple[str, Path]:
-    desc = description
-    if chart_type_hint:
-        desc = f"图表类型：{chart_type_hint}\n{description}"
-    spec = parse_chart_spec(desc, model=model)
+    if render_spec and render_spec.get("values"):
+        spec = dict(render_spec)
+    else:
+        desc = description
+        if chart_type_hint:
+            desc = f"图表类型：{chart_type_hint}\n{description}"
+        spec = parse_chart_spec(desc, model=model)
     if chart_type_hint and spec.get("chart_type") in (None, ""):
         spec["chart_type"] = chart_type_hint
     spec_json = json.dumps(spec, ensure_ascii=False)

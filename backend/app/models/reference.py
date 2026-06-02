@@ -32,6 +32,7 @@ class ReferenceFile(Base):
     )
     error_message = Column(Text)
     parsed_at = Column(DateTime(timezone=True))
+    share_to_library = Column(String(20), nullable=False, default="private")  # private | pending | shared
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     chunks = relationship("ReferenceChunk", back_populates="file", cascade="all, delete-orphan")

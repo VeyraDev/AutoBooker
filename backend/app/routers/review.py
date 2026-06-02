@@ -19,12 +19,15 @@ from app.schemas.review import (
     CitationLintIssueOut,
     ReviewApplyIssueIn,
     ReviewApplyIssueOut,
+    ReviewDimensionOut,
     ReviewIssueOut,
 )
 from app.services.review_apply import apply_review_issue_text
 from app.services import book_service
+from app.services.ai_detect import get_ai_detect_provider
 from app.services.citation_lint import lint_chapter_citations
 from app.services.citation_service import list_citations_sorted
+from app.services.review_scoring import attach_paragraph_indices, compute_overall_score, normalize_dimensions
 from app.services.tiptap_convert import chapter_content_to_markdown
 
 router = APIRouter(prefix="/books", tags=["review"])
@@ -77,22 +80,53 @@ def review_chapter(
         figure_summaries=figure_lines,
     )
 
-    issues = [ReviewIssueOut.model_validate(x) for x in result.get("issues") or []]
+    ai_result = get_ai_detect_provider().detect(md)
+    dimensions = normalize_dimensions(
+        {k: (v.get("score") if isinstance(v, dict) else v) for k, v in (result.get("dimensions") or {}).items()}
+    )
+    dimensions["ai_feature"] = max(0, min(100, int(100 - ai_result.overall_score)))
+
     lint_raw = lint_chapter_citations(
         md,
         db,
         book.id,
         bracket_style=(book.citation_style and book.citation_style.value == "gb_t7714"),
     )
+    if lint_raw:
+        penalty = min(30, len(lint_raw) * 8)
+        dimensions["citation"] = max(0, dimensions.get("citation", 70) - penalty)
+
+    score = compute_overall_score(dimensions)
+    issues_raw = attach_paragraph_indices(md, result.get("issues") or [])
+    issues = [ReviewIssueOut.model_validate(x) for x in issues_raw]
     citation_issues = [CitationLintIssueOut.model_validate(x.to_dict()) for x in lint_raw]
+
+    dim_out = {
+        k: ReviewDimensionOut(
+            score=dimensions[k],
+            summary=str((result.get("dimensions") or {}).get(k, {}).get("summary", ""))
+            if isinstance((result.get("dimensions") or {}).get(k), dict)
+            else "",
+        )
+        for k in dimensions
+    }
+    if "ai_feature" in dimensions:
+        dim_out["ai_feature"] = ReviewDimensionOut(
+            score=dimensions["ai_feature"],
+            summary=f"AI 特征检测（{ai_result.provider}）",
+        )
+
     return ChapterReviewOut(
         chapter_index=chapter_index,
         chapter_title=ch.title or "",
         summary=result.get("summary") or "",
-        score=int(result.get("score") or 0),
+        score=score,
+        dimensions=dim_out,
         issues=issues,
         citation_issues=citation_issues,
         word_count=len(md),
+        review_id=None,
+        snapshot_md=md[:8000],
     )
 
 
@@ -128,6 +162,8 @@ def apply_review_issue(
             status.HTTP_502_BAD_GATEWAY,
             "AI 处理审校建议失败，请稍后重试",
         ) from e
+    if body.action_type.value == "replace" and result_text.strip().startswith(("建议", "改为", "请")):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "替换结果疑似说明语，请改用 AI 改写")
     return ReviewApplyIssueOut(
         quote=body.quote,
         result_text=result_text,

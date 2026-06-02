@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
+import { startAutoGenerate } from "@/api/bookJobs";
 import { createBook } from "@/api/books";
 import { fetchLlmModels } from "@/api/config";
 import { DEFAULT_TARGET_WORDS, styleOptionsFor } from "@/lib/styleTypes";
@@ -14,6 +15,8 @@ interface Props {
   onClose: () => void;
 }
 
+type Mode = "manual" | "auto";
+
 export default function NewBookDialog({ open, onClose }: Props) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -21,13 +24,22 @@ export default function NewBookDialog({ open, onClose }: Props) {
   const [bookType, setBookType] = useState<BookType>("nonfiction");
   const [styleType, setStyleType] = useState<StyleType>("popular_science");
   const [discipline, setDiscipline] = useState("");
+  const [mode, setMode] = useState<Mode>("manual");
 
   const styleOpts = styleOptionsFor(bookType);
 
   const mutation = useMutation({
     mutationFn: async () => {
+      if (mode === "auto") {
+        return startAutoGenerate({
+          title: title.trim(),
+          book_type: bookType,
+          style_type: styleType,
+          discipline: bookType === "academic" && discipline ? discipline : null,
+        });
+      }
       const catalog = await fetchLlmModels().catch(() => undefined);
-      return createBook({
+      const book = await createBook({
         title: title.trim(),
         book_type: bookType,
         discipline: bookType === "academic" && discipline ? discipline : null,
@@ -35,16 +47,18 @@ export default function NewBookDialog({ open, onClose }: Props) {
         style_type: styleType,
         ai_model: catalog?.default ?? "deepseek:deepseek-chat",
       });
+      return { book_id: book.id, id: "", status: "setup", current_step: null, progress_pct: 0, error_message: null };
     },
-    onSuccess: (book) => {
-      toast.success("已创建");
+    onSuccess: (result) => {
+      toast.success(mode === "auto" ? "已开始一键生成，完成后将通知您" : "已创建");
       qc.invalidateQueries({ queryKey: ["books"] });
       setTitle("");
       setDiscipline("");
       setBookType("nonfiction");
       setStyleType("popular_science");
+      setMode("manual");
       onClose();
-      navigate(`/app/books/${book.id}`);
+      navigate(`/app/books/${result.book_id}`);
     },
     onError: (err) => {
       const msg =
@@ -70,6 +84,27 @@ export default function NewBookDialog({ open, onClose }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
       <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
         <h2 className="text-lg font-medium text-ink mb-4">新建书稿</h2>
+        <div className="mb-4 flex gap-2">
+          <button
+            type="button"
+            className={`flex-1 rounded-lg border px-3 py-2 text-xs ${mode === "manual" ? "border-indigo-500 bg-indigo-50 text-indigo-800" : "border-slate-200 text-slate-600"}`}
+            onClick={() => setMode("manual")}
+          >
+            手动创建
+          </button>
+          <button
+            type="button"
+            className={`flex-1 rounded-lg border px-3 py-2 text-xs ${mode === "auto" ? "border-indigo-500 bg-indigo-50 text-indigo-800" : "border-slate-200 text-slate-600"}`}
+            onClick={() => setMode("auto")}
+          >
+            一键生成
+          </button>
+        </div>
+        {mode === "auto" ? (
+          <p className="mb-3 text-[11px] leading-relaxed text-slate-500">
+            自动完成：基础设定 → 文献检索 → 大纲 → 前言 → 逐章写作。不含自动配图、降 AI 率与审校修复。
+          </p>
+        ) : null}
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
             <label className="block text-sm text-slate-600 mb-1">书名</label>
@@ -107,7 +142,6 @@ export default function NewBookDialog({ open, onClose }: Props) {
                 </option>
               ))}
             </select>
-            <p className="mt-1 text-xs text-slate-500">决定大纲与章节的专用 prompt 模板，可在书稿设定页修改。</p>
           </div>
           {bookType === "academic" && (
             <div>
@@ -126,7 +160,13 @@ export default function NewBookDialog({ open, onClose }: Props) {
               取消
             </button>
             <button type="submit" disabled={mutation.isPending} className="btn-primary">
-              {mutation.isPending ? "创建中..." : "创建"}
+              {mutation.isPending
+                ? mode === "auto"
+                  ? "启动中..."
+                  : "创建中..."
+                : mode === "auto"
+                  ? "开始一键生成"
+                  : "创建"}
             </button>
           </div>
         </form>

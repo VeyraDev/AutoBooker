@@ -22,6 +22,7 @@ from app.services.literature_profiles import (
     PROFILE_TECHNICAL,
     source_quota,
 )
+from app.services.literature_openalex import search_openalex
 from app.services.literature_rerank import (
     apply_must_filters,
     must_include_for_bucket,
@@ -531,6 +532,7 @@ def _fetch_papers_bundle(queries: list[str], fetch_n: int) -> list[dict[str, Any
         merged.extend(search_arxiv(q, rows=fetch_n))
         if i == 0:
             merged.extend(search_semantic_scholar(q, rows=fetch_n))
+            merged.extend(search_openalex(q, limit=fetch_n))
         merged.extend(search_crossref(q, rows=fetch_n))
     return merged
 

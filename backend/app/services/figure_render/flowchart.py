@@ -177,7 +177,17 @@ def generate_flowchart(
     *,
     model: str,
     book_type: str = "",
+    image_type: str = "process_flow",
 ) -> tuple[str, Path]:
+    from app.services.figure_render.figure_validate import merge_validation_report
+
     dot = _inject_cjk_fonts(llm_to_dot(description, model=model, book_type=book_type))
+    report = merge_validation_report(dot, description, image_type)
+    if not report["ok"] and image_type != "process_flow":
+        dot = _inject_cjk_fonts(llm_to_dot(
+            description + "\n\n请修正：节点对齐、避免重叠、控制节点文字长度。",
+            model=model,
+            book_type=book_type,
+        ))
     png = render_flowchart(dot, output_path, description=description)
     return dot, png

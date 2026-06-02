@@ -6,7 +6,6 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.llm.client import LLMClient
 from app.models.book import Book
 from app.models.chapter import Chapter
@@ -14,10 +13,10 @@ from app.models.figure import Figure, FigureType
 from app.services.assistant.context import AssistantContext
 from app.services.assistant.intent import classify_intent
 from app.services.assistant.prompt_builder import build_execution_prompt
-from app.services.figure_generate import (
+from app.services.figures.generation import (
+    chat_model_for_book,
     create_figure_from_annotation,
     generate_figure_asset,
-    _chat_model_for_book,
 )
 from app.services.figure_service import get_figure_or_404
 
@@ -25,8 +24,12 @@ from app.services.figure_service import get_figure_or_404
 IMAGE_INTENTS = frozenset({"gen_flowchart", "gen_chart", "gen_figure", "regen_figure"})
 
 
-def _chat_model(book: Book) -> str:
-    return _chat_model_for_book(book)
+def _is_instruction_only(text: str) -> bool:
+    t = (text or "").strip()
+    if len(t) > 220:
+        return False
+    cues = ("帮我", "请", "改成", "换成", "重新", "生成", "画一", "左边", "右边", "中间", "不要", "层次")
+    return any(c in t for c in cues)
 
 
 async def execute_text_processing(
@@ -38,7 +41,7 @@ async def execute_text_processing(
     client = LLMClient()
     out = client.chat_completion(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        model=_chat_model(book),
+        model=chat_model_for_book(book),
         max_tokens=4096,
         temperature=0.45,
     )
@@ -57,13 +60,17 @@ async def execute_image_generation(
     figure_id = ctx.figure_id
     i = intent.get("intent", "")
 
+    user_hint = ""
     if figure_id:
         fig = get_figure_or_404(UUID(figure_id), book.id, db)
         new_desc = (params.get("_description") or ctx.user_text or "").strip()
         if new_desc and i in ("regen_figure", "gen_figure", "gen_flowchart", "gen_chart"):
-            fig.raw_annotation = new_desc[:2000]
-            if not (fig.caption or "").strip():
-                fig.caption = new_desc[:500]
+            if _is_instruction_only(new_desc) and (fig.raw_annotation or "").strip():
+                user_hint = new_desc
+            else:
+                fig.raw_annotation = new_desc[:2000]
+                if not (fig.caption or "").strip():
+                    fig.caption = new_desc[:500]
     else:
         type_map = {
             "gen_flowchart": FigureType.flowchart,
@@ -85,21 +92,7 @@ async def execute_image_generation(
             figure_source=FigureSource.user_assistant,
         )
         if params.get("sub_kind") == "chapter_summary":
-            from app.agents.figure_classifier_agent import (
-                apply_classification_to_figure,
-                classify_figure,
-            )
-
-            clf = classify_figure(
-                fig,
-                book_style_type=book.style_type,
-                chapter_title=(chapter.summary or "") if chapter else "",
-                subtype_hint="chapter_summary",
-            )
-            clf["image_type"] = "infographic"
-            clf["subtype"] = "chapter_summary"
-            clf["renderer"] = "image_api"
-            apply_classification_to_figure(fig, clf, db)
+            fig.subtype = "chapter_summary"
 
     if i == "gen_flowchart":
         fig.figure_type = FigureType.flowchart
@@ -107,17 +100,18 @@ async def execute_image_generation(
         fig.figure_type = FigureType.chart
     elif i == "gen_figure":
         fig.figure_type = FigureType.figure
-    elif i == "regen_figure" and figure_id:
-        pass  # 保留原 figure_type
 
     db.commit()
+    from app.services.figure_service import _LEGACY_TAG_BY_TYPE
+
     fig = generate_figure_asset(
         fig,
         book,
         db,
         chart_type=params.get("chart_type"),
-        sub_kind=params.get("sub_kind"),
-        intent=i,
+        user_hint=user_hint or ctx.user_text or "",
+        chapter_title=(chapter.title if chapter else ""),
+        legacy_tag=_LEGACY_TAG_BY_TYPE.get(fig.figure_type),
     )
     return {
         "type": "figure",
@@ -180,10 +174,6 @@ async def handle_assistant_request(
             "confidence": intent.get("confidence"),
             "candidates": intent.get("confirmation_candidates") or [],
         }
-    if intent.get("extracted_params"):
-        ep = intent["extracted_params"]
-        if ep.get("sub_kind") and not sub_kind:
-            sub_kind = ep.get("sub_kind")
     system, user, params = build_execution_prompt(intent, ctx)
     if chart_type:
         params["chart_type"] = chart_type

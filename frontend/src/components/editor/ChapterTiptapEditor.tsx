@@ -162,12 +162,21 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     return found;
   }
 
-  function resolveQuoteRange(quote: string): { from: number; to: number } | null {
+  function resolveQuoteRange(quote: string, charOffset?: number | null): { from: number; to: number } | null {
     if (!editor) return null;
     const q = quote.trim();
     if (!q) {
       const { from } = editor.state.selection;
       return { from, to: from };
+    }
+    if (charOffset != null && charOffset >= 0) {
+      const full = editor.state.doc.textBetween(0, editor.state.doc.content.size, "\n");
+      const startSearch = Math.max(0, charOffset - 40);
+      const idx = full.indexOf(q, startSearch);
+      if (idx >= 0) {
+        const found = findTextRange(q);
+        if (found) return found;
+      }
     }
     const { from, to, empty } = editor.state.selection;
     const selected = empty ? "" : editor.state.doc.textBetween(from, to, "\n");
@@ -223,7 +232,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
 
   function showInlinePreview(payload: EditorAiPreviewPayload): boolean {
     if (!editor) return false;
-    const range = resolveQuoteRange(payload.quote.trim());
+    const range = resolveQuoteRange(payload.quote.trim(), payload.char_offset);
     if (!range) return false;
     editor.commands.setAiInlinePreview({
       ...range,
