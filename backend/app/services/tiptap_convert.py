@@ -12,7 +12,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 from app.services.markdown_to_tiptap import _parse_inline_bold
-from app.services.publication.publication_styles import FIRST_LINE_INDENT_PT
+from app.services.publication.publication_styles import DOC_BODY_FONT, FIRST_LINE_INDENT_PT
 
 BLACK = RGBColor(0, 0, 0)
 CODE_SHADING = "F5F5F5"
@@ -203,13 +203,24 @@ def chapter_content_to_markdown(content: dict[str, Any] | None) -> str:
 # --- DOCX ---
 
 
+def _apply_run_font(run, name: str) -> None:
+    run.font.name = name
+    rpr = run._element.get_or_add_rPr()
+    rfonts = rpr.rFonts
+    if rfonts is None:
+        rfonts = OxmlElement("w:rFonts")
+        rpr.append(rfonts)
+    rfonts.set(qn("w:ascii"), name)
+    rfonts.set(qn("w:hAnsi"), name)
+    rfonts.set(qn("w:eastAsia"), name)
+
+
 def _style_run(run, *, size_pt: int = BODY_PT, bold: bool = False, italic: bool = False, mono: bool = False) -> None:
     run.font.color.rgb = BLACK
     run.font.size = Pt(size_pt)
     run.bold = bold
     run.italic = italic
-    if mono:
-        run.font.name = "Consolas"
+    _apply_run_font(run, "Consolas" if mono else DOC_BODY_FONT)
 
 
 def _add_inline_to_paragraph(paragraph, nodes: list[dict[str, Any]] | None, *, size_pt: int = BODY_PT) -> None:

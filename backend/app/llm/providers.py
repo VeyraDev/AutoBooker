@@ -75,7 +75,7 @@ PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
         api_key_attr="OPENAI_API_KEY",
         base_url_attr="OPENAI_BASE_URL",
         default_base_url="https://api.openai.com/v1",
-        models=("gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4o-mini", "o3-mini"),
+        models=("gpt-5.5", "gpt-5.5-pro", "gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4o-mini", "o3-mini"),
     ),
     ProviderSpec(
         id="claude",

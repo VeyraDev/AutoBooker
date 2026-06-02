@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.models.book import Book
 from app.models.chapter import Chapter
 from app.services import book_service
+from app.services.publication.book_ast_builder import export_chapter_title
 from app.services.tiptap_convert import (
     append_chapter_content_to_document,
     chapter_content_to_markdown,
@@ -40,7 +41,7 @@ def _load_ordered_chapters(book_id: UUID, db: Session) -> list[Chapter]:
 def build_markdown(book: Book, chapters: list[Chapter]) -> str:
     lines: list[str] = [f"# {book.title}", ""]
     for ch in chapters:
-        lines.append(f"## 第 {ch.index} 章　{ch.title}")
+        lines.append(f"## {export_chapter_title(ch)}")
         lines.append("")
         if ch.summary:
             lines.append(f"> {ch.summary.strip()}")

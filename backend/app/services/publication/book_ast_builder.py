@@ -19,6 +19,12 @@ TABLE_CAPTION_RE = re.compile(r"^表\s*(\d+)\s*[-–—]\s*(\d+)\s*[:：]\s*(.+)
 FIGURE_CAPTION_RE = re.compile(r"^图\s*(\d+)\s*[-–—]\s*(\d+)\s*[:：]\s*(.+)$")
 
 
+def export_chapter_title(ch: Chapter) -> str:
+    """导出章标题：书名大纲里已含「第X章」，不再加「第 N 章　」前缀。"""
+    title = (ch.title or "").strip()
+    return title or f"第{ch.index}章"
+
+
 def _heading_role(level: int) -> str:
     if level <= 1:
         return "section_title"
@@ -152,7 +158,7 @@ def build_book_ast(book: Book, chapters: list[Chapter], db: Session) -> BookAst:
         ast.blocks.append(
             AstBlock(
                 role="chapter_title",
-                text=f"第 {ch.index} 章　{ch.title}",
+                text=export_chapter_title(ch),
                 attrs={"chapter_index": ch.index},
             )
         )
