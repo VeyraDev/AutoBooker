@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from app.services.figure_render.renderer_rules import has_numeric_data_signal, style_profile_for_book
+from app.services.figures.quality import initial_quality_report, intent_candidate_report
 from app.services.figures.intent.taxonomy import (
     RENDERER_ILLUSTRATION,
     RENDERER_NEED_DATA,
@@ -312,6 +313,7 @@ def build_classification_record(
     render_warnings, quality_flags, layout_strategy = _structured_quality(parsed.parsed_spec, subtype, renderer)
     render_warnings = list(dict.fromkeys(list(parsed.parsed_spec.get("render_warnings") or []) + render_warnings))
     quality_flags = list(dict.fromkeys(list(parsed.parsed_spec.get("quality_flags") or []) + quality_flags))
+    intent_candidates = intent_candidate_report(ctx, intent)
     must_avoid = ["照片写实", "复杂背景", "营销海报风", "文字堆叠"]
     if renderer == RENDERER_ILLUSTRATION:
         must_avoid.extend(["可读文字", "复杂标签", "UI 截图伪造"])
@@ -321,6 +323,15 @@ def build_classification_record(
     style = _SUBTYPE_STYLE.get(subtype, _DEFAULT_STYLE)
     if visual_plan and visual_plan.style:
         style = visual_plan.style
+
+    semantic_ir = (ir_bundle or {}).get("semantic_ir") if ir_bundle else None
+    quality_report = initial_quality_report(
+        ctx=ctx,
+        intent=intent,
+        semantic_ir=semantic_ir,
+        quality_flags=quality_flags,
+        render_warnings=render_warnings,
+    )
 
     prompt_spec = {
         "title": title,
@@ -363,4 +374,6 @@ def build_classification_record(
         graph_ir=ir.get("graph_ir"),
         layout_result=ir.get("layout_result"),
         intent_understanding=ir.get("intent_understanding"),
+        intent_candidates=intent_candidates,
+        quality_report=quality_report,
     )

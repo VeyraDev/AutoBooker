@@ -93,6 +93,18 @@ class ReviewAgent:
                 "issues": [],
             }
 
+        if len(text) > 28_000:
+            return self._review_long_chapter(
+                chapter_title=chapter_title,
+                body=text,
+                book_title=book_title,
+                book_type=book_type,
+                citation_style=citation_style,
+                user_material=user_material,
+                approved_citations=approved_citations,
+                figure_summaries=figure_summaries,
+            )
+
         truncated = text[:28_000]
         user_parts = [
             f"书名：{book_title or '未命名'}",
@@ -198,6 +210,118 @@ class ReviewAgent:
             },
             "issues": normalized,
         }
+
+    def _review_long_chapter(
+        self,
+        *,
+        chapter_title: str,
+        body: str,
+        book_title: str,
+        book_type: str,
+        citation_style: str,
+        user_material: str = "",
+        approved_citations: list[str] | None = None,
+        figure_summaries: list[str] | None = None,
+    ) -> dict[str, Any]:
+        chunks = _split_review_chunks(body)
+        chunk_results: list[tuple[int, dict[str, Any]]] = []
+        for idx, chunk in enumerate(chunks, start=1):
+            result = self.review_chapter(
+                chapter_title=f"{chapter_title}（片段 {idx}/{len(chunks)}）",
+                body=chunk,
+                book_title=book_title,
+                book_type=book_type,
+                citation_style=citation_style,
+                user_material=user_material,
+                approved_citations=approved_citations,
+                figure_summaries=figure_summaries,
+            )
+            chunk_results.append((len(chunk), result))
+        return _merge_chunk_reviews(chunk_results)
+
+
+def _split_review_chunks(text: str, *, limit: int = 16_000) -> list[str]:
+    chunks: list[str] = []
+    buf: list[str] = []
+    size = 0
+    for para in (text or "").split("\n\n"):
+        if len(para) > limit:
+            if buf:
+                chunks.append("\n\n".join(buf))
+                buf = []
+                size = 0
+            for start in range(0, len(para), limit):
+                chunks.append(para[start : start + limit])
+            continue
+        chunk_len = len(para) + (2 if buf else 0)
+        if buf and size + chunk_len > limit:
+            chunks.append("\n\n".join(buf))
+            buf = [para]
+            size = len(para)
+        else:
+            buf.append(para)
+            size += chunk_len
+    if buf:
+        chunks.append("\n\n".join(buf))
+    return chunks or [text]
+
+
+def _merge_chunk_reviews(chunk_results: list[tuple[int, dict[str, Any]]]) -> dict[str, Any]:
+    total_len = sum(max(1, length) for length, _ in chunk_results) or 1
+    dim_acc: dict[str, dict[str, Any]] = {}
+    issues: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    summaries: list[str] = []
+    for length, result in chunk_results:
+        weight = max(1, length) / total_len
+        summary = str(result.get("summary") or "").strip()
+        if summary:
+            summaries.append(summary[:240])
+        for key, dim in (result.get("dimensions") or {}).items():
+            if not isinstance(dim, dict):
+                continue
+            acc = dim_acc.setdefault(
+                str(key),
+                {"raw_score": 0.0, "confidence": 0.0, "summary": [], "status": "completed"},
+            )
+            acc["raw_score"] += float(dim.get("raw_score", 70) or 70) * weight
+            acc["confidence"] += float(dim.get("confidence", 0.7) or 0.7) * weight
+            if dim.get("summary"):
+                acc["summary"].append(str(dim.get("summary"))[:180])
+            if str(dim.get("status") or "completed") != "completed":
+                acc["status"] = "partial"
+        for issue in result.get("issues") or []:
+            if not isinstance(issue, dict):
+                continue
+            key = "|".join(
+                [
+                    str(issue.get("dimension") or ""),
+                    str(issue.get("issue_type") or ""),
+                    str(issue.get("quote") or "")[:120],
+                    str(issue.get("title") or "")[:80],
+                ]
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            issues.append(issue)
+    dimensions = {
+        key: {
+            "raw_score": int(round(acc["raw_score"])),
+            "summary": "；".join(acc["summary"][:3]),
+            "confidence": round(float(acc["confidence"]), 3),
+            "detector": "review_agent:chunked",
+            "status": acc["status"],
+        }
+        for key, acc in dim_acc.items()
+    }
+    severity_rank = {"high": 0, "medium": 1, "low": 2}
+    issues.sort(key=lambda i: (severity_rank.get(str(i.get("severity")), 1), -int(i.get("penalty") or 0)))
+    return {
+        "summary": "长章分块审校完成：" + "；".join(summaries[:4]),
+        "dimensions": dimensions,
+        "issues": issues[:18],
+    }
 
 
 def _enum_val(raw: Any, allowed: tuple[str, ...], default: str) -> str:

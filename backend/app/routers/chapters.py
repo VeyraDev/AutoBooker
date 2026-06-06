@@ -37,6 +37,7 @@ from app.schemas.chapter import (
     SelectionEditOut,
 )
 from app.services import book_service
+from app.services.dedupe_service import DedupeService
 from app.services.figure_service import (
     extract_and_store_figures,
     renumber_figures,
@@ -531,6 +532,17 @@ def edit_selection(
     """润色 / 扩写 / 缩写选中文本（非流式）。"""
     book = book_service.get_book_or_404(book_id, user, db)
     _get_chapter(book_id, chapter_index, db)
+    client = LLMClient()
+    chat_model = _chat_model_for_book(book)
+
+    if body.mode == "dedupe":
+        result = DedupeService().dedupe_text(
+            body.text,
+            client=client,
+            chat_model=chat_model,
+            context=body.context or "",
+        )
+        return SelectionEditOut(text=result.text, report=result.report)
 
     prompts = {
         "polish": "请润色以下文字，保持原意，使表达更流畅专业。只输出改写后的正文，不要解释。",
@@ -574,8 +586,6 @@ def edit_selection(
         system = "你是专业中文编辑，只输出改写结果，不要加引号、标题或前言。"
         user_msg = f"{prompts[body.mode]}{ctx_block}\n\n---\n{body.text.strip()}"
 
-    client = LLMClient()
-    chat_model = _chat_model_for_book(book)
     temp = 0.55 if body.mode == "dedupe" else 0.45
     out = client.chat_completion(
         [{"role": "system", "content": system}, {"role": "user", "content": user_msg}],
@@ -653,5 +663,5 @@ def dedupe_chapter(
 
     client = LLMClient()
     chat_model = _chat_model_for_book(book)
-    out = _dedupe_markdown_chunks(md, client, chat_model)
-    return ChapterDedupeOut(text=out, original_text=md)
+    result = DedupeService().dedupe_markdown(md, client=client, chat_model=chat_model)
+    return ChapterDedupeOut(text=result.text, original_text=md, report=result.report)

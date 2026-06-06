@@ -151,7 +151,7 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
 
   useEffect(() => {
     const v = Number(node.attrs.fileVersion ?? 0);
-    if (v > 0) setImgEpoch(v);
+    if (v > 0) setImgEpoch((prev) => Math.max(prev, v));
   }, [node.attrs.fileVersion]);
 
   useEffect(() => {
@@ -210,6 +210,10 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
       setImgEpoch(nextVersion);
       setImgFailed(false);
       setSvgFailed(false);
+      setBlobSrc((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return null;
+      });
       const freshUrl = resolveFigureUrl(fig.svg_url || fig.file_url || "", nextVersion);
       applyPatch({
         status: fig.status,

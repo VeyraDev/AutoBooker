@@ -211,6 +211,8 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
             layout = "TB"
 
     branching = _has_branching_topology(nodes, edges)
+    if subtype in _FLOW_SUBTYPES and len(nodes) <= 5 and not branching:
+        layout = "LR"
     existing_edges = {(e["from"], e["to"]) for e in edges}
     if subtype in _FLOW_SUBTYPES and not branching:
         ordered = sorted(nodes, key=lambda n: (int(n.get("level") or 0), int(n.get("column") or 0), n["id"]))

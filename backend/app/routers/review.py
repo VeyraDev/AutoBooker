@@ -253,11 +253,31 @@ def confirm_review_application(
     app = db.get(ReviewApplication, application_id)
     if not app:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Application not found")
+    ch = db.get(Chapter, app.chapter_id)
+    if not ch:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chapter not found")
+    current_hash = snapshot_hash(canonical_markdown(_chapter_markdown(ch)))
+    if current_hash != app.after_hash:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "章节正文与预览结果不一致，请先保存预览修改或重新生成预览",
+        )
     issue = db.get(ChapterReviewIssue, app.issue_id) if app.issue_id else None
     review = db.get(ChapterReview, app.review_id) if app.review_id else None
     if issue:
         review_repository.set_issue_status(db, issue, "resolved")
         review = db.get(ChapterReview, issue.review_id)
+        after_score = {"total_score": review.total_score, "dimensions": review.dimensions} if review else None
+        app.score_after = after_score
+        changes, warning = score_changes(
+            (app.score_before or {}).get("dimensions") if isinstance(app.score_before, dict) else None,
+            review.dimensions if review else None,
+            affected=list(app.affected_dimensions or []),
+            total_before=(app.score_before or {}).get("total_score") if isinstance(app.score_before, dict) else None,
+            total_after=review.total_score if review else None,
+        )
+        app.warning = {"score_changes": changes, "warning": warning} if warning else {"score_changes": changes}
+        db.commit()
     return ReviewConfirmApplicationOut(
         application_id=str(app.id),
         issue_status="resolved" if issue else None,
@@ -511,6 +531,12 @@ def _ai_detector_result(md: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
                 "char_start": seg.start,
                 "char_end": seg.end,
                 "detector": "ai_detect",
+                "quality_evidence": {
+                    "provider_segment_score": seg.score,
+                    "provider": getattr(res, "provider", ""),
+                    "start": seg.start,
+                    "end": seg.end,
+                },
                 "confidence": min(0.9, max(0.4, seg.score / 100)),
             }
         )
@@ -644,6 +670,7 @@ def _issue_out(issue: ChapterReviewIssue, *, stale: bool = False) -> ReviewIssue
         char_end=issue.char_end,
         anchor_hash=issue.anchor_hash,
         issue_fingerprint=issue.issue_fingerprint,
+        quality_evidence=issue.quality_evidence if isinstance(issue.quality_evidence, dict) else None,
         detector=issue.detector or "review_agent",
         confidence=float(issue.confidence or 0),
         stale=stale,

@@ -20,6 +20,7 @@ from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, P
 from app.services.figures.schemas.dsl import DiagramDSL
 from app.services.figures.semantic.extractor import extract_semantic_ir
 from app.services.figures.validate.dsl_validator import validate_and_repair
+from app.services.figures.quality import semantic_coverage_report
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,12 @@ def run_structured_pipeline(
 
     ir_bundle["semantic_ir"] = semantic_ir.to_dict()
     ir_bundle["semantic_source"] = sem_source
+    semantic_quality = semantic_coverage_report(ctx.normalized_input, ir_bundle["semantic_ir"])
+    ir_bundle["semantic_quality"] = semantic_quality
+    if semantic_quality["score"] < 0.35:
+        quality_flags.append("semantic_coverage_low")
+    elif semantic_quality["score"] < 0.55:
+        quality_flags.append("semantic_coverage_partial")
 
     domain = str(understanding.get("domain") or semantic_ir.domain or "")
     semantic_ir = complete_knowledge(semantic_ir, domain=domain)

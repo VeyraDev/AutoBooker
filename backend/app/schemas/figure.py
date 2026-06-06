@@ -15,6 +15,7 @@ class FigureOut(BaseModel):
     raw_annotation: str | None
     file_url: str | None
     svg_url: str | None = None
+    quality_report: dict | None = None
     position_hint: str | None
     sort_order: int | None
     updated_at: datetime | None = None
@@ -33,6 +34,7 @@ class FigureListItem(BaseModel):
     position_hint: str | None
     file_url: str | None = None
     svg_url: str | None = None
+    quality_report: dict | None = None
     raw_annotation: str | None = None
 
 

@@ -29,6 +29,7 @@ class AssistantFigureOut(BaseModel):
     figure_id: str
     file_url: str | None
     svg_url: str | None = None
+    quality_report: dict | None = None
     figure_number: str | None
     status: str
     caption: str | None

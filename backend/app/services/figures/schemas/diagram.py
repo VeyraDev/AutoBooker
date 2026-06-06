@@ -91,6 +91,8 @@ class ClassificationRecord:
     graph_ir: dict[str, Any] | None = None
     layout_result: dict[str, Any] | None = None
     intent_understanding: dict[str, Any] | None = None
+    intent_candidates: dict[str, Any] | None = None
+    quality_report: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
         out = {
@@ -120,4 +122,8 @@ class ClassificationRecord:
             out["layout_result"] = self.layout_result
         if self.intent_understanding:
             out["intent_understanding"] = self.intent_understanding
+        if self.intent_candidates:
+            out["intent_candidates"] = self.intent_candidates
+        if self.quality_report:
+            out["quality_report"] = self.quality_report
         return out

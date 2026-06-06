@@ -51,6 +51,7 @@ ALLOWED_IMAGE = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
 def _figure_out(fig) -> FigureOut:
+    clf = fig.classification_json if isinstance(fig.classification_json, dict) else {}
     return FigureOut(
         id=fig.id,
         book_id=fig.book_id,
@@ -62,6 +63,7 @@ def _figure_out(fig) -> FigureOut:
         raw_annotation=fig.raw_annotation,
         file_url=fig.file_url,
         svg_url=getattr(fig, "svg_url", None),
+        quality_report=clf.get("quality_report"),
         position_hint=fig.position_hint,
         sort_order=fig.sort_order,
         updated_at=fig.updated_at,

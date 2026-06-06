@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from app.services.figures.graph.schema import GraphIR
 from app.services.figures.layout.schema import LayoutResult, NodePosition
+from app.services.figures.layout.sizing import estimate_node_size
 
-_NODE_W = 110.0
-_NODE_H = 44.0
 _H_GAP = 64.0
 _V_GAP = 56.0
 
@@ -33,16 +32,38 @@ def layout_snake(graph: GraphIR) -> LayoutResult:
     if graph.edges:
         ordered = _topo_order(graph)
     positions: dict[str, NodePosition] = {}
-    x0, y0 = 48.0, 48.0
+    nodes = {n.id: n for n in graph.nodes}
+    sizes = {nid: estimate_node_size(nodes[nid].label, min_width=110.0, max_width=210.0) for nid in ordered if nid in nodes}
+    row_count = (len(ordered) + cols - 1) // cols if cols else 0
+    col_widths = []
+    for col in range(cols):
+        col_widths.append(max((sizes.get(nid, (110.0, 44.0))[0] for i, nid in enumerate(ordered) if i % cols == col), default=110.0))
+    row_heights = []
+    for row in range(row_count):
+        row_heights.append(max((sizes.get(nid, (110.0, 44.0))[1] for i, nid in enumerate(ordered) if i // cols == row), default=44.0))
+    x_offsets = [48.0]
+    for width in col_widths[:-1]:
+        x_offsets.append(x_offsets[-1] + width + _H_GAP)
+    y_offsets = [48.0]
+    for height in row_heights[:-1]:
+        y_offsets.append(y_offsets[-1] + height + _V_GAP)
     for i, nid in enumerate(ordered):
         row = i // cols
         col = i % cols
         if row % 2 == 1:
             col = cols - 1 - col
-        x = x0 + col * (_NODE_W + _H_GAP)
-        y = y0 + row * (_NODE_H + _V_GAP)
-        positions[nid] = NodePosition(id=nid, x=x, y=y, width=_NODE_W, height=_NODE_H)
-    return LayoutResult(strategy="snake", direction="LR", node_positions=positions)
+        w, h = sizes.get(nid, (110.0, 44.0))
+        x = x_offsets[col] + (col_widths[col] - w) / 2
+        y = y_offsets[row] + (row_heights[row] - h) / 2
+        positions[nid] = NodePosition(id=nid, x=x, y=y, width=w, height=h)
+    canvas_w = 96.0 + sum(col_widths) + max(0, cols - 1) * _H_GAP
+    canvas_h = 96.0 + sum(row_heights) + max(0, row_count - 1) * _V_GAP
+    return LayoutResult(
+        strategy="snake",
+        direction="LR",
+        node_positions=positions,
+        canvas={"width": max(800.0, canvas_w), "height": max(420.0, canvas_h)},
+    )
 
 
 def _topo_order(graph: GraphIR) -> list[str]:

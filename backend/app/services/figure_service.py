@@ -331,6 +331,7 @@ def get_figure_list(book_id: UUID, db: Session) -> list[dict[str, Any]]:
             "position_hint": f.position_hint,
             "file_url": f.file_url,
             "svg_url": f.svg_url,
+            "quality_report": (f.classification_json or {}).get("quality_report") if isinstance(f.classification_json, dict) else None,
             "raw_annotation": f.raw_annotation,
         }
         for f in figures

@@ -59,6 +59,7 @@ class ChapterReviewIssue(Base):
     char_end = Column(Integer)
     anchor_hash = Column(String(80), index=True)
     issue_fingerprint = Column(String(120), index=True)
+    quality_evidence = Column(JSONB, nullable=True)
     detector = Column(String(80), default="review_agent", nullable=False)
     confidence = Column(Numeric(4, 3), default=0.7, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

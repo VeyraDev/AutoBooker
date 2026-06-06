@@ -130,6 +130,12 @@ class LLMClient:
         m = model_name.lower()
         return m.startswith(("gpt-5", "o1", "o3", "o4"))
 
+    @staticmethod
+    def _openai_omit_temperature(model_name: str) -> bool:
+        """gpt-5 / o 系列仅支持默认 temperature=1，传 0 会 400。"""
+        m = model_name.lower()
+        return m.startswith(("gpt-5", "o1", "o3", "o4"))
+
     def _chat_openai(
         self,
         client: OpenAI,
@@ -142,8 +148,9 @@ class LLMClient:
         kwargs: dict[str, Any] = {
             "model": model_name,
             "messages": messages,
-            "temperature": temperature,
         }
+        if not self._openai_omit_temperature(model_name):
+            kwargs["temperature"] = temperature
         if self._openai_uses_max_completion_tokens(model_name):
             kwargs["max_completion_tokens"] = max_tokens
         else:
@@ -262,13 +269,18 @@ class AsyncLLMClient:
         max_tokens: int,
         temperature: float,
     ) -> AsyncIterator[str]:
-        stream = await client.chat.completions.create(
-            model=model_name,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stream=True,
-        )
+        kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": messages,
+            "stream": True,
+        }
+        if not LLMClient._openai_omit_temperature(model_name):
+            kwargs["temperature"] = temperature
+        if LLMClient._openai_uses_max_completion_tokens(model_name):
+            kwargs["max_completion_tokens"] = max_tokens
+        else:
+            kwargs["max_tokens"] = max_tokens
+        stream = await client.chat.completions.create(**kwargs)
         async for chunk in stream:
             if not chunk.choices:
                 continue

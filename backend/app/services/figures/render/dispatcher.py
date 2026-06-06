@@ -44,6 +44,7 @@ from app.services.figures.render.structured.grammar import (
 from app.services.figures.render.structured.generic_graph import generate_structured_diagram
 from app.services.figures.render.structured.matrix import generate_matrix_diagram
 from app.services.figures.render.structured.rag import generate_rag_diagram
+from app.services.figures.render.result import FigureRenderResult, coerce_render_result
 from app.services.figures.render.structured.swot import generate_swot_diagram
 from app.services.figures.render.structured.transformer import generate_transformer_architecture
 from app.services.figure_render.figure_structure import has_structured_graph
@@ -67,7 +68,17 @@ def _matplotlib_backend() -> bool:
     return os.environ.get("FIGURE_RENDER_BACKEND", "svg").strip().lower() == "matplotlib"
 
 
-def _try_svg_render(spec: dict, out_path: Path, *, title: str, clf: dict) -> tuple[str, Path] | None:
+LegacyRenderReturn = tuple[str, Path]
+
+
+def _finish(result: FigureRenderResult | LegacyRenderReturn, out_path: Path) -> FigureRenderResult:
+    if isinstance(result, FigureRenderResult):
+        return result
+    render_source, path = result
+    return coerce_render_result(render_source, path, out_path.with_suffix(".png"))
+
+
+def _try_svg_render(spec: dict, out_path: Path, *, title: str, clf: dict) -> FigureRenderResult | None:
     if _matplotlib_backend():
         return None
     layout_result = clf.get("layout_result") or spec.get("layout_result")
@@ -79,7 +90,7 @@ def _try_svg_render(spec: dict, out_path: Path, *, title: str, clf: dict) -> tup
         theme = str((spec.get("style") or clf.get("dsl_json") or {}).get("theme") or "modern_saas")
         if isinstance(clf.get("dsl_json"), dict):
             theme = str((clf["dsl_json"].get("style") or {}).get("theme") or theme)
-        return render_svg_diagram(spec, out_path, title=title, layout_result=layout_result, theme=theme)
+        return _finish(render_svg_diagram(spec, out_path, title=title, layout_result=layout_result, theme=theme), out_path)
     except Exception:
         return None
 
@@ -90,14 +101,14 @@ def _svg_first_or_fallback(
     *,
     title: str,
     clf: dict,
-    fallback: Callable[[], tuple[str, Path]],
-) -> tuple[str, Path]:
+    fallback: Callable[[], LegacyRenderReturn | FigureRenderResult],
+) -> FigureRenderResult:
     """结构图优先 SVG，Matplotlib/旧 renderer 仅作兜底。"""
     if has_structured_graph(spec):
         svg_out = _try_svg_render(spec, out_path, title=title, clf=clf)
         if svg_out:
             return svg_out
-    return fallback()
+    return _finish(fallback(), out_path)
 
 
 def _clf(fig: Figure) -> dict[str, Any]:
@@ -127,7 +138,7 @@ def _normalized(fig: Figure) -> str:
     return _clf(fig).get("normalized_input") or (fig.raw_annotation or fig.caption or "").strip()
 
 
-def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", chart_type: str | None = None) -> tuple[str, Path]:
+def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", chart_type: str | None = None) -> FigureRenderResult:
     renderer = normalize_renderer_key(fig.renderer or _clf(fig).get("renderer"))
     spec = _parsed_spec(fig)
     title = _title(fig)
@@ -203,7 +214,7 @@ def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", c
         )
 
     if renderer == RENDERER_STRUCTURED_SWOT:
-        return generate_swot_diagram(spec, out_path, title=title)
+        return _finish(generate_swot_diagram(spec, out_path, title=title), out_path)
 
     if renderer == RENDERER_STRUCTURED_MATRIX:
         return _svg_first_or_fallback(
@@ -218,10 +229,10 @@ def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", c
                 fallback=lambda: generate_structured_diagram(spec, out_path, title=title),
             )
         image_type = fig.image_type or "process_flow"
-        return generate_flowchart(description, out_path, model=model, book_type=book_type, image_type=image_type)
+        return _finish(generate_flowchart(description, out_path, model=model, book_type=book_type, image_type=image_type), out_path)
 
     if renderer == RENDERER_STRUCTURED_CHART:
-        return generate_chart(description, out_path, model=model, chart_type_hint=chart_type, render_spec=spec)
+        return _finish(generate_chart(description, out_path, model=model, chart_type_hint=chart_type, render_spec=spec), out_path)
 
     if renderer == RENDERER_ILLUSTRATION:
         visual = clf.get("visual_plan") or clf.get("prompt_spec") or {}
@@ -236,7 +247,7 @@ def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", c
         )
         prompt = visual_plan_to_prompt(plan, style_type=book.style_type or "")
         sub = fig.subtype or "concept_diagram"
-        return generate_figure_image(prompt, out_path, style_type=book.style_type or "", sub_kind=sub)
+        return _finish(generate_figure_image(prompt, out_path, style_type=book.style_type or "", sub_kind=sub), out_path)
 
     if has_structured_graph(spec):
         return _svg_first_or_fallback(

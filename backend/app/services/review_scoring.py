@@ -191,6 +191,7 @@ def standardize_issue(raw: dict[str, Any], *, detector: str = "review_agent") ->
         "char_end": char_end,
         "anchor_hash": raw.get("anchor_hash"),
         "issue_fingerprint": raw.get("issue_fingerprint"),
+        "quality_evidence": raw.get("quality_evidence") if isinstance(raw.get("quality_evidence"), dict) else None,
         "detector": str(raw.get("detector") or detector),
         "confidence": _confidence(raw.get("confidence"), 0.7),
     }

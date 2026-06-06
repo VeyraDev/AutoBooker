@@ -51,8 +51,10 @@ class SelectionEditIn(BaseModel):
 
 class SelectionEditOut(BaseModel):
     text: str
+    report: dict | None = None
 
 
 class ChapterDedupeOut(BaseModel):
     text: str
     original_text: str = ""
+    report: dict | None = None

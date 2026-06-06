@@ -27,6 +27,9 @@ _PAREN_CITE = re.compile(
 _BRACKET_CITE = re.compile(r"\[(\d{1,3})\]")
 _FENCE_RE = re.compile(r"```[\s\S]*?```", re.MULTILINE)
 _INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+_SPECIFIC_CLAIM_RE = re.compile(
+    r"[^。！？\n]{0,80}(?:\d{4}年|\d+(?:\.\d+)?%|\d+(?:\.\d+)?(?:万|亿|人|家|次|元|美元|小时|分钟)|研究表明|调查显示|数据显示|案例显示)[^。！？\n]{0,80}"
+)
 
 
 @dataclass
@@ -110,6 +113,26 @@ def lint_chapter_citations(
                 )
             )
 
+    for m in _SPECIFIC_CLAIM_RE.finditer(text):
+        if len(issues) >= 24:
+            break
+        if _has_nearby_citation(text, m.start(), m.end()):
+            continue
+        quote = m.group(0).strip()
+        if len(quote) < 12:
+            continue
+        key = f"specific:{m.start()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        issues.append(
+            CitationLintIssue(
+                kind="unsupported_assertion",
+                quote=quote[:220],
+                detail="检测到具体数据、年份、案例或研究结论，但邻近文本未发现引用标注，请补充来源或改写为非断言表达。",
+            )
+        )
+
     for m in _PAREN_CITE.finditer(text):
         author, year = m.group(1), m.group(2)
         if not _match_citation(author, year, rows):
@@ -146,6 +169,11 @@ def lint_chapter_citations(
             )
 
     return issues[:30]
+
+
+def _has_nearby_citation(text: str, start: int, end: int, *, window: int = 120) -> bool:
+    region = text[max(0, start - window) : min(len(text), end + window)]
+    return bool(_PAREN_CITE.search(region) or _BRACKET_CITE.search(region))
 
 
 _KIND_TO_ISSUE_TYPE = {
@@ -187,6 +215,11 @@ def lint_chapter_citation_detector(
                     "char_start": loc.char_start,
                     "char_end": loc.char_end,
                     "anchor_hash": loc.anchor_hash,
+                    "quality_evidence": {
+                        "kind": item.kind,
+                        "suggested_title": item.suggested_title,
+                        "nearby_citation_required": item.kind == "unsupported_assertion",
+                    },
                     "detector": "citation_lint",
                     "confidence": 0.88,
                 },

@@ -34,10 +34,12 @@ function attrsFromFigure(
   const urlChanged = str(current.fileUrl) !== str(next.fileUrl) || str(current.svgUrl) !== str(next.svgUrl);
   const statusChanged = str(current.status) !== str(next.status);
   const idMissing = !str(current.figureId);
+  const currentVersion = Number(current.fileVersion ?? 0) || 0;
+  const serverVersion = figureFileVersion(fig.updated_at, Date.now());
   if (urlChanged || statusChanged || idMissing) {
-    next.fileVersion = figureFileVersion(fig.updated_at, Date.now());
+    next.fileVersion = Math.max(currentVersion, serverVersion);
   } else {
-    next.fileVersion = Number(current.fileVersion ?? 0) || figureFileVersion(fig.updated_at);
+    next.fileVersion = Math.max(currentVersion, serverVersion);
   }
 
   const keys = [

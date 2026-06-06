@@ -7,9 +7,11 @@ from pathlib import Path
 from app.services.figures.graph.builder import build_graph
 from app.services.figures.layout.collision import resolve_collisions
 from app.services.figures.layout.selector import compute_layout
+from app.services.figures.quality import inspect_rendered_figure
 from app.services.figures.render.svg.renderer import render_svg_diagram
 from app.services.figures.schemas.diagram import DiagramIntent
 from app.services.figures.semantic.schema import SemanticIR, SemanticObject
+from app.services.quality import QualityStatus
 
 
 def test_svg_render_no_node_overlap(tmp_path: Path):
@@ -40,3 +42,12 @@ def test_svg_render_no_node_overlap(tmp_path: Path):
                 or a.y + a.height <= b.y or b.y + b.height <= a.y
             )
             assert not overlap
+
+
+def test_inspect_rendered_figure_svg_only_not_failed(tmp_path: Path):
+    svg = tmp_path / "figure.svg"
+    svg.write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>', encoding="utf-8")
+    report = inspect_rendered_figure(png_path=None, svg_path=svg, classification={})
+    assert report["status"] == QualityStatus.warning.value
+    assert "svg_only_no_png" in report["warnings"]
+    assert "missing_render_asset" not in report["failures"]

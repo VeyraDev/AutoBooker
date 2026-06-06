@@ -77,6 +77,7 @@ class ReviewIssueOut(BaseModel):
     char_end: int | None = None
     anchor_hash: str | None = None
     issue_fingerprint: str | None = None
+    quality_evidence: dict[str, Any] | None = None
     detector: str = "review_agent"
     confidence: float = Field(default=0.0, ge=0, le=1)
     stale: bool = False

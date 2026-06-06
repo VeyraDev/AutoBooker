@@ -50,6 +50,11 @@ def lint_figures(md: str, figures: list[Figure] | None) -> dict[str, Any]:
         if _broken_path(fig):
             issues.append(_issue("broken_image", "high", "图片路径失效", "图表记录包含本地图片路径，但文件不存在。", quote))
 
+    for fig in figures:
+        quality_issue = _quality_report_issue(fig, _figure_quote((fig.figure_number or "").strip(), (fig.caption or fig.raw_annotation or "").strip()))
+        if quality_issue:
+            issues.append(quality_issue)
+
     for number, count in seen_numbers.items():
         if number and count > 1:
             issues.append(_issue("duplicate_figure_number", "high", "图表编号重复", f"图表编号 {number} 出现 {count} 次。", f"图{number}"))
@@ -113,8 +118,9 @@ def _issue(
     paragraph_index: int | None = None,
     char_start: int | None = None,
     char_end: int | None = None,
+    quality_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    out = {
         "dimension": "figure_quality",
         "issue_type": issue_type,
         "severity": severity,
@@ -130,6 +136,36 @@ def _issue(
         "detector": "figure_lint",
         "confidence": 0.82,
     }
+    if quality_evidence:
+        out["quality_evidence"] = quality_evidence
+    return out
+
+
+def _quality_report_issue(fig: Figure, quote: str) -> dict[str, Any] | None:
+    raw = getattr(fig, "classification_json", None)
+    clf = raw if isinstance(raw, dict) else {}
+    report = clf.get("quality_report")
+    if not isinstance(report, dict):
+        return None
+    status = str(report.get("status") or "")
+    failures = [str(x) for x in (report.get("failures") or []) if str(x)]
+    warnings = [str(x) for x in (report.get("warnings") or []) if str(x)]
+    if status not in {"failed", "warning", "needs_clarification"} and not failures:
+        return None
+    severity = "high" if status == "failed" or failures else "medium"
+    title = "图像生成质量未达标" if severity == "high" else "图像生成质量需要复核"
+    explanation = "图像生成链路返回 quality_report，提示语义覆盖、布局或渲染质量存在风险。"
+    flags = (failures + warnings)[:8]
+    if flags:
+        explanation += " flags=" + ", ".join(flags)
+    return _issue(
+        "figure_quality_report",
+        severity,
+        title,
+        explanation,
+        quote,
+        quality_evidence=report,
+    )
 
 
 def _figure_quote(number: str, caption: str) -> str:

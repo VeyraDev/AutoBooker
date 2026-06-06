@@ -72,6 +72,7 @@ def create_review(
                 char_end=raw.get("char_end"),
                 anchor_hash=raw.get("anchor_hash"),
                 issue_fingerprint=fp,
+                quality_evidence=raw.get("quality_evidence") if isinstance(raw.get("quality_evidence"), dict) else None,
                 detector=raw.get("detector") or "review_agent",
                 confidence=raw.get("confidence") or 0.7,
             )
@@ -220,6 +221,7 @@ def _issue_to_dict(issue: ChapterReviewIssue) -> dict[str, Any]:
         "char_end": issue.char_end,
         "anchor_hash": issue.anchor_hash,
         "issue_fingerprint": issue.issue_fingerprint,
+        "quality_evidence": issue.quality_evidence,
         "detector": issue.detector,
         "confidence": float(issue.confidence or 0),
     }

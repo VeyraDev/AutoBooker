@@ -113,11 +113,13 @@ async def execute_image_generation(
         chapter_title=(chapter.title if chapter else ""),
         legacy_tag=_LEGACY_TAG_BY_TYPE.get(fig.figure_type),
     )
+    clf = fig.classification_json if isinstance(fig.classification_json, dict) else {}
     return {
         "type": "figure",
         "figure_id": str(fig.id),
         "file_url": fig.file_url,
         "svg_url": fig.svg_url,
+        "quality_report": clf.get("quality_report"),
         "figure_number": fig.figure_number,
         "status": fig.status.value,
         "caption": fig.caption,
