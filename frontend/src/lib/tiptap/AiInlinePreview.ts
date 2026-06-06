@@ -9,6 +9,9 @@ export type AiInlinePreviewData = {
   quote: string;
   suggestion: string;
   kind: AiPreviewKind;
+  application_id?: string | null;
+  issue_id?: string | null;
+  onAccepted?: () => void | Promise<void>;
 };
 
 export const aiInlinePreviewKey = new PluginKey<AiInlinePreviewData | null>("aiInlinePreview");

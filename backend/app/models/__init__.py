@@ -9,6 +9,7 @@ from app.models.global_literature import GlobalLiterature, GlobalLiteratureSourc
 from app.models.book_job import BookJob, BookJobStatus, BookJobStep
 from app.models.notification import Notification, NotificationType
 from app.models.feedback import Feedback, FeedbackType, FeedbackStatus
+from app.models.chapter_review import ChapterReview, ChapterReviewIssue, ReviewApplication
 
 __all__ = [
     "User",
@@ -39,4 +40,7 @@ __all__ = [
     "Feedback",
     "FeedbackType",
     "FeedbackStatus",
+    "ChapterReview",
+    "ChapterReviewIssue",
+    "ReviewApplication",
 ]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.llm.providers import resolve_book_ai_model
+from app.llm.providers import resolve_book_writing_model
 from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.figure import Figure
@@ -33,6 +33,6 @@ def refresh_figure_classification(
         chapter_title=chapter_title,
         legacy_tag=legacy,
         user_hint=user_hint,
-        model=resolve_book_ai_model(book),
+        model=resolve_book_writing_model(book),
         use_llm=use_llm,
     )

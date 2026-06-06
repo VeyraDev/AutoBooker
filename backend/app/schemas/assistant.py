@@ -28,6 +28,7 @@ class AssistantFigureOut(BaseModel):
     type: str = "figure"
     figure_id: str
     file_url: str | None
+    svg_url: str | None = None
     figure_number: str | None
     status: str
     caption: str | None

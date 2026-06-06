@@ -3,8 +3,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 
-import type { LlmModelsResponse } from "@/api/config";
 import type { ExportFormat } from "@/api/books";
+import type { LlmModelsResponse } from "@/api/config";
+
 import ModelSelector from "@/components/editor/ModelSelector";
 
 export type AutoSaveUi = "idle" | "pending" | "saved" | "error";
@@ -14,7 +15,7 @@ export type EditorTopBarProps = {
   currentWords: number;
   targetWords: number;
   aiModel: string | null;
-  llmCatalog?: LlmModelsResponse;
+  llmCatalog: LlmModelsResponse | undefined;
   llmCatalogLoading?: boolean;
   onTitleSave: (title: string) => void;
   onModelChange: (model: string) => void;
@@ -167,12 +168,12 @@ export default function EditorTopBar({
         </span>
       </div>
 
-      {/* 模型 */}
       <ModelSelector
         aiModel={aiModel}
         catalog={llmCatalog}
         loading={llmCatalogLoading}
         onModelChange={onModelChange}
+        triggerClassName="input flex h-9 min-w-[8.5rem] max-w-[10.5rem] cursor-pointer items-center justify-between gap-1 py-1 pl-2 pr-2 text-xs"
       />
 
       {/* 导出 */}

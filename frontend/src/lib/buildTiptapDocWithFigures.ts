@@ -52,6 +52,7 @@ function placeholderFigureBlock(rawAnnotation: string): Record<string, unknown> 
       caption: rawAnnotation.slice(0, 200),
       status: "pending",
       fileUrl: "",
+      svgUrl: "",
       rawAnnotation,
     },
   };

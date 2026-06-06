@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 from app.llm.client import LLMClient
-from app.llm.providers import resolve_book_ai_model
+from app.llm.providers import resolve_book_writing_model
 from app.models.book import Book
 from app.services.tiptap_convert import _inline_to_markdown, _table_cell_text
 
@@ -55,7 +55,7 @@ def suggest_table_caption(
         client = LLMClient()
         raw = client.chat_completion(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            model=resolve_book_ai_model(book),
+            model=resolve_book_writing_model(book),
             temperature=0.3,
             max_tokens=64,
         )

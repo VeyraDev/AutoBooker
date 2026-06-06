@@ -88,6 +88,7 @@ def get_figure(
 ):
     book_service.get_book_or_404(book_id, user, db)
     fig = get_figure_or_404(figure_id, book_id, db)
+    fig = repair_figure_file(fig, db)
     return _figure_out(fig)
 
 

@@ -279,6 +279,30 @@ def refresh_chapter_figures(
     db: Session,
 ) -> list[Figure]:
     """清理孤儿图、重编号，返回本章图表列表。"""
+    from app.services.tiptap_convert import tiptap_json_to_markdown
+
+    extract_text = ""
+    if isinstance(tiptap_json, dict) and tiptap_json.get("type") == "doc":
+        extract_text = tiptap_json_to_markdown(tiptap_json).strip()
+    if not extract_text:
+        ch = (
+            db.query(Chapter)
+            .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
+            .first()
+        )
+        if ch and isinstance(ch.content, dict):
+            stored = ch.content.get("text")
+            if isinstance(stored, str):
+                extract_text = stored.strip()
+    if extract_text:
+        extract_and_store_figures(
+            book_id,
+            chapter_index,
+            extract_text,
+            db,
+            prune_unused=False,
+        )
+
     prune_orphan_chapter_figures(book_id, chapter_index, tiptap_json, db)
     renumber_chapter_figures_from_tiptap(book_id, chapter_index, tiptap_json, db)
     figures = get_chapter_figures(book_id, chapter_index, db)
@@ -294,6 +318,8 @@ def get_figure_list(book_id: UUID, db: Session) -> list[dict[str, Any]]:
         .order_by(Figure.chapter_index, Figure.sort_order, Figure.created_at)
         .all()
     )
+    for fig in figures:
+        repair_figure_file(fig, db)
     return [
         {
             "id": str(f.id),
@@ -304,6 +330,7 @@ def get_figure_list(book_id: UUID, db: Session) -> list[dict[str, Any]]:
             "chapter": f.chapter_index,
             "position_hint": f.position_hint,
             "file_url": f.file_url,
+            "svg_url": f.svg_url,
             "raw_annotation": f.raw_annotation,
         }
         for f in figures
@@ -334,6 +361,7 @@ def figure_to_block_attrs(fig: Figure) -> dict[str, Any]:
         "caption": fig.caption or fig.raw_annotation or "",
         "status": fig.status.value,
         "fileUrl": fig.file_url or "",
+        "svgUrl": fig.svg_url or "",
         "rawAnnotation": fig.raw_annotation or "",
         "fileVersion": _figure_file_version(fig),
     }
@@ -401,10 +429,24 @@ def sync_figures_to_tiptap(
 
 def repair_figure_file(fig: Figure, db: Session) -> Figure:
     """修复 Graphviz cairo 渲染遗留的 .cairo.png 与 DB 中 .png 路径不一致。"""
+    def clear_missing_svg(path: Path | None = None) -> bool:
+        if not getattr(fig, "svg_url", None):
+            return False
+        if fig.status != FigureStatus.uploaded and path is not None:
+            svg_path = path.with_suffix(".svg")
+            if svg_path.is_file():
+                return False
+        fig.svg_url = None
+        db.commit()
+        db.refresh(fig)
+        return True
+
     if not fig.file_path:
+        clear_missing_svg()
         return fig
     path = Path(fig.file_path)
     if path.is_file():
+        clear_missing_svg(path)
         return fig
     alt = path.with_name(f"{path.stem}.cairo.png")
     if alt.is_file():
@@ -413,6 +455,7 @@ def repair_figure_file(fig: Figure, db: Session) -> Figure:
         fig.file_url = f"/static/figures/{fig.book_id}/{path.name}"
         db.commit()
         db.refresh(fig)
+    clear_missing_svg(path)
     return fig
 
 

@@ -17,7 +17,6 @@ import {
 } from "@/api/chapters";
 import { generateOutline, getOutline, putOutline } from "@/api/outline";
 import { getPreface, openPrefaceGenerateStream, putPreface, type PrefaceData } from "@/api/preface";
-import { syncChapterFigures } from "@/api/figures";
 import type { FigureOut, FigureTableOverviewItem } from "@/api/figures";
 import AddChapterDialog from "@/components/editor/AddChapterDialog";
 import type { AddChapterFormValues } from "@/components/editor/AddChapterDialog";
@@ -37,6 +36,7 @@ import { useAutoSave } from "@/hooks/useAutoSave";
 import { useChapterStream } from "@/hooks/useChapterStream";
 import { useLlmModels } from "@/hooks/useLlmModels";
 import { useDailyWordDelta } from "@/hooks/useDailyWordDelta";
+import { effectiveSceneModel } from "@/lib/bookAiModels";
 import { phaseOf, type Phase } from "@/lib/bookStatus";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import type { Chapter } from "@/types/chapter";
@@ -649,9 +649,14 @@ export default function BookEditorPage() {
   });
 
   const modelMutation = useMutation({
-    mutationFn: (ai_model: string) => updateBook(bookId!, { ai_model }),
+    mutationFn: (writing_ai_model: string) =>
+      updateBook(bookId!, { writing_ai_model, ai_model: writing_ai_model }),
     onSuccess: (b) => qc.setQueryData(["book", bookId], b),
   });
+
+  const writingModel = book
+    ? effectiveSceneModel("writing", { book, catalog: llmModelsQuery.data })
+    : null;
 
   function toastAxiosDetail(e: unknown, fallback: string): string {
     const ax = axios.isAxiosError(e) ? e : null;
@@ -1054,7 +1059,7 @@ export default function BookEditorPage() {
             title={book.title}
             currentWords={currentWords}
             targetWords={targetWords}
-            aiModel={book.ai_model}
+            aiModel={writingModel}
             llmCatalog={llmModelsQuery.data}
             llmCatalogLoading={llmModelsQuery.isLoading}
             onTitleSave={(t) => titleMutation.mutate(t)}
@@ -1417,7 +1422,7 @@ export default function BookEditorPage() {
                     activeChapter={selectedMeta}
                     autoSaveStatus={saveStatus}
                     savedAt={savedAt}
-                    aiModel={book.ai_model}
+                    aiModel={writingModel}
                     llmCatalog={llmModelsQuery.data}
                     llmCatalogLoading={llmModelsQuery.isLoading}
                     onModelChange={(m) => modelMutation.mutate(m)}
@@ -1482,20 +1487,21 @@ export default function BookEditorPage() {
                     }}
                     onOpenOutlineEditor={() => setOutlineDrawerOpen(true)}
                     onFiguresChanged={() => {
-                      if (chapterIndex != null) {
-                        void syncChapterFigures(bookId, chapterIndex).then(() => {
-                          void chapterDetailQuery.refetch();
-                        });
-                      }
+                      void qc.invalidateQueries({ queryKey: ["figures", bookId] });
                     }}
                     onFigureGenerated={(fig: FigureOut) => {
-                      editorRef.current?.updateFigureBlock(fig.id, {
-                        fileUrl: fig.file_url ?? "",
-                        status: fig.status,
-                        figureNumber: fig.figure_number ?? "",
-                        caption: fig.caption ?? "",
-                        fileVersion: Date.now(),
-                      });
+                      editorRef.current?.applyFigureResult(
+                        {
+                          figure_id: fig.id,
+                          file_url: fig.file_url,
+                          svg_url: fig.svg_url,
+                          figure_number: fig.figure_number,
+                          status: fig.status,
+                          caption: fig.caption,
+                          figure_type: fig.figure_type,
+                        },
+                        { targetFigureId: fig.id },
+                      );
                     }}
                     figureTableOverview={figureTableOverview}
                     getChapterTiptapJson={() =>

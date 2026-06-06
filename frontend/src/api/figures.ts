@@ -12,6 +12,7 @@ export type FigureListItem = {
   chapter: number;
   position_hint: string | null;
   file_url: string | null;
+  svg_url: string | null;
   raw_annotation: string | null;
 };
 
@@ -25,6 +26,7 @@ export type FigureOut = {
   caption: string | null;
   raw_annotation: string | null;
   file_url: string | null;
+  svg_url: string | null;
   position_hint: string | null;
   sort_order: number | null;
   updated_at?: string | null;

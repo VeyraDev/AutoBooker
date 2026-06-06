@@ -12,13 +12,16 @@ import { MathBlock, MathInline } from "@/lib/tiptap/MathNodes";
 import { AiInlinePreview } from "@/lib/tiptap/AiInlinePreview";
 import { FigureBlock } from "@/lib/tiptap/FigureBlock";
 import { HeadingWithId } from "@/lib/tiptap/HeadingWithId";
+import { ParagraphWithId } from "@/lib/tiptap/ParagraphWithId";
 
 /** 与 generateJSON 共用：仅含可序列化进文档的节点，不含 Placeholder / CharacterCount */
 export const chapterEditorSchemaExtensions = [
   StarterKit.configure({
     heading: false,
+    paragraph: false,
   }),
   HeadingWithId.configure({ levels: [1, 2, 3, 4, 5, 6] }),
+  ParagraphWithId,
   FigureBlock,
   MathInline,
   MathBlock,

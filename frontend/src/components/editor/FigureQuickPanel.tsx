@@ -42,6 +42,36 @@ function overviewKindLabel(kind: string): string {
   return kind === "table" ? "表格" : "插图";
 }
 
+function FigureThumbnail({ fig }: { fig: FigureListItem }) {
+  const [preferSvg, setPreferSvg] = useState(Boolean(fig.svg_url));
+
+  useEffect(() => {
+    setPreferSvg(Boolean(fig.svg_url));
+  }, [fig.id, fig.file_url, fig.svg_url]);
+
+  const url = resolveFigureUrl(preferSvg && fig.svg_url ? fig.svg_url : fig.file_url);
+  if (!url) {
+    return (
+      <div className="flex h-14 w-20 shrink-0 items-center justify-center rounded border border-dashed border-slate-200 bg-slate-50 text-[10px] text-slate-400">
+        待生成
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={url}
+      alt=""
+      className="h-14 w-20 shrink-0 rounded border border-slate-100 object-cover"
+      onError={() => {
+        if (preferSvg && fig.file_url) {
+          setPreferSvg(false);
+        }
+      }}
+    />
+  );
+}
+
 export default function FigureQuickPanel({
   bookId,
   chapterIndex,
@@ -78,6 +108,12 @@ export default function FigureQuickPanel({
     await qc.invalidateQueries({ queryKey: ["figures", bookId] });
     onFiguresChanged?.();
   }
+
+  /** 打开本章速查时，若正文有图但库内无记录，依赖父级 refresh 回填；此处确保列表最新 */
+  useEffect(() => {
+    if (chapterIndex == null) return;
+    void refetch();
+  }, [chapterIndex, bookId]);
 
   function applyFigureToEditor(fig: FigureOut) {
     onFigureGenerated?.(fig);
@@ -211,7 +247,6 @@ export default function FigureQuickPanel({
         ) : (
           <ul className="mt-2 space-y-2">
             {chapterFigures.map((fig) => {
-              const url = resolveFigureUrl(fig.file_url);
               const label = fig.figure_number ? `图${fig.figure_number}` : fig.caption || fig.type;
               return (
                 <li
@@ -219,13 +254,7 @@ export default function FigureQuickPanel({
                   className="rounded-lg border border-slate-100 bg-white/80 p-2 text-xs text-slate-700"
                 >
                   <div className="flex gap-2">
-                    {url ? (
-                      <img src={url} alt="" className="h-14 w-20 shrink-0 rounded border border-slate-100 object-cover" />
-                    ) : (
-                      <div className="flex h-14 w-20 shrink-0 items-center justify-center rounded border border-dashed border-slate-200 bg-slate-50 text-[10px] text-slate-400">
-                        待生成
-                      </div>
-                    )}
+                    <FigureThumbnail fig={fig} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium text-slate-800">{label}</p>
                       <p className="mt-0.5 text-[10px] text-slate-400">{fig.status}</p>

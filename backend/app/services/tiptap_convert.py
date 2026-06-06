@@ -66,7 +66,9 @@ def _list_item_body(item: dict[str, Any], depth: int) -> str:
 def _block_to_markdown(node: dict[str, Any], depth: int = 0) -> str:
     t = node.get("type")
     if t == "paragraph":
-        return _inline_to_markdown(node.get("content"))
+        pid = str((node.get("attrs") or {}).get("paragraphId") or "").strip()
+        body = _inline_to_markdown(node.get("content"))
+        return f"<!-- pid:{pid} -->\n{body}" if pid else body
     if t == "heading":
         level = int((node.get("attrs") or {}).get("level") or 1)
         level = max(1, min(6, level))
@@ -338,12 +340,42 @@ def _table_cell_inline_nodes(cell: dict[str, Any]) -> list[dict[str, Any]]:
 def _resolve_figure_local_path(attrs: dict[str, Any]) -> Path | None:
     path = str(attrs.get("fileUrl") or attrs.get("file_url") or attrs.get("file_path") or "")
     if path.startswith("/static/figures/"):
-        from app.config import settings
+        from app.services.figures.storage.manager import figure_storage
 
-        local = settings.figures_path / path.replace("/static/figures/", "", 1)
-        if local.is_file():
+        local = figure_storage.resolve_local_path(path)
+        if local and local.is_file():
             return local
     return None
+
+
+def _docx_figure_size(local: Path) -> tuple[float, float | None]:
+    """Return width/height in inches while preserving the image aspect ratio."""
+    max_width = 5.5
+    max_height = 5.8
+    square_width = 4.2
+    try:
+        from PIL import Image
+
+        with Image.open(local) as img:
+            px_w, px_h = img.size
+    except Exception:
+        return 5.0, None
+
+    if px_w <= 0 or px_h <= 0:
+        return 5.0, None
+
+    aspect = px_w / px_h
+    if 0.85 <= aspect <= 1.18:
+        width = square_width
+    else:
+        width = max_width
+    height = width / aspect
+    if height > max_height:
+        height = max_height
+        width = min(max_width, height * aspect)
+    width = max(2.4, min(max_width, width))
+    height = max(1.2, min(max_height, height))
+    return width, height
 
 
 def docx_figure_image_only(doc: Document, node: dict[str, Any]) -> bool:
@@ -354,7 +386,11 @@ def docx_figure_image_only(doc: Document, node: dict[str, Any]) -> bool:
         return False
     pic_p = doc.add_paragraph()
     pic_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    pic_p.add_run().add_picture(str(local), width=Inches(5.5))
+    width, height = _docx_figure_size(local)
+    kwargs: dict[str, Any] = {"width": Inches(width)}
+    if height is not None:
+        kwargs["height"] = Inches(height)
+    pic_p.add_run().add_picture(str(local), **kwargs)
     return True
 
 

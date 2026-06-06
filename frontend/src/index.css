@@ -310,6 +310,17 @@ body.theme-dark {
     letter-spacing: -0.025em;
     color: var(--text-primary);
   }
+  .app-brand-feedback {
+    @apply text-[10px] leading-tight text-slate-400;
+  }
+  .user-model-trigger {
+    @apply inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium text-slate-500 transition hover:text-slate-800;
+    border-color: color-mix(in srgb, var(--border-subtle) 86%, white);
+    background: rgba(255, 255, 255, 0.68);
+  }
+  .user-model-trigger-active {
+    @apply border-brand/40 text-brand-700 ring-1 ring-brand/20;
+  }
   .icon-button {
     @apply relative inline-flex h-11 w-11 items-center justify-center rounded-xl border text-slate-600 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/25;
     border-color: color-mix(in srgb, var(--border-subtle) 86%, white);

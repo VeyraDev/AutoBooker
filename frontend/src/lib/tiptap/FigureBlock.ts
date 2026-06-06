@@ -11,6 +11,7 @@ export type FigureBlockAttrs = {
   caption: string;
   status: FigureStatus;
   fileUrl: string;
+  svgUrl: string;
   rawAnnotation: string;
   /** 毫秒时间戳，用于破坏浏览器对同路径 PNG 的缓存 */
   fileVersion: number;
@@ -40,6 +41,7 @@ export const FigureBlock = Node.create({
       caption: { default: "" },
       status: { default: "pending" as FigureStatus },
       fileUrl: { default: "" },
+      svgUrl: { default: "" },
       rawAnnotation: { default: "" },
       fileVersion: {
         default: 0,
@@ -63,6 +65,7 @@ export const FigureBlock = Node.create({
             caption: node.getAttribute("data-caption") ?? "",
             status: node.getAttribute("data-status") ?? "pending",
             fileUrl: node.getAttribute("data-file-url") ?? "",
+            svgUrl: node.getAttribute("data-svg-url") ?? "",
             rawAnnotation: node.getAttribute("data-raw-annotation") ?? "",
             fileVersion: Number(node.getAttribute("data-file-version") || 0),
           };
@@ -93,6 +96,7 @@ export const FigureBlock = Node.create({
               caption: attrs.caption ?? "",
               status: attrs.status ?? "pending",
               fileUrl: attrs.fileUrl ?? "",
+              svgUrl: attrs.svgUrl ?? "",
               rawAnnotation: attrs.rawAnnotation ?? "",
               fileVersion: attrs.fileVersion ?? 0,
             },

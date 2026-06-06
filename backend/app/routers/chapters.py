@@ -102,11 +102,16 @@ def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> Non
         db.close()
 
 
-from app.llm.providers import resolve_book_ai_model
+from app.llm.providers import resolve_book_constitution_model, resolve_book_writing_model
 
 
 def _chat_model_for_book(book) -> str:
-    return resolve_book_ai_model(book)
+    """写作、审校、助手等正文相关 LLM 场景。"""
+    return resolve_book_writing_model(book)
+
+
+def _constitution_model_for_book(book) -> str:
+    return resolve_book_constitution_model(book)
 
 
 def _writer_temperature_for_book(book: Book) -> float:
@@ -126,7 +131,7 @@ def ensure_narrative_constitution(
     book = book_service.get_book_or_404(book_id, user, db)
     if (book.narrative_constitution or "").strip():
         return NarrativeEnsureOut(ok=True, generated=False)
-    chat_model = _chat_model_for_book(book)
+    chat_model = _constitution_model_for_book(book)
     _ensure_narrative_constitution_thread(book_id, chat_model)
     db.expire_all()
     book_fresh = db.get(Book, book_id)
@@ -355,7 +360,8 @@ async def generate_chapter_stream(
             )
 
     writer = ChapterWriterAgent()
-    chat_model = _chat_model_for_book(book)
+    writing_model = _chat_model_for_book(book)
+    constitution_model = _constitution_model_for_book(book)
 
     total_chapters = int(
         db.query(func.count(Chapter.id)).filter(Chapter.book_id == book_id).scalar() or 0
@@ -375,7 +381,7 @@ async def generate_chapter_stream(
             db.commit()
             full_text = ""
             try:
-                await asyncio.to_thread(_ensure_narrative_constitution_thread, book_id, chat_model)
+                await asyncio.to_thread(_ensure_narrative_constitution_thread, book_id, constitution_model)
             except Exception:
                 logger.exception("narrative constitution generation failed")
                 row = (
@@ -424,7 +430,7 @@ async def generate_chapter_stream(
                 memory,
                 rag_trimmed,
                 citation_blocks=cite_blocks,
-                model=chat_model,
+                model=writing_model,
                 temperature=memory.get("writer_temperature"),
             ):
                 full_text += token

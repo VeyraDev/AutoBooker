@@ -1,0 +1,22 @@
+分析用户配图意图。输出 JSON：
+{
+  "goal": "show_system_architecture|show_workflow|show_comparison|show_timeline|show_taxonomy|illustrate_concept",
+  "domain": "rag|microservice|transformer|agent|etl|general",
+  "user_task": "generate_diagram",
+  "candidate_diagrams": [
+    {"type": "architecture", "score": 0.86, "reason": "系统组件关系"}
+  ],
+  "constraints": [],
+  "visual_preferences": [],
+  "missing_info": [],
+  "confidence": 0.82,
+  "title": "短图题"
+}
+
+规则：
+- candidate_diagrams 至少 1 项，score 0-1
+- 有明确步骤/流程 → flowchart 候选
+- 有系统/服务/模块/层级 → architecture 候选
+- 版式说明进 visual_preferences，不进 title
+
+描述：{text}

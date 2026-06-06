@@ -61,9 +61,9 @@ def _inject_cjk_fonts(dot_source: str) -> str:
         return dot
     font = _pick_cjk_font()
     defaults = (
-        f'graph [fontname="{font}", fontsize=12, charset="UTF-8"];\n'
-        f'node [fontname="{font}", fontsize=11, charset="UTF-8"];\n'
-        f'edge [fontname="{font}", fontsize=10, charset="UTF-8"];\n'
+        f'graph [fontname="{font}", fontsize=12, charset="UTF-8", ranksep=0.85, nodesep=0.58, splines=ortho, overlap=false, bgcolor="white", pad=0.25];\n'
+        f'node [fontname="{font}", fontsize=11, charset="UTF-8", shape=box, style="rounded,filled", fillcolor="#EFF6FF", color="#2563EB", penwidth=1.35, margin="0.14,0.08"];\n'
+        f'edge [fontname="{font}", fontsize=10, charset="UTF-8", color="#64748B", arrowsize=0.72, penwidth=1.15];\n'
     )
     m = re.match(
         r"(?is)^(\s*(?:strict\s+)?(?:di)?graph\s+(?:\"[^\"]+\"|\w+)?\s*\{)",

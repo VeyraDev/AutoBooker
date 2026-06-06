@@ -10,26 +10,24 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.llm.providers import resolve_book_ai_model
+from app.llm.providers import resolve_book_writing_model
 from app.models.book import Book
 from app.models.figure import Figure, FigureSource, FigureStatus, FigureType
 from app.services.figures.pipeline.orchestrator import classify_and_persist
 from app.services.figures.render.dispatcher import render_figure
-from app.services.figures.render.svg_export import public_svg_url, svg_path_for_png
+from app.services.figures.storage.manager import figure_storage
 
 
 def chat_model_for_book(book: Book) -> str:
-    return resolve_book_ai_model(book)
+    return resolve_book_writing_model(book)
 
 
-def figure_output_path(book_id: UUID, figure_id: UUID) -> Path:
-    base = settings.figures_path / str(book_id)
-    base.mkdir(parents=True, exist_ok=True)
-    return base / f"{figure_id.hex}.png"
+def figure_output_path(book_id: UUID, figure_id: UUID, *, chapter_index: int = 0) -> Path:
+    return figure_storage.png_path(book_id, chapter_index, figure_id)
 
 
-def public_url(book_id: UUID, filename: str) -> str:
-    return f"/static/figures/{book_id}/{filename}"
+def public_url(book_id: UUID, chapter_index: int, figure_id: UUID, *, ext: str = "png") -> str:
+    return figure_storage.public_url(book_id, chapter_index, figure_id, ext=ext)
 
 
 def generate_figure_asset(
@@ -76,8 +74,9 @@ def generate_figure_asset(
     if (fig.renderer or "").strip().lower() == "need_data":
         raise ValueError("数据图缺少可解析的数值，请编辑标注后重试")
 
-    out_path = figure_output_path(book.id, fig.id)
-    svg_path = svg_path_for_png(out_path)
+    chapter_id = fig.chapter_index
+    out_path = figure_output_path(book.id, fig.id, chapter_index=chapter_id)
+    svg_path = figure_storage.svg_path(book.id, chapter_id, fig.id)
     for p in (out_path, svg_path):
         if p.is_file():
             p.unlink()
@@ -88,11 +87,28 @@ def generate_figure_asset(
     if not png.is_file():
         raise RuntimeError(f"图表文件未写入: {png}")
 
+    clf = fig.classification_json if isinstance(fig.classification_json, dict) else {}
+    figure_storage.save_assets(
+        book_id=book.id,
+        chapter_id=chapter_id,
+        figure_id=fig.id,
+        dsl=clf.get("dsl_json"),
+        meta={
+            "figure_id": str(fig.id),
+            "book_id": str(book.id),
+            "chapter_id": chapter_id,
+            "source_prompt": description,
+            "diagram_type": clf.get("diagram_type") or clf.get("diagram_subtype"),
+            "renderer": fig.renderer,
+            "version": 1,
+        },
+    )
+
     fig.render_source = render_source
     fig.file_path = str(png.resolve())
-    fig.file_url = public_url(book.id, png.name)
+    fig.file_url = public_url(book.id, chapter_id, fig.id, ext="png")
     if svg_path.is_file():
-        fig.svg_url = public_svg_url(book.id, fig.id.hex)
+        fig.svg_url = public_url(book.id, chapter_id, fig.id, ext="svg")
     else:
         fig.svg_url = None
     fig.status = FigureStatus.generated
@@ -109,13 +125,17 @@ def save_uploaded_figure(fig: Figure, book_id: UUID, content: bytes, filename: s
     ext = Path(filename).suffix.lower() or ".png"
     if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
         ext = ".png"
-    base = settings.figures_path / str(book_id)
-    base.mkdir(parents=True, exist_ok=True)
-    name = f"{fig.id.hex}{ext}"
-    dest = base / name
+    dest = figure_storage.png_path(book_id, fig.chapter_index, fig.id)
+    if ext != ".png":
+        dest = dest.with_suffix(ext)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(content)
+    old_svg = figure_storage.svg_path(book_id, fig.chapter_index, fig.id)
+    if old_svg.is_file():
+        old_svg.unlink()
     fig.file_path = str(dest)
-    fig.file_url = public_url(book_id, name)
+    fig.file_url = public_url(book_id, fig.chapter_index, fig.id, ext=dest.suffix.lstrip("."))
+    fig.svg_url = None
     fig.status = FigureStatus.uploaded
     fig.updated_at = datetime.now(timezone.utc)
     db.commit()

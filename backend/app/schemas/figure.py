@@ -32,6 +32,7 @@ class FigureListItem(BaseModel):
     chapter: int
     position_hint: str | None
     file_url: str | None = None
+    svg_url: str | None = None
     raw_annotation: str | None = None
 
 

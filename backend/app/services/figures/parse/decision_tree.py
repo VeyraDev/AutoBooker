@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from app.config import settings
 from app.llm.client import LLMClient
 from app.services.figure_render.figure_structure import infer_structured_spec
@@ -19,6 +21,13 @@ _PROMPT = """解析决策树 JSON：
 """
 
 
+def _compact(text: str, *, limit: int = 36) -> str:
+    raw = re.sub(r"\s+", " ", str(text or "").strip()).strip(" ：:，,。")
+    if len(raw) <= limit:
+        return raw
+    return raw[:limit].rstrip(" ：:，,。") + "…"
+
+
 def _branches_to_graph(data: dict) -> dict:
     root = str(data.get("root") or data.get("root_question") or "根节点").strip()
     branches = data.get("branches") or []
@@ -32,18 +41,18 @@ def _branches_to_graph(data: dict) -> dict:
         tags = br.get("tags") or br.get("benefit_tags") or []
         cid, nid = f"c{i}", f"n{i}"
         if label:
-            nodes.append({"id": cid, "label": label[:36], "shape": "box", "level": 1, "column": i})
+            nodes.append({"id": cid, "label": _compact(label, limit=42), "shape": "box", "level": 1, "column": i})
             edges.append({"from": "root", "to": cid})
         if target:
             choice = target if target.startswith("选择") else f"选择 {target}"
-            nodes.append({"id": nid, "label": choice[:28], "shape": "rounded", "level": 2, "column": i})
+            nodes.append({"id": nid, "label": _compact(choice, limit=36), "shape": "rounded", "level": 2, "column": i})
             edges.append({"from": cid if label else "root", "to": nid})
         if isinstance(tags, list):
-            for j, tag in enumerate(tags[:6]):
+            for j, tag in enumerate(tags[:4]):
                 tid = f"t{i}_{j}"
                 nodes.append({
                     "id": tid,
-                    "label": str(tag)[:10],
+                    "label": _compact(str(tag), limit=18),
                     "shape": "tag",
                     "level": 3,
                     "column": i,

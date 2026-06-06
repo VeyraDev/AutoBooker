@@ -24,6 +24,7 @@ function diagramToFigure(attrs: Record<string, unknown>): Record<string, unknown
       caption: code.slice(0, 200),
       status: "pending",
       fileUrl: "",
+      svgUrl: "",
       rawAnnotation: code,
     } satisfies Partial<FigureBlockAttrs>,
   };

@@ -125,6 +125,11 @@ class LLMClient:
                 raise RuntimeError("embedding failed with no error recorded")
         return out
 
+    @staticmethod
+    def _openai_uses_max_completion_tokens(model_name: str) -> bool:
+        m = model_name.lower()
+        return m.startswith(("gpt-5", "o1", "o3", "o4"))
+
     def _chat_openai(
         self,
         client: OpenAI,
@@ -134,12 +139,16 @@ class LLMClient:
         max_tokens: int,
         temperature: float,
     ) -> str:
-        resp = client.chat.completions.create(
-            model=model_name,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if self._openai_uses_max_completion_tokens(model_name):
+            kwargs["max_completion_tokens"] = max_tokens
+        else:
+            kwargs["max_tokens"] = max_tokens
+        resp = client.chat.completions.create(**kwargs)
         choice = resp.choices[0].message
         return (choice.content or "").strip()
 

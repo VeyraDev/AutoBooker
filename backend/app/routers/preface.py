@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.preface_writer import PrefaceWriterAgent
 from app.database import get_db
-from app.llm.providers import resolve_book_ai_model
+from app.llm.providers import resolve_book_writing_model
 from app.models.book import Book
 from app.models.user import User
 from app.routers.auth import get_current_user
@@ -88,7 +88,7 @@ async def generate_preface_stream(
         raise HTTPException(400, "本书未启用前言")
 
     writer = PrefaceWriterAgent()
-    model = resolve_book_ai_model(book)
+    model = resolve_book_writing_model(book)
     target_words = int(pf.get("target_words") or 3000)
 
     async def event_stream():

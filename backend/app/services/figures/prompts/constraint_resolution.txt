@@ -1,0 +1,12 @@
+解析 references 与 constraints，输出展开后的 relations/events。不要输出 nodes/坐标。
+
+Semantic IR：
+{semantic_ir_json}
+
+输出 JSON：
+{"relations": [...], "events": [...], "resolved_references": [...]}
+
+规则：
+- ordinal_selection 展开为多条 relations
+- async_notification 保留 dashed 样式
+- 不得把「前N个」做成节点名

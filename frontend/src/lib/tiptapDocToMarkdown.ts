@@ -29,7 +29,11 @@ function blockToMd(node: unknown, depth = 0): string {
   const n = node as Record<string, unknown>;
   const t = n.type;
 
-  if (t === "paragraph") return inlineToMd(n.content as unknown[]);
+  if (t === "paragraph") {
+    const pid = String((n.attrs as Record<string, unknown>)?.paragraphId ?? "").trim();
+    const body = inlineToMd(n.content as unknown[]);
+    return pid ? `<!-- pid:${pid} -->\n${body}` : body;
+  }
   if (t === "heading") {
     const level = Number((n.attrs as Record<string, unknown>)?.level ?? 1);
     const hashes = "#".repeat(Math.max(1, Math.min(6, level)));

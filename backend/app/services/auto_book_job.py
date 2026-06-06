@@ -16,7 +16,11 @@ from app.agents.outline_agent import OutlineAgent
 from app.constants.style_types import StyleType
 from app.database import SessionLocal
 from app.llm.client import LLMClient
-from app.llm.providers import resolve_book_ai_model
+from app.llm.providers import (
+    resolve_book_constitution_model,
+    resolve_book_outline_model,
+    resolve_book_writing_model,
+)
 from app.models.book import Book, BookStatus, CitationStyle
 from app.models.book_job import BookJob, BookJobStatus, BookJobStep
 from app.models.chapter import Chapter, ChapterStatus
@@ -174,14 +178,16 @@ def run_auto_book_job(job_id: UUID) -> None:
 
         book.status = BookStatus.auto_generating
         db.commit()
-        chat_model = resolve_book_ai_model(book)
+        outline_model = resolve_book_outline_model(book)
+        constitution_model = resolve_book_constitution_model(book)
+        writing_model = resolve_book_writing_model(book)
 
         _update_job(db, job, step=BookJobStep.setting, pct=10)
-        _infer_book_settings(book, chat_model)
+        _infer_book_settings(book, writing_model)
         db.commit()
 
         _update_job(db, job, step=BookJobStep.narrative, pct=15)
-        _ensure_narrative_constitution_thread(book.id, chat_model)
+        _ensure_narrative_constitution_thread(book.id, constitution_model)
         db.expire_all()
         book = db.get(Book, job.book_id)
 
@@ -214,7 +220,7 @@ def run_auto_book_job(job_id: UUID) -> None:
             "topic_tags": list(book.topic_tags or []),
             "user_material": (book.user_material or "").strip(),
         }
-        outline = OutlineAgent().generate(cfg, snippets, model=chat_model)
+        outline = OutlineAgent().generate(cfg, snippets, model=outline_model)
         db.query(Chapter).filter(Chapter.book_id == book.id).delete()
         for ch in outline.get("chapters", []):
             meta = {
@@ -250,7 +256,7 @@ def run_auto_book_job(job_id: UUID) -> None:
         for i, ch in enumerate(chapters):
             pct = 40 + int(55 * (i + 1) / max(n, 1))
             _update_job(db, job, step=BookJobStep.writing, pct=min(pct, 95))
-            asyncio.run(_write_chapter_sync(book.id, ch.index, chat_model))
+            asyncio.run(_write_chapter_sync(book.id, ch.index, writing_model))
 
         _update_job(db, job, step=BookJobStep.bibliography, pct=98)
         sync_bibliography_chapter(db, book)

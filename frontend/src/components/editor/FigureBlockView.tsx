@@ -96,6 +96,7 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
   const [busy, setBusy] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
+  const [svgFailed, setSvgFailed] = useState(false);
   /** 本地刷新序号，生成成功后立即换图（不依赖 attrs 落盘或 updated_at） */
   const [imgEpoch, setImgEpoch] = useState(() => Number(node.attrs.fileVersion ?? 0) || Date.now());
   /** 生成后拉取二进制，彻底绕过浏览器对同 URL 的磁盘缓存 */
@@ -107,12 +108,14 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
   const caption = String(node.attrs.caption ?? "");
   const status = String(node.attrs.status ?? "pending");
   const fileUrl = String(node.attrs.fileUrl ?? "");
+  const svgUrl = String(node.attrs.svgUrl ?? "");
   const fileVersion = Number(node.attrs.fileVersion ?? 0);
   const rawAnnotation = String(node.attrs.rawAnnotation ?? "");
   const isScreenshot = figureType === "screenshot";
   const label = useDisplayFigureLabel(figureId, figureNumber, chapterIndex);
   const cacheKey = imgEpoch || fileVersion || undefined;
-  const remoteSrc = resolveFigureUrl(fileUrl, cacheKey);
+  const displayUrl = svgUrl && !svgFailed ? svgUrl : fileUrl;
+  const remoteSrc = resolveFigureUrl(displayUrl, cacheKey);
   const imgSrc = blobSrc ?? remoteSrc;
   const hasFile =
     Boolean(imgSrc) &&
@@ -138,35 +141,6 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
     });
   }, []);
 
-  useEffect(() => {
-    const v = Number(node.attrs.fileVersion ?? 0);
-    if (v > 0) setImgEpoch(v);
-  }, [node.attrs.fileVersion]);
-
-  useEffect(() => {
-    if (!fileUrl) return;
-    if (!(status === "generated" || status === "uploaded" || status === "approved")) return;
-    const url = resolveFigureUrl(fileUrl, imgEpoch || fileVersion || Date.now());
-    if (!url) return;
-    let cancelled = false;
-    void loadFreshImageBlob(url).catch(() => {
-      if (!cancelled) setBlobSrc(null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [fileUrl, fileVersion, imgEpoch, status, loadFreshImageBlob]);
-
-  useEffect(() => {
-    setImgFailed(false);
-  }, [fileUrl, fileVersion, imgEpoch, status, blobSrc]);
-
-  useEffect(() => {
-    return () => {
-      if (blobSrc?.startsWith("blob:")) URL.revokeObjectURL(blobSrc);
-    };
-  }, [blobSrc]);
-
   const applyPatch = useCallback(
     (patch: Record<string, unknown>) => {
       updateAttributes(patch);
@@ -174,6 +148,54 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
     },
     [figureId, onFigureUpdated, updateAttributes],
   );
+
+  useEffect(() => {
+    const v = Number(node.attrs.fileVersion ?? 0);
+    if (v > 0) setImgEpoch(v);
+  }, [node.attrs.fileVersion]);
+
+  useEffect(() => {
+    setSvgFailed(false);
+  }, [figureId, fileUrl, svgUrl]);
+
+  useEffect(() => {
+    if (!displayUrl) return;
+    if (!(status === "generated" || status === "uploaded" || status === "approved")) return;
+    const version = imgEpoch || fileVersion || Date.now();
+    const url = resolveFigureUrl(displayUrl, version);
+    if (!url) return;
+    const canFallbackToPng = Boolean(svgUrl && displayUrl === svgUrl && fileUrl);
+    const fallbackUrl = canFallbackToPng ? resolveFigureUrl(fileUrl, version) : "";
+    let cancelled = false;
+    void loadFreshImageBlob(url).catch(() => {
+      if (cancelled) return;
+      if (fallbackUrl) {
+        const nextVersion = Date.now();
+        setSvgFailed(true);
+        setImgFailed(false);
+        setImgEpoch(nextVersion);
+        applyPatch({ svgUrl: "", fileVersion: nextVersion });
+        void loadFreshImageBlob(resolveFigureUrl(fileUrl, nextVersion)).catch(() => {
+          if (!cancelled) setBlobSrc(null);
+        });
+        return;
+      }
+      setBlobSrc(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayUrl, fileUrl, fileVersion, imgEpoch, status, svgUrl, loadFreshImageBlob, applyPatch]);
+
+  useEffect(() => {
+    setImgFailed(false);
+  }, [displayUrl, fileVersion, imgEpoch, status]);
+
+  useEffect(() => {
+    return () => {
+      if (blobSrc?.startsWith("blob:")) URL.revokeObjectURL(blobSrc);
+    };
+  }, [blobSrc]);
 
   async function handleGenerate() {
     if (!bookId || !figureId) {
@@ -186,18 +208,37 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
       const fig = await generateFigure(bookId, figureId);
       const nextVersion = Date.now();
       setImgEpoch(nextVersion);
-      const freshUrl = resolveFigureUrl(fig.file_url ?? "", nextVersion);
+      setImgFailed(false);
+      setSvgFailed(false);
+      const freshUrl = resolveFigureUrl(fig.svg_url || fig.file_url || "", nextVersion);
       applyPatch({
         status: fig.status,
         fileUrl: fig.file_url ?? "",
+        svgUrl: fig.svg_url || "",
         figureNumber: fig.figure_number ?? figureNumber,
         caption: fig.caption ?? caption,
         fileVersion: nextVersion,
       });
       if (freshUrl) {
+        let previewLoaded = false;
         try {
           await loadFreshImageBlob(freshUrl);
+          previewLoaded = true;
         } catch {
+          if (fig.svg_url && fig.file_url) {
+            const fallbackVersion = Date.now();
+            setSvgFailed(true);
+            setImgEpoch(fallbackVersion);
+            applyPatch({ svgUrl: "", fileVersion: fallbackVersion });
+            try {
+              await loadFreshImageBlob(resolveFigureUrl(fig.file_url, fallbackVersion));
+              previewLoaded = true;
+            } catch {
+              previewLoaded = false;
+            }
+          }
+        }
+        if (!previewLoaded) {
           toast("图表已生成，预览加载较慢，可点击重新生成刷新", { icon: "ℹ️" });
         }
       }
@@ -217,10 +258,13 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
       const fig = await uploadFigure(bookId, figureId, file);
       const nextVersion = Date.now();
       setImgEpoch(nextVersion);
+      setImgFailed(false);
+      setSvgFailed(false);
       const freshUrl = resolveFigureUrl(fig.file_url ?? "", nextVersion);
       applyPatch({
         status: fig.status,
         fileUrl: fig.file_url ?? "",
+        svgUrl: fig.svg_url || "",
         figureNumber: fig.figure_number ?? figureNumber,
         fileVersion: nextVersion,
       });
@@ -303,12 +347,26 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
         <div className="relative flex min-h-[140px] items-center justify-center p-4 pt-6">
           {showImage ? (
             <img
-              key={`${figureId}-${imgEpoch}`}
+              key={`${figureId}-${imgEpoch}-${displayUrl}`}
               src={imgSrc}
               alt={diagramDesc || label}
               className="max-h-[360px] w-full cursor-zoom-in object-contain"
               onDoubleClick={() => setFullscreen(true)}
-              onError={() => setImgFailed(true)}
+              onError={() => {
+                if (svgUrl && displayUrl === svgUrl && fileUrl) {
+                  const fallbackVersion = Date.now();
+                  setSvgFailed(true);
+                  setImgFailed(false);
+                  setImgEpoch(fallbackVersion);
+                  setBlobSrc((prev) => {
+                    if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+                    return null;
+                  });
+                  applyPatch({ svgUrl: "", fileVersion: fallbackVersion });
+                  return;
+                }
+                setImgFailed(true);
+              }}
             />
           ) : (
             <div className="flex w-full flex-col items-center gap-3 rounded-lg border border-dashed border-slate-300 bg-slate-100/80 px-4 py-8 text-center">

@@ -99,7 +99,15 @@ def resolve_renderer(
 
 
 def has_numeric_data_signal(text: str) -> bool:
-    return bool(re.search(r"\d+\s*%|\d+(\.\d+)?\s*[,，、]|\|\s*[^|]+\|", text))
+    """Detect explicit numeric data, not just a casual number in prose."""
+    t = text or ""
+    return bool(
+        re.search(r"\d+(?:\.\d+)?\s*%", t)
+        or re.search(r"\d{4}\s*年[^\n。；;]*\d+(?:\.\d+)?", t)
+        or re.search(r"[:：]\s*\d+(?:\.\d+)?", t)
+        or re.search(r"\|\s*[^|]+\s*\|", t)
+        or len(re.findall(r"\d+(?:\.\d+)?", t)) >= 4
+    )
 
 
 def legacy_tag_to_figure_type(tag: str) -> str:
@@ -159,7 +167,7 @@ def build_classification(
             "must_include": [],
             "must_avoid": ["复杂代码", "照片风格"] if image_type != "scene_illustration" else [],
             "layout": "left_to_right",
-            "style": "white background, minimal editorial book diagram, clean vector lines",
+            "style": "white background, unified blue-gray color blocks, subtle icon badges, generous spacing, clean vector lines",
             "output_format": "png",
         },
     }

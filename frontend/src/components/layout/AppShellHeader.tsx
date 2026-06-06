@@ -5,6 +5,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 
 import FeedbackDialog from "@/components/common/FeedbackDialog";
 import NewBookDialog from "@/components/common/NewBookDialog";
+import UserModelMenu, { UserModelTrigger } from "@/components/layout/UserModelMenu";
 import { listNotifications, markNotificationRead } from "@/api/notifications";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -25,7 +26,9 @@ export default function AppShellHeader() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
 
   const { data: noticeData } = useQuery({
@@ -54,15 +57,18 @@ export default function AppShellHeader() {
   }, []);
 
   useEffect(() => {
-    if (!userMenuOpen) return;
+    if (!userMenuOpen && !modelMenuOpen) return;
     function onDoc(e: MouseEvent) {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setUserMenuOpen(false);
       }
+      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
+        setModelMenuOpen(false);
+      }
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [userMenuOpen]);
+  }, [userMenuOpen, modelMenuOpen]);
 
   function onLogout() {
     logout();
@@ -75,9 +81,17 @@ export default function AppShellHeader() {
       <header className={`app-header ${isScrolled ? "app-header-scrolled" : ""}`}>
         <div className="mx-auto flex w-full max-w-[92rem] items-center justify-between gap-5 px-6 py-4 sm:px-8">
           <div className="flex shrink-0 items-center gap-2">
-            <NavLink to="/app/home" className="flex items-center gap-2" aria-label="前往主页">
-              <span className="app-brand-mark">A</span>
-              <span className="app-brand-title">AutoBooker</span>
+            <NavLink to="/app/home" className="flex items-start gap-2" aria-label="前往主页">
+              <span className="app-brand-mark shrink-0">A</span>
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <span className="app-brand-title">AutoBooker</span>
+                <span className="app-brand-feedback">
+                  意见反馈：
+                  <a href="mailto:13523099777@163.com" className="hover:text-brand">
+                    13523099777@163.com
+                  </a>
+                </span>
+              </div>
             </NavLink>
           </div>
 
@@ -164,19 +178,23 @@ export default function AppShellHeader() {
               ) : null}
             </div>
 
-            <div className="relative" ref={userMenuRef}>
-              <button
-                type="button"
-                className={`icon-button ${userMenuOpen ? "ring-2 ring-brand/30" : ""}`}
-                aria-expanded={userMenuOpen}
-                aria-haspopup="menu"
-                aria-label="账户菜单"
-                title={user?.email ?? "账户"}
-                onClick={() => setUserMenuOpen((v) => !v)}
-              >
-                <UserRound className="h-4.5 w-4.5" />
-              </button>
-              {userMenuOpen ? (
+            <div className="flex flex-col items-center gap-0.5">
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  type="button"
+                  className={`icon-button ${userMenuOpen ? "ring-2 ring-brand/30" : ""}`}
+                  aria-expanded={userMenuOpen}
+                  aria-haspopup="menu"
+                  aria-label="账户菜单"
+                  title={user?.email ?? "账户"}
+                  onClick={() => {
+                    setModelMenuOpen(false);
+                    setUserMenuOpen((v) => !v);
+                  }}
+                >
+                  <UserRound className="h-4.5 w-4.5" />
+                </button>
+                {userMenuOpen ? (
                 <div
                   role="menu"
                   className="absolute right-0 top-[calc(100%+8px)] z-50 w-56 rounded-xl border border-slate-200 bg-white py-3 shadow-xl"
@@ -219,7 +237,18 @@ export default function AppShellHeader() {
                     退出登录
                   </button>
                 </div>
-              ) : null}
+                ) : null}
+              </div>
+              <div className="relative" ref={modelMenuRef}>
+                <UserModelTrigger
+                  open={modelMenuOpen}
+                  onToggle={() => {
+                    setUserMenuOpen(false);
+                    setModelMenuOpen((v) => !v);
+                  }}
+                />
+                <UserModelMenu open={modelMenuOpen} onClose={() => setModelMenuOpen(false)} />
+              </div>
             </div>
 
             <button

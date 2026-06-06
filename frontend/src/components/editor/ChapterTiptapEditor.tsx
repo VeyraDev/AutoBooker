@@ -16,7 +16,6 @@ import type { EditorView } from "@tiptap/pm/view";
 import EditorErrorBoundary from "@/components/common/EditorErrorBoundary";
 import { ANNOTATION_TEST_RE } from "@/lib/annotationPatterns";
 import {
-  figureFileVersion,
   refreshChapterFigures,
   syncChapterFigures,
   type FigureStatus,
@@ -40,6 +39,7 @@ import type { EditorAiPreviewPayload } from "@/types/aiPreview";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import { tiptapDocToMarkdown } from "@/lib/tiptapDocToMarkdown";
 import { isRichMarkdown, markdownToTiptapDoc } from "@/lib/markdownToTiptapDoc";
+import { hasUnlinkedFigureBlocks, syncFigureBlocksWithServer } from "@/lib/syncFigureBlocksWithServer";
 import { normalizeGfmMarkdown } from "@/lib/normalizeGfmMarkdown";
 import { plainTextMarkdownToTiptapDoc, shouldParseAsMarkdown } from "@/lib/plainTextMarkdownToTiptap";
 import type { Chapter } from "@/types/chapter";
@@ -70,6 +70,7 @@ export type ChapterEditorHandle = {
     fig: {
       figure_id: string;
       file_url: string | null;
+      svg_url?: string | null;
       figure_number: string | null;
       status: string;
       caption: string | null;
@@ -113,6 +114,9 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
   const [headingMenuOpen, setHeadingMenuOpen] = useState(false);
   const figureSyncAttemptRef = useRef<string | null>(null);
   const figureSyncInFlightRef = useRef(false);
+  const figureRefreshDoneRef = useRef<string | null>(null);
+  const figureRefreshInFlightRef = useRef(false);
+  const skipChangeEmitRef = useRef(false);
   const figureRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formatRecoveredChapterRef = useRef<string | null>(null);
   const [figureDocRevision, setFigureDocRevision] = useState(0);
@@ -149,11 +153,14 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     return s.replace(/\s+/g, " ").trim();
   }
 
-  function findTextRange(needle: string): { from: number; to: number } | null {
+  type AnchorRange = { from: number; to: number; confidence: number; strategy: string };
+
+  function findTextRange(needle: string, bounds?: { from: number; to: number }): { from: number; to: number } | null {
     if (!editor || !needle) return null;
     let found: { from: number; to: number } | null = null;
     editor.state.doc.descendants((node, pos) => {
       if (found || !node.isText || !node.text) return;
+      if (bounds && (pos < bounds.from || pos > bounds.to)) return;
       const i = node.text.indexOf(needle);
       if (i >= 0) {
         found = { from: pos + i, to: pos + i + needle.length };
@@ -162,43 +169,102 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     return found;
   }
 
+  function paragraphRangeById(paragraphId?: string | null): { from: number; to: number; text: string } | null {
+    if (!editor || !paragraphId) return null;
+    let found: { from: number; to: number; text: string } | null = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (found || !node.isTextblock) return;
+      if (String(node.attrs?.paragraphId ?? "") !== paragraphId) return;
+      found = { from: pos, to: pos + node.nodeSize, text: node.textContent };
+    });
+    return found;
+  }
+
+  function paragraphRangeByIndex(index?: number | null): { from: number; to: number; text: string } | null {
+    if (!editor || index == null || index < 0) return null;
+    let found: { from: number; to: number; text: string } | null = null;
+    let current = -1;
+    editor.state.doc.descendants((node, pos) => {
+      if (found || !node.isTextblock) return;
+      const text = node.textContent.trim();
+      if (!text) return;
+      current += 1;
+      if (current === index) found = { from: pos, to: pos + node.nodeSize, text: node.textContent };
+    });
+    return found;
+  }
+
+  function findFuzzyRange(quote: string, bounds?: { from: number; to: number }): AnchorRange | null {
+    if (!editor || quote.trim().length < 8) return null;
+    const q = normalizeMatchText(quote);
+    let best: AnchorRange | null = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (!node.isTextblock || (bounds && (pos < bounds.from || pos > bounds.to))) return;
+      const text = node.textContent;
+      if (!text.trim()) return;
+      const norm = normalizeMatchText(text);
+      const idx = norm.indexOf(q.slice(0, Math.min(q.length, 60)));
+      if (idx >= 0) {
+        const score = Math.min(0.78, 0.58 + Math.min(q.length, 80) / 400);
+        if (!best || score > best.confidence) {
+          best = { from: pos + 1 + idx, to: pos + 1 + idx + Math.min(q.length, text.length - idx), confidence: score, strategy: "fuzzy_textblock" };
+        }
+      }
+    });
+    return best;
+  }
+
   function resolveQuoteRange(quote: string, charOffset?: number | null): { from: number; to: number } | null {
+    const range = resolveIssueAnchor({ quote, char_offset: charOffset, kind: "replace", suggestion: "" });
+    return range ? { from: range.from, to: range.to } : null;
+  }
+
+  function resolveIssueAnchor(payload: EditorAiPreviewPayload): AnchorRange | null {
     if (!editor) return null;
-    const q = quote.trim();
+    const q = payload.quote.trim();
     if (!q) {
       const { from } = editor.state.selection;
-      return { from, to: from };
+      return { from, to: from, confidence: 1, strategy: "cursor" };
     }
-    if (charOffset != null && charOffset >= 0) {
+
+    const byPid = paragraphRangeById(payload.paragraph_id);
+    if (byPid) {
+      const found = findTextRange(q, byPid);
+      if (found) return { ...found, confidence: 0.96, strategy: "paragraph_id_quote" };
+      const fuzzy = findFuzzyRange(q, byPid);
+      if (fuzzy) return { ...fuzzy, confidence: Math.max(fuzzy.confidence, 0.7), strategy: "paragraph_id_fuzzy" };
+      return { from: byPid.from + 1, to: byPid.from + 1, confidence: 0.48, strategy: "paragraph_id_scroll" };
+    }
+
+    if (payload.char_start != null && payload.char_start >= 0) {
       const full = editor.state.doc.textBetween(0, editor.state.doc.content.size, "\n");
-      const startSearch = Math.max(0, charOffset - 40);
+      const startSearch = Math.max(0, payload.char_start - 40);
       const idx = full.indexOf(q, startSearch);
       if (idx >= 0) {
         const found = findTextRange(q);
-        if (found) return found;
+        if (found) return { ...found, confidence: 0.82, strategy: "offset_quote" };
       }
     }
+
     const { from, to, empty } = editor.state.selection;
     const selected = empty ? "" : editor.state.doc.textBetween(from, to, "\n");
-    if (!empty && normalizeMatchText(selected) === normalizeMatchText(q)) return { from, to };
+    if (!empty && normalizeMatchText(selected) === normalizeMatchText(q)) return { from, to, confidence: 0.9, strategy: "selection" };
+
+    const byIndex = paragraphRangeByIndex(payload.paragraph_index);
+    if (byIndex) {
+      const found = findTextRange(q, byIndex);
+      if (found) return { ...found, confidence: 0.8, strategy: "paragraph_index_quote" };
+      const fuzzy = findFuzzyRange(q, byIndex);
+      if (fuzzy) return { ...fuzzy, confidence: Math.max(fuzzy.confidence, 0.62), strategy: "paragraph_index_fuzzy" };
+    }
+
     let found = findTextRange(q);
+    if (found) return { ...found, confidence: 0.74, strategy: "full_quote" };
     if (!found && q.length > 24) {
       found = findTextRange(q.slice(0, Math.min(80, q.length)));
+      if (found) return { ...found, confidence: 0.62, strategy: "partial_quote" };
     }
-    if (!found) {
-      const compact = normalizeMatchText(q);
-      if (compact.length >= 12) {
-        editor.state.doc.descendants((node, pos) => {
-          if (found || !node.isText || !node.text) return;
-          const norm = normalizeMatchText(node.text);
-          const i = norm.indexOf(compact);
-          if (i >= 0) {
-            found = { from: pos + i, to: pos + i + compact.length };
-          }
-        });
-      }
-    }
-    return found;
+    return findFuzzyRange(q);
   }
 
   function safeSetContent(content: string | Record<string, unknown>): void {
@@ -232,13 +298,17 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
 
   function showInlinePreview(payload: EditorAiPreviewPayload): boolean {
     if (!editor) return false;
-    const range = resolveQuoteRange(payload.quote.trim(), payload.char_offset);
+    const range = resolveIssueAnchor(payload);
     if (!range) return false;
     editor.commands.setAiInlinePreview({
-      ...range,
+      from: range.from,
+      to: range.to,
       quote: payload.quote,
       suggestion: payload.suggestion,
       kind: payload.kind,
+      application_id: payload.application_id,
+      issue_id: payload.issue_id,
+      onAccepted: payload.onAccepted,
     });
     requestAnimationFrame(() => {
       editor.view.dom.querySelector(".ai-inline-widget")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -263,6 +333,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
       },
     },
     onUpdate: ({ editor: ed }) => {
+      if (skipChangeEmitRef.current) return;
       const json = ed.getJSON() as unknown as Record<string, unknown>;
       const md = tiptapDocToMarkdown(json);
       onChange({
@@ -314,10 +385,13 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
           editor.getJSON() as unknown as Record<string, unknown>,
         )
           .then((items) => {
-            for (const fig of items) {
-              editor.commands.updateFigureBlockAttrs(fig.id, {
-                figureNumber: fig.figure_number ?? "",
-              });
+            if (items.length) {
+              skipChangeEmitRef.current = true;
+              try {
+                syncFigureBlocksWithServer(editor, items);
+              } finally {
+                skipChangeEmitRef.current = false;
+              }
             }
             setFigureDocRevision((r) => r + 1);
           })
@@ -335,6 +409,11 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
         if (!preview) return;
         applyPreviewContent(preview);
         editor.commands.clearAiInlinePreview();
+        if (preview.onAccepted) {
+          void Promise.resolve(preview.onAccepted()).catch(() => {
+            toast.error("修改已应用，但审校状态确认失败");
+          });
+        }
         toast.success("已应用");
       },
       onReject: () => {
@@ -352,6 +431,8 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
   useEffect(() => {
     figureSyncAttemptRef.current = null;
     figureSyncInFlightRef.current = false;
+    figureRefreshDoneRef.current = null;
+    figureRefreshInFlightRef.current = false;
     formatRecoveredChapterRef.current = null;
   }, [chapter.id]);
 
@@ -381,11 +462,17 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     const hasAnnotation = ANNOTATION_TEST_RE.test(text);
     if (!hasAnnotation) return;
 
-    const editorJson = JSON.stringify(editor.getJSON());
-    if (editorJson.includes('"figureBlock"')) return;
-
-    const tjStr = JSON.stringify(c?.tiptap_json ?? {});
-    if (tjStr.includes('"figureBlock"')) return;
+    const editorDoc = editor.getJSON() as unknown as Record<string, unknown>;
+    const storedDoc =
+      c?.tiptap_json && typeof c.tiptap_json === "object"
+        ? (c.tiptap_json as Record<string, unknown>)
+        : null;
+    if (!hasUnlinkedFigureBlocks(editorDoc) && !hasUnlinkedFigureBlocks(storedDoc)) {
+      const editorJson = JSON.stringify(editorDoc);
+      if (editorJson.includes('"figureBlock"')) return;
+      const tjStr = JSON.stringify(storedDoc ?? {});
+      if (tjStr.includes('"figureBlock"')) return;
+    }
 
     const syncKey = `${chapter.id}:${text.length}`;
     if (figureSyncAttemptRef.current === syncKey || figureSyncInFlightRef.current) return;
@@ -407,27 +494,41 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
 
   useEffect(() => {
     if (!bookId || !chapterIndex || !editor || readOnly) return;
+    if (figureRefreshDoneRef.current === chapter.id || figureRefreshInFlightRef.current) return;
+
     const tj = (chapter.content as Record<string, unknown> | null | undefined)?.tiptap_json;
-    if (!tj || !JSON.stringify(tj).includes('"figureBlock"')) return;
+    const text = typeof (chapter.content as Record<string, unknown> | null)?.text === "string"
+      ? String((chapter.content as Record<string, unknown>).text)
+      : "";
+    const hasBlocks =
+      (tj && JSON.stringify(tj).includes('"figureBlock"')) || ANNOTATION_TEST_RE.test(text);
+    if (!hasBlocks) {
+      figureRefreshDoneRef.current = chapter.id;
+      return;
+    }
+
+    figureRefreshInFlightRef.current = true;
     void refreshChapterFigures(
       bookId,
       chapterIndex,
       editor.getJSON() as unknown as Record<string, unknown>,
     )
       .then((items) => {
-        for (const fig of items) {
-          editor.commands.updateFigureBlockAttrs(fig.id, {
-            figureNumber: fig.figure_number ?? "",
-            fileUrl: fig.file_url ?? "",
-            status: fig.status as FigureStatus,
-            caption: fig.caption ?? "",
-            figureType: fig.figure_type as FigureType,
-            fileVersion: figureFileVersion(fig.updated_at, Date.now()),
-          });
+        if (items.length) {
+          skipChangeEmitRef.current = true;
+          try {
+            syncFigureBlocksWithServer(editor, items);
+          } finally {
+            skipChangeEmitRef.current = false;
+          }
         }
         setFigureDocRevision((r) => r + 1);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        figureRefreshInFlightRef.current = false;
+        figureRefreshDoneRef.current = chapter.id;
+      });
   }, [bookId, chapterIndex, chapter.id, editor, readOnly]);
 
   useEffect(() => {
@@ -571,7 +672,14 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
         const preview = aiInlinePreviewKey.getState(editor.state);
         if (!preview) return false;
         const ok = applyPreviewContent(preview);
-        if (ok) editor.commands.clearAiInlinePreview();
+        if (ok) {
+          editor.commands.clearAiInlinePreview();
+          if (preview.onAccepted) {
+            void Promise.resolve(preview.onAccepted()).catch(() => {
+              toast.error("修改已应用，但审校状态确认失败");
+            });
+          }
+        }
         return ok;
       },
       dismissAiPreview: () => {
@@ -608,6 +716,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
         const patch = {
           figureId: fig.figure_id,
           fileUrl: fig.file_url ?? "",
+          svgUrl: fig.svg_url ?? "",
           figureNumber: fig.figure_number ?? "",
           status: fig.status as FigureStatus,
           caption: fig.caption ?? "",

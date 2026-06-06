@@ -198,11 +198,31 @@ def normalize_ai_model(raw: str | None) -> str:
 
 
 def resolve_book_ai_model(book) -> str:
-    """从书稿读取并规范化 ai_model。"""
+    """从书稿读取并规范化 ai_model（通用回退）。"""
     raw = (getattr(book, "ai_model", None) or "").strip()
     if not raw:
         return default_ai_model()
     return normalize_ai_model(raw)
+
+
+def _resolve_scene_model(book, field_name: str) -> str:
+    """按场景字段解析模型，空则回退 ai_model。"""
+    raw = (getattr(book, field_name, None) or "").strip()
+    if raw:
+        return normalize_ai_model(raw)
+    return resolve_book_ai_model(book)
+
+
+def resolve_book_outline_model(book) -> str:
+    return _resolve_scene_model(book, "outline_ai_model")
+
+
+def resolve_book_constitution_model(book) -> str:
+    return _resolve_scene_model(book, "constitution_ai_model")
+
+
+def resolve_book_writing_model(book) -> str:
+    return _resolve_scene_model(book, "writing_ai_model")
 
 
 def llm_models_catalog() -> dict:

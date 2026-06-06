@@ -18,6 +18,7 @@ class PipelineContext:
     subtype_hint: str | None = None
     model: str = ""
     use_llm: bool = True
+    layout_instructions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -27,6 +28,9 @@ class DiagramIntent:
     confidence: float = 0.7
     source: str = "rules"
     title: str = ""
+    diagram_type: str = ""
+    reason: str = ""
+    fallback_allowed: bool = True
 
 
 @dataclass
@@ -42,6 +46,12 @@ class VisualPlan:
     visual_description: str = ""
     must_include: list[str] = field(default_factory=list)
     must_avoid: list[str] = field(default_factory=list)
+    theme: str = "modern_blue"
+    edge_style: str = "orthogonal"
+    node_sizes: dict[str, tuple[float, float]] = field(default_factory=dict)
+    icon_map: dict[str, str] = field(default_factory=dict)
+    canvas: dict[str, Any] = field(default_factory=dict)
+    group_styles: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_prompt_spec(self) -> dict[str, Any]:
         return {
@@ -50,6 +60,12 @@ class VisualPlan:
             "visual_description": self.visual_description,
             "must_include": self.must_include,
             "must_avoid": self.must_avoid,
+            "theme": self.theme,
+            "edge_style": self.edge_style,
+            "node_sizes": {k: list(v) for k, v in self.node_sizes.items()},
+            "icon_map": dict(self.icon_map),
+            "canvas": dict(self.canvas),
+            "group_styles": dict(self.group_styles),
         }
 
 
@@ -67,19 +83,41 @@ class ClassificationRecord:
     image_type: str = ""
     subtype: str = ""
     style_profile: str = ""
+    render_warnings: list[str] = field(default_factory=list)
+    quality_flags: list[str] = field(default_factory=list)
+    layout_strategy: str = ""
+    dsl_json: dict[str, Any] | None = None
+    semantic_ir: dict[str, Any] | None = None
+    graph_ir: dict[str, Any] | None = None
+    layout_result: dict[str, Any] | None = None
+    intent_understanding: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        out = {
             "diagram_family": self.diagram_family,
             "diagram_subtype": self.diagram_subtype,
+            "diagram_type": (self.dsl_json or {}).get("diagram_type") or self.diagram_subtype,
             "renderer": self.renderer,
             "confidence": self.confidence,
             "understanding_source": self.understanding_source,
             "normalized_input": self.normalized_input,
             "parsed_spec": self.parsed_spec,
+            "dsl_json": self.dsl_json,
             "visual_plan": self.visual_plan,
             "prompt_spec": self.prompt_spec,
             "image_type": self.image_type,
             "subtype": self.subtype,
             "style_profile": self.style_profile,
+            "render_warnings": self.render_warnings,
+            "quality_flags": self.quality_flags,
+            "layout_strategy": self.layout_strategy,
         }
+        if self.semantic_ir:
+            out["semantic_ir"] = self.semantic_ir
+        if self.graph_ir:
+            out["graph_ir"] = self.graph_ir
+        if self.layout_result:
+            out["layout_result"] = self.layout_result
+        if self.intent_understanding:
+            out["intent_understanding"] = self.intent_understanding
+        return out

@@ -1,0 +1,8 @@
+根据领域知识补全 Semantic IR 的 objects/events/groups。不要输出 nodes/edges/坐标。
+
+领域：{domain}
+当前 IR：
+{semantic_ir_json}
+
+只输出需要补充的 JSON 片段：
+{"objects": [...], "events": [...], "groups": [...]}

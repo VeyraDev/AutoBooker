@@ -32,6 +32,7 @@ export type AssistantFigureResponse = {
   type: "figure";
   figure_id: string;
   file_url: string | null;
+  svg_url?: string | null;
   figure_number: string | null;
   status: string;
   caption: string | null;

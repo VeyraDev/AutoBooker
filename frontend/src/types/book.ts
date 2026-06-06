@@ -36,6 +36,9 @@ export interface Book {
   target_words: number | null;
   status: BookStatus;
   ai_model: string | null;
+  outline_ai_model?: string | null;
+  constitution_ai_model?: string | null;
+  writing_ai_model?: string | null;
   style_type: StyleType | null;
   topic_tags: string[] | null;
   user_material?: string | null;
@@ -53,6 +56,9 @@ export interface BookCreatePayload {
   style_type?: StyleType | null;
   topic_tags?: string[] | null;
   ai_model?: string | null;
+  outline_ai_model?: string | null;
+  constitution_ai_model?: string | null;
+  writing_ai_model?: string | null;
 }
 
 export interface BookUpdatePayload {
@@ -63,6 +69,9 @@ export interface BookUpdatePayload {
   target_words?: number | null;
   status?: BookStatus;
   ai_model?: string | null;
+  outline_ai_model?: string | null;
+  constitution_ai_model?: string | null;
+  writing_ai_model?: string | null;
   style_type?: StyleType | null;
   topic_tags?: string[] | null;
   user_material?: string | null;

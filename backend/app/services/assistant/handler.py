@@ -117,6 +117,7 @@ async def execute_image_generation(
         "type": "figure",
         "figure_id": str(fig.id),
         "file_url": fig.file_url,
+        "svg_url": fig.svg_url,
         "figure_number": fig.figure_number,
         "status": fig.status.value,
         "caption": fig.caption,

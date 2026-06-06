@@ -10,6 +10,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.citation import Citation
+from app.services.review_anchor import locate_issue_anchor
+from app.services.review_scoring import SEVERITY_DEFAULT_PENALTY, standardize_issue
 
 _UNSUPPORTED_PATTERNS = [
     (re.compile(r"研究表明"), "unsupported_assertion"),
@@ -144,3 +146,70 @@ def lint_chapter_citations(
             )
 
     return issues[:30]
+
+
+_KIND_TO_ISSUE_TYPE = {
+    "unsupported_assertion": "missing_citation",
+    "not_in_library": "broken_reference",
+    "invalid_citation_format": "invalid_citation_format",
+    "unused_reference": "unused_reference",
+    "duplicate_reference": "duplicate_reference",
+    "missing_bibliography_item": "missing_bibliography_item",
+}
+
+
+def lint_chapter_citation_detector(
+    body: str,
+    db: Session,
+    book_id: uuid.UUID,
+    *,
+    bracket_style: bool = True,
+) -> dict[str, Any]:
+    """返回新版审校聚合器使用的统一 detector result。"""
+    raw = lint_chapter_citations(body, db, book_id, bracket_style=bracket_style)
+    issues: list[dict[str, Any]] = []
+    for item in raw:
+        severity = "medium" if item.kind == "unsupported_assertion" else "high"
+        loc = locate_issue_anchor(body, quote=item.quote)
+        issues.append(
+            standardize_issue(
+                {
+                    "dimension": "citation_sources",
+                    "issue_type": _KIND_TO_ISSUE_TYPE.get(item.kind, item.kind),
+                    "severity": severity,
+                    "penalty": SEVERITY_DEFAULT_PENALTY[severity],
+                    "title": _citation_title(item.kind),
+                    "explanation": item.detail,
+                    "quote": item.quote,
+                    "action": "revise",
+                    "replacement_text": "",
+                    "paragraph_index": loc.paragraph_index,
+                    "char_start": loc.char_start,
+                    "char_end": loc.char_end,
+                    "anchor_hash": loc.anchor_hash,
+                    "detector": "citation_lint",
+                    "confidence": 0.88,
+                },
+                detector="citation_lint",
+            )
+        )
+    return {
+        "dimension": "citation_sources",
+        "raw_score": 100,
+        "summary": "引用来源检测完成。" if issues else "引用格式、来源库匹配和无来源断言未发现明显问题。",
+        "detector": "citation_lint",
+        "confidence": 0.9,
+        "status": "completed",
+        "issues": issues,
+    }
+
+
+def _citation_title(kind: str) -> str:
+    return {
+        "unsupported_assertion": "断言缺少来源",
+        "not_in_library": "引用未入库",
+        "invalid_citation_format": "引用格式异常",
+        "unused_reference": "参考文献未使用",
+        "duplicate_reference": "重复引用",
+        "missing_bibliography_item": "参考文献缺失",
+    }.get(kind, "引用来源问题")

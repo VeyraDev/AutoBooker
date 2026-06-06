@@ -1,0 +1,13 @@
+根据 style_hints 输出视觉样式建议。不要输出 level/column/坐标。
+
+图类：{diagram_type}
+style_hints：{style_hints}
+
+输出 JSON：
+{
+  "theme": "modern_saas|academic_clean",
+  "node_palette": {},
+  "edge_defaults": {"stroke": "#64748B", "width": 1.5},
+  "title_style": {"size": 16, "weight": "bold"},
+  "notes": []
+}
