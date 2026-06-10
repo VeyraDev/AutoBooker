@@ -243,14 +243,22 @@ def _from_events(spec: dict[str, Any], dsl: DiagramDSL) -> None:
 
 
 def _from_taxonomy(spec: dict[str, Any], dsl: DiagramDSL) -> None:
+    if spec.get("nodes") and spec.get("edges"):
+        _from_graph(spec, dsl)
+        return
     root_label = str(spec.get("root") or spec.get("title") or "核心主题")
     root_id = _add_node(dsl, root_label, nid="root", kind="module")
-    for i, child in enumerate(spec.get("children") or []):
-        if not isinstance(child, dict):
-            continue
-        cid = _add_node(dsl, str(child.get("label") or f"分支{i + 1}"), nid=f"c{i}")
-        if root_id and cid:
-            _add_edge(dsl, root_id, cid)
+
+    def walk_children(parent_id: str, children: list, *, prefix: str) -> None:
+        for i, child in enumerate(children):
+            if not isinstance(child, dict):
+                continue
+            cid = _add_node(dsl, str(child.get("label") or f"分支{i + 1}"), nid=f"{prefix}{i}")
+            if parent_id and cid:
+                _add_edge(dsl, parent_id, cid)
+            walk_children(cid, child.get("children") or [], prefix=f"{prefix}{i}_")
+
+    walk_children(root_id, spec.get("children") or [], prefix="c")
 
 
 def _from_comparison(spec: dict[str, Any], dsl: DiagramDSL) -> None:

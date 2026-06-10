@@ -1,21 +1,24 @@
-"""配图 V2 唯一编排入口。"""
+"""配图 V3 编排入口。"""
 
 from __future__ import annotations
 
 import logging
+import time
 
 from sqlalchemy.orm import Session
 
 from app.models.figure import Figure, FigureStatus
 from app.services.figures.classification.resolver import build_classification_record
 from app.services.figures.schemas.dsl import DiagramDSL
-from app.services.figures.intent.classifier import classify_diagram_intent
 from app.services.figures.intent.reconcile import reconcile_intent_with_dsl, reconcile_intent_with_text
-from app.services.figures.intent.rules import default_intent_for_hint, match_diagram_intent
-from app.services.figures.intent.taxonomy import FAMILY_DEFAULT_SUBTYPE, subtype_to_diagram_type
+from app.services.figures.intent.resolve import resolve_intent_unified
+from app.services.figures.pipeline.chart_run import run_chart_pipeline
+from app.services.figures.intent.taxonomy import subtype_to_diagram_type
+from app.services.figures.intent.understand import understand_intent
+from app.services.figures.pipeline.illustration_run import run_illustration_pipeline
 from app.services.figures.pipeline.normalize import normalize_figure_input
 from app.services.figures.pipeline.structured_run import run_structured_pipeline
-from app.services.figures.render.illustration.visual_prompt import build_visual_plan as build_illustration_visual_plan
+from app.services.figures.pipeline.type_router import PipelineRoute, route_from_understanding
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext, VisualPlan
 
 logger = logging.getLogger(__name__)
@@ -27,54 +30,39 @@ def _ensure_diagram_type(intent: DiagramIntent) -> DiagramIntent:
     return intent
 
 
-def _resolve_intent(ctx: PipelineContext) -> DiagramIntent:
-    hint_intent = default_intent_for_hint(ctx.subtype_hint)
-    ruled = match_diagram_intent(ctx.normalized_input)
-
-    if ctx.use_llm:
-        llm_intent = classify_diagram_intent(ctx)
-        if llm_intent:
-            llm_intent = _ensure_diagram_type(llm_intent)
-            if ruled and ruled.confidence >= 0.95 and llm_intent.confidence < 0.55:
-                return _ensure_diagram_type(reconcile_intent_with_text(ruled, ctx.normalized_input))
-            return reconcile_intent_with_text(llm_intent, ctx.normalized_input)
-
-    if hint_intent and not _is_stale_generic_hint(hint_intent, ruled):
-        return _ensure_diagram_type(hint_intent)
-
-    if ruled:
-        return _ensure_diagram_type(reconcile_intent_with_text(ruled, ctx.normalized_input))
-
-    return DiagramIntent(
-        "illustration",
-        FAMILY_DEFAULT_SUBTYPE.get("illustration", "concept_illustration"),
-        0.5,
-        "default",
-        ctx.normalized_input[:80],
-        diagram_type="illustration",
-        reason="无明确匹配，默认插画",
-        fallback_allowed=True,
-    )
+def _trace(ctx: PipelineContext, step: str, **extra) -> None:
+    ctx.pipeline_trace.append({"step": step, "ms": extra.pop("ms", 0), **extra})
 
 
-def _is_stale_generic_hint(hint: DiagramIntent, ruled: DiagramIntent | None) -> bool:
-    if not ruled:
-        return False
-    stale = {"concept_diagram", "taxonomy_map", "knowledge_graph", "mechanism_diagram"}
-    return hint.diagram_subtype in stale and ruled.confidence >= 0.88 and ruled.diagram_subtype != hint.diagram_subtype
+def _resolve_intent(ctx: PipelineContext) -> tuple[DiagramIntent, dict]:
+    t0 = time.perf_counter()
+    understanding = ctx.intent_understanding or understand_intent(ctx)
+    ctx.intent_understanding = understanding
+    _trace(ctx, "intent_understanding", ms=int((time.perf_counter() - t0) * 1000), source="llm" if ctx.use_llm else "hint")
+
+    intent = resolve_intent_unified(ctx, understanding)
+    return _ensure_diagram_type(reconcile_intent_with_text(intent, ctx.normalized_input)), understanding
 
 
 def _run_pipeline(
     ctx: PipelineContext,
     intent: DiagramIntent,
+    understanding: dict,
 ) -> tuple[DiagramIntent, ParsedDiagram, VisualPlan | None, dict, list[str], dict]:
-    """understand → semantic_ir → knowledge → constraints → graph → layout → DSL。"""
-    if intent.diagram_family == "illustration":
-        visual = build_illustration_visual_plan(ctx)
-        parsed = ParsedDiagram({"title": intent.title, "render_mode": "image_api"}, source="illustration")
-        return intent, parsed, visual, {}, [], {}
+    route = route_from_understanding(understanding, subtype_hint=ctx.subtype_hint or intent.diagram_subtype)
+    ctx.pipeline_trace.append({"step": "type_router", "route": route.value})
 
-    intent, parsed, visual, dsl_json, quality_flags, ir_bundle = run_structured_pipeline(ctx, intent)
+    if route == PipelineRoute.CHART:
+        return run_chart_pipeline(ctx, intent, understanding)
+    if route == PipelineRoute.ILLUSTRATION:
+        return run_illustration_pipeline(ctx, intent, understanding)
+    if route == PipelineRoute.SCREENSHOT:
+        parsed = ParsedDiagram({"title": intent.title, "render_mode": "screenshot_placeholder"}, source="v3_screenshot")
+        return intent, parsed, None, {}, ["screenshot_placeholder"], {"intent_understanding": understanding}
+
+    intent, parsed, visual, dsl_json, quality_flags, ir_bundle = run_structured_pipeline(
+        ctx, intent, understanding=understanding,
+    )
     if dsl_json:
         intent = reconcile_intent_with_dsl(intent, DiagramDSL.from_dict(dsl_json))
     return intent, parsed, visual, dsl_json, quality_flags, ir_bundle
@@ -112,19 +100,22 @@ def classify_figure_description(
         use_llm=use_llm,
     )
 
-    if not use_llm:
-        intent = match_diagram_intent(normalized) or DiagramIntent(
-            "workflow", "process_flow", 0.6, "rules", normalized[:80],
-            diagram_type="flowchart", reason="rules_fallback", fallback_allowed=True,
-        )
-        intent, parsed, visual, dsl_json, _, ir_bundle = _run_pipeline(ctx, _ensure_diagram_type(intent))
-        record = build_classification_record(ctx, intent, parsed, visual_plan=visual, dsl_json=dsl_json, ir_bundle=ir_bundle)
-        return record.to_json()
+    intent, understanding = _resolve_intent(ctx)
+    intent, parsed, visual, dsl_json, quality_flags, ir_bundle = _run_pipeline(ctx, intent, understanding)
+    ir_bundle = ir_bundle or {}
+    ir_bundle["intent_understanding"] = understanding
 
-    intent = _resolve_intent(ctx)
-    intent, parsed, visual, dsl_json, _, ir_bundle = _run_pipeline(ctx, intent)
-    record = build_classification_record(ctx, intent, parsed, visual_plan=visual, dsl_json=dsl_json, ir_bundle=ir_bundle)
-    return record.to_json()
+    record = build_classification_record(
+        ctx, intent, parsed, visual_plan=visual, dsl_json=dsl_json, ir_bundle=ir_bundle,
+    )
+
+    out = record.to_json()
+    if quality_flags:
+        out.setdefault("quality_flags", [])
+        out["quality_flags"] = list(dict.fromkeys(list(out.get("quality_flags") or []) + quality_flags))
+    if ctx.pipeline_trace:
+        out["pipeline_trace"] = ctx.pipeline_trace
+    return out
 
 
 def apply_classification_to_figure(fig: Figure, classification: dict, db: Session) -> Figure:

@@ -78,21 +78,90 @@ def _finish(result: FigureRenderResult | LegacyRenderReturn, out_path: Path) -> 
     return coerce_render_result(render_source, path, out_path.with_suffix(".png"))
 
 
+def _resolve_design_spec(spec: dict, clf: dict) -> dict:
+    ds = spec.get("design_spec") or clf.get("design_spec")
+    if isinstance(ds, dict) and ds:
+        return ds
+    style = spec.get("style") if isinstance(spec.get("style"), dict) else {}
+    dsl = clf.get("dsl_json") if isinstance(clf.get("dsl_json"), dict) else {}
+    dsl_style = dsl.get("style") if isinstance(dsl.get("style"), dict) else {}
+    theme = str(dsl_style.get("theme") or style.get("theme") or "modern_saas")
+    return {
+        "theme": theme,
+        "component_variant": str(dsl_style.get("component_variant") or style.get("component_variant") or "default"),
+        "container_style": str(dsl_style.get("container_style") or style.get("container_style") or "rounded"),
+        "arrow_style": str(dsl_style.get("arrow_style") or style.get("arrow_style") or "orthogonal"),
+        "annotation_style": str(dsl_style.get("annotation_style") or style.get("annotation_style") or "minimal"),
+    }
+
+
 def _try_svg_render(spec: dict, out_path: Path, *, title: str, clf: dict) -> FigureRenderResult | None:
     if _matplotlib_backend():
         return None
-    layout_result = clf.get("layout_result") or spec.get("layout_result")
-    if not layout_result and not spec.get("nodes"):
-        return None
-    try:
-        from app.services.figures.render.svg.renderer import render_svg_diagram
+    design_spec = _resolve_design_spec(spec, clf)
+    from app.services.figures.contracts.renderer_profiles import select_render_profile
 
-        theme = str((spec.get("style") or clf.get("dsl_json") or {}).get("theme") or "modern_saas")
-        if isinstance(clf.get("dsl_json"), dict):
-            theme = str((clf["dsl_json"].get("style") or {}).get("theme") or theme)
-        return _finish(render_svg_diagram(spec, out_path, title=title, layout_result=layout_result, theme=theme), out_path)
-    except Exception:
-        return None
+    profile = str(spec.get("render_profile") or select_render_profile(spec))
+    if not spec.get("render_profile"):
+        spec = dict(spec)
+        spec["render_profile"] = profile
+        if "legacy_spec_migrated" not in (spec.get("quality_flags") or []):
+            spec.setdefault("quality_flags", []).append("legacy_spec_migrated")
+
+    if profile == "svg.matrix":
+        try:
+            from app.services.figures.render.svg.comparison import render_comparison_svg
+
+            return _finish(render_comparison_svg(spec, out_path, title=title, design_spec=design_spec), out_path)
+        except Exception:
+            return None
+
+    if profile == "svg.timeline":
+        try:
+            from app.services.figures.render.svg.timeline import render_timeline_svg
+
+            return _finish(render_timeline_svg(spec, out_path, title=title, design_spec=design_spec), out_path)
+        except Exception:
+            return None
+
+    if profile == "svg.blocks":
+        try:
+            from app.services.figures.render.svg.comparison import render_comparison_svg
+
+            ctx_spec = dict(spec)
+            ctx_spec["component_variant"] = "cards"
+            return _finish(render_comparison_svg(ctx_spec, out_path, title=title, design_spec=design_spec), out_path)
+        except Exception:
+            return None
+
+    if profile in {"svg.flow", "svg.architecture", "svg.mechanism", "svg.radial", "svg.network", "svg.decision"} and spec.get("nodes"):
+        try:
+            from app.services.figures.render.svg.graph_grammar import render_graph_grammar_svg
+
+            return _finish(render_graph_grammar_svg(spec, out_path, title=title, design_spec=design_spec), out_path)
+        except Exception:
+            return None
+
+    layout_result = clf.get("layout_result") or spec.get("layout_result")
+    if profile in {"svg.graph", "svg.tree", "svg.swimlane"} and layout_result and spec.get("nodes"):
+        try:
+            from app.services.figures.render.svg.renderer import render_svg_diagram
+
+            theme = str(design_spec.get("theme") or "modern_saas")
+            return _finish(
+                render_svg_diagram(
+                    spec,
+                    out_path,
+                    title=title,
+                    layout_result=layout_result,
+                    theme=theme,
+                    design_spec=design_spec,
+                ),
+                out_path,
+            )
+        except Exception:
+            return None
+    return None
 
 
 def _svg_first_or_fallback(
@@ -104,7 +173,7 @@ def _svg_first_or_fallback(
     fallback: Callable[[], LegacyRenderReturn | FigureRenderResult],
 ) -> FigureRenderResult:
     """结构图优先 SVG，Matplotlib/旧 renderer 仅作兜底。"""
-    if has_structured_graph(spec):
+    if has_structured_graph(spec) or (spec.get("render_profile") == "svg.swimlane" and spec.get("lanes") and spec.get("nodes")):
         svg_out = _try_svg_render(spec, out_path, title=title, clf=clf)
         if svg_out:
             return svg_out
@@ -149,7 +218,10 @@ def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", c
     if renderer == RENDERER_UPLOAD:
         raise ValueError("截图类型请手动上传")
     if renderer == RENDERER_NEED_DATA:
-        raise ValueError("数据图缺少可解析的数值，请编辑标注后重试")
+        return _finish(
+            generate_chart(description, out_path, model=model, chart_type_hint=chart_type, render_spec=spec),
+            out_path,
+        )
 
     if renderer == RENDERER_STRUCTURED_GENERIC:
         if has_structured_graph(spec):
@@ -196,6 +268,8 @@ def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", c
         )
 
     if renderer == RENDERER_STRUCTURED_INFOGRAPHIC:
+        if spec.get("blocks"):
+            return _finish(generate_infographic_diagram(spec, out_path, title=title), out_path)
         return _svg_first_or_fallback(
             spec, out_path, title=title, clf=clf,
             fallback=lambda: generate_infographic_diagram(spec, out_path, title=title),

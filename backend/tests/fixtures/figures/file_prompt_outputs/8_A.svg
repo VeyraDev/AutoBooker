@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="700" viewBox="0 0 920 700" data-grammar="radial_concept" data-mandatory-semantics="center_node,satellite_nodes,radial_links,relationship_labels,non_linear_layout,directive:edge.label,directive:layout.radial,directive:readability.mixed_text" data-visual-directives="edge.label,layout.radial,readability.mixed_text">
+<rect width="100%" height="100%" fill="#F8FAFC"/>
+<defs>
+<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#0F172A" flood-opacity="0.12"/></filter>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748B"/></marker>
+<marker id="arrow-primary" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2563EB"/></marker>
+<marker id="arrow-forward" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2563EB"/></marker>
+<marker id="arrow-reverse" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#B45309"/></marker>
+</defs>
+<g class="mandatory-semantics" data-items="center_node,satellite_nodes,radial_links,relationship_labels,non_linear_layout,directive:edge.label,directive:layout.radial,directive:readability.mixed_text"/>
+<g class="visual-directives" data-items="edge.label,layout.radial,readability.mixed_text"/>
+<text x="460.0" y="28.0" fill="#0F172A" font-size="17" text-anchor="middle" dominant-baseline="middle">提示工程核心概念图</text>
+<circle class="radial-ring" cx="460.0" cy="370.0" r="248.0" fill="none" stroke="#CBD5E1" stroke-width="1" stroke-dasharray="5 5"/>
+<g class="radial-link relationship-label">
+<path class="radial-link relationship-label-path" d="M 460.0 370.0 L 460.0 122.0" fill="none" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arrow-primary)"/>
+</g>
+<g class="satellite-node radial-satellite" data-label="角色设定">
+<rect x="390.0" y="90.0" width="140.0" height="64.0" rx="8" fill="#DBEAFE" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="460.0" y="122.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">角色设定</text>
+</g>
+<g class="radial-link relationship-label">
+<path class="radial-link relationship-label-path" d="M 460.0 370.0 L 635.4 194.6" fill="none" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arrow-primary)"/>
+</g>
+<g class="satellite-node radial-satellite" data-label="思维链">
+<rect x="565.4" y="162.6" width="140.0" height="64.0" rx="8" fill="#CCFBF1" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="635.4" y="194.6" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">思维链</text>
+</g>
+<g class="radial-link relationship-label">
+<path class="radial-link relationship-label-path" d="M 460.0 370.0 L 708.0 370.0" fill="none" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arrow-primary)"/>
+</g>
+<g class="satellite-node radial-satellite" data-label="少样本学习">
+<rect x="638.0" y="338.0" width="140.0" height="64.0" rx="8" fill="#DCFCE7" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="708.0" y="370.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">少样本学习</text>
+</g>
+<g class="radial-link relationship-label">
+<path class="radial-link relationship-label-path" d="M 460.0 370.0 L 635.4 545.4" fill="none" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arrow-primary)"/>
+</g>
+<g class="satellite-node radial-satellite" data-label="指令跟随">
+<rect x="565.4" y="513.4" width="140.0" height="64.0" rx="8" fill="#EDE9FE" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="635.4" y="545.4" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">指令跟随</text>
+</g>
+<g class="radial-link relationship-label">
+<path class="radial-link relationship-label-path" d="M 460.0 370.0 L 460.0 618.0" fill="none" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arrow-primary)"/>
+</g>
+<g class="satellite-node radial-satellite" data-label="输出格式控制五个子概念">
+<rect x="390.0" y="586.0" width="140.0" height="64.0" rx="8" fill="#FEF3C7" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="460.0" y="610.9" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">输出格式控制五个子</text>
+<text x="460.0" y="625.1" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">概念</text>
+</g>
+<g class="radial-link relationship-label">
+<path class="radial-link relationship-label-path" d="M 460.0 370.0 L 284.6 545.4" fill="none" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arrow-primary)"/>
+</g>
+<g class="satellite-node radial-satellite" data-label="辐射状布局">
+<rect x="214.6" y="513.4" width="140.0" height="64.0" rx="8" fill="#DBEAFE" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="284.6" y="545.4" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">辐射状布局</text>
+</g>
+<g class="radial-link relationship-label">
+<path class="radial-link relationship-label-path" d="M 460.0 370.0 L 212.0 370.0" fill="none" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arrow-primary)"/>
+</g>
+<g class="satellite-node radial-satellite" data-label="周围">
+<rect x="142.0" y="338.0" width="140.0" height="64.0" rx="8" fill="#CCFBF1" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="212.0" y="370.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">周围</text>
+</g>
+<g class="radial-link relationship-label">
+<path class="radial-link relationship-label-path" d="M 460.0 370.0 L 284.6 194.6" fill="none" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arrow-primary)"/>
+</g>
+<g class="satellite-node radial-satellite" data-label="角色设定、思维链、少样本学习、指">
+<rect x="214.6" y="162.6" width="140.0" height="64.0" rx="8" fill="#DCFCE7" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="284.6" y="187.5" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">角色设定、思维链、少</text>
+<text x="284.6" y="201.8" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">样本学习、指</text>
+</g>
+<g class="center-node radial-center" data-label="节点&quot;Prompt Engineering&quot;">
+<rect x="368.0" y="326.0" width="184.0" height="88.0" rx="8" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="460.0" y="360.9" fill="#0F172A" font-size="14" text-anchor="middle" dominant-baseline="middle">节点&quot;Prompt Engine</text>
+<text x="460.0" y="379.1" fill="#0F172A" font-size="14" text-anchor="middle" dominant-baseline="middle">ering&quot;</text>
+</g>
+<g class="radial-link cross-link relationship-label" data-label="连接">
+<path class="radial-link cross-link relationship-label-path" d="M 212.0 370.0 L 248.3 246.3 L 284.6 194.6" fill="none" stroke="#64748B" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<rect x="230.3" y="261.3" width="36.0" height="16" rx="3" fill="#FFFFFFCC" stroke="none"/>
+<text x="248.3" y="270.3" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">连接</text>
+</g>
+<g class="non-linear-layout radial-layout"/>
+</svg>

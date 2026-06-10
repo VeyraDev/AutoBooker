@@ -1,4 +1,4 @@
-"""Intent Understanding 层。"""
+"""Intent Understanding 层 — 仅 LLM 产出候选与 goal。"""
 
 from __future__ import annotations
 
@@ -7,9 +7,7 @@ from typing import Any
 
 from app.config import settings
 from app.llm.client import LLMClient
-from app.services.figures.intent.classifier import classify_diagram_intent
-from app.services.figures.intent.evidence_rules import score_candidate_diagrams
-from app.services.figures.intent.rules import match_diagram_intent
+from app.services.figures.intent.taxonomy import canonical_subtype
 from app.services.figures.prompts import format_prompt
 from app.services.figures.schemas.diagram import DiagramIntent, PipelineContext
 from app.utils.json_llm import parse_llm_json
@@ -22,40 +20,66 @@ _GOAL_MAP = {
     "comparison": "show_comparison",
     "timeline": "show_timeline",
     "taxonomy": "show_taxonomy",
-    "illustration": "illustrate_concept",
-    "chart": "show_comparison",
+    "illustration": "illustrate_scene",
+    "data": "show_data",
+    "chart": "show_data",
+    "decision": "show_decision",
+    "organization": "show_taxonomy",
+    "matrix": "show_comparison",
+    "knowledge": "show_taxonomy",
 }
 
 
 def understand_intent(ctx: PipelineContext, intent: DiagramIntent | None = None) -> dict[str, Any]:
-    """输出 goal/candidate_diagrams/constraints/visual_preferences/missing_info。"""
+    """输出 goal / candidate_diagrams / constraints / visual_preferences。"""
     llm = _call_intent_understanding_llm(ctx)
-    ruled = match_diagram_intent(ctx.normalized_input)
-    candidates = score_candidate_diagrams(ctx.normalized_input)
-
     if llm:
-        if not llm.get("candidate_diagrams"):
-            llm["candidate_diagrams"] = candidates
-        llm.setdefault("constraints", [])
-        llm.setdefault("visual_preferences", list(ctx.layout_instructions or []))
-        llm.setdefault("missing_info", [])
+        llm.setdefault("candidate_diagrams", llm.get("diagram_candidates") or llm.get("candidate_diagrams") or [])
+        llm.setdefault("diagram_candidates", llm.get("candidate_diagrams"))
+        route = str(llm.get("route") or "structured_diagram")
+        if ctx.subtype_hint:
+            from app.services.figures.pipeline.type_router import _is_structured_subtype
+
+            if _is_structured_subtype(ctx.subtype_hint):
+                route = "structured_diagram"
+        llm["route"] = route
+        llm.setdefault("constraints", llm.get("hard_constraints") or llm.get("constraints") or [])
+        llm.setdefault("visual_preferences", list(ctx.layout_instructions or []) + list(llm.get("visual_preferences") or []))
+        llm.setdefault("missing_info", llm.get("information_gaps") or llm.get("missing_info") or [])
+        llm.setdefault("uncertainties", llm.get("uncertainties") or [])
         if intent:
             llm.setdefault("title", intent.title)
         return llm
 
-    clf = classify_diagram_intent(ctx) if ctx.use_llm else None
-    domain = _infer_domain(ctx.normalized_input, clf or ruled or intent)
-    goal = _GOAL_MAP.get((clf or ruled or intent or DiagramIntent("workflow", "process_flow", 0.5, "rules", "")).diagram_family, "show_workflow")
+    base = intent or DiagramIntent("knowledge", "concept_diagram", 0.5, "no_llm", ctx.normalized_input[:80])
+    goal = _GOAL_MAP.get(base.diagram_family, "show_workflow")
+    route = "chart" if base.diagram_subtype == "chart" else (
+        "illustration" if base.diagram_family == "illustration" else "structured_diagram"
+    )
     return {
         "goal": goal,
-        "domain": domain,
+        "route": route,
+        "domain": "general",
         "user_task": "generate_diagram",
-        "candidate_diagrams": candidates,
+        "diagram_candidates": [
+            {
+                "type": canonical_subtype(base.diagram_subtype),
+                "score": float(base.confidence),
+                "reason": "no_llm_fallback",
+            }
+        ],
+        "candidate_diagrams": [
+            {
+                "type": canonical_subtype(base.diagram_subtype),
+                "score": float(base.confidence),
+                "reason": "no_llm_fallback",
+            }
+        ],
         "constraints": [],
         "visual_preferences": list(ctx.layout_instructions or []),
         "missing_info": [],
-        "confidence": float((clf or ruled or intent).confidence if (clf or ruled or intent) else 0.5),
-        "title": (clf or ruled or intent).title if (clf or ruled or intent) else "",
+        "confidence": float(base.confidence),
+        "title": base.title or "",
     }
 
 
@@ -64,7 +88,13 @@ def _call_intent_understanding_llm(ctx: PipelineContext) -> dict[str, Any] | Non
     if not ctx.use_llm or not model or not ctx.normalized_input.strip():
         return None
     try:
-        prompt = format_prompt("intent_understanding", text=ctx.normalized_input[:2500])
+        from app.services.figures.brief.context import build_context
+
+        prompt = format_prompt(
+            "intent_understanding",
+            text=ctx.normalized_input[:2500],
+            context=build_context(ctx),
+        )
     except OSError:
         return None
     try:
@@ -79,18 +109,3 @@ def _call_intent_understanding_llm(ctx: PipelineContext) -> dict[str, Any] | Non
         logger.warning("intent understanding LLM failed: %s", e)
         return None
     return data if isinstance(data, dict) else None
-
-
-def _infer_domain(text: str, intent: DiagramIntent | None) -> str:
-    t = text.lower()
-    if "rag" in t or "检索增强" in text or "向量" in text:
-        return "rag"
-    if "微服务" in text or "网关" in text or intent and intent.diagram_subtype in {"microservice_architecture", "system_architecture"}:
-        return "microservice"
-    if "transformer" in t or "微调" in text or "lora" in t:
-        return "transformer"
-    if "agent" in t or "智能体" in text:
-        return "agent"
-    if "etl" in t or "数据管道" in text:
-        return "etl"
-    return "general"

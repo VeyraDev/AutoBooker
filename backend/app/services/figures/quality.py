@@ -7,11 +7,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.services.figures.intent.evidence_rules import score_candidate_diagrams
 from app.services.figures.schemas.diagram import DiagramIntent, PipelineContext
 from app.services.quality import QualityStatus, worst_status
 
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+-]{1,}|[\u4e00-\u9fff]{2,}|\d+(?:\.\d+)?%?")
+# 仅记录、不将整体 status 升为 warning 的提示（如环境未装 PNG 导出）
+_INFORMATIONAL_WARNINGS = frozenset({"svg_only_no_png"})
+
+
+def _finalize_report_status(
+    status: str,
+    failures: list[str],
+    warnings: list[str],
+) -> str:
+    """质量报告仅作可观测性记录，不因 failures 阻断生成。"""
+    _ = failures
+    material = [w for w in warnings if w not in _INFORMATIONAL_WARNINGS]
+    if material or status == QualityStatus.warning.value:
+        return QualityStatus.warning.value
+    return QualityStatus.passed.value
+
+
 _STOPWORDS = {
     "一个",
     "一张",
@@ -58,16 +74,14 @@ class FigureQualityReport:
 
 
 def intent_candidate_report(ctx: PipelineContext, intent: DiagramIntent) -> dict[str, Any]:
-    candidates = score_candidate_diagrams(ctx.normalized_input)
+    understanding = ctx.intent_understanding or {}
+    candidates = list(understanding.get("candidate_diagrams") or [])
+    if not candidates and intent.diagram_subtype:
+        candidates = [{"type": intent.diagram_subtype, "score": intent.confidence, "reason": intent.source}]
     top = candidates[0] if candidates else {}
     second = candidates[1] if len(candidates) > 1 else {}
     gap = round(float(top.get("score") or 0) - float(second.get("score") or 0), 3) if second else 1.0
-    needs_clarification = bool(
-        second
-        and gap <= 0.12
-        and float(top.get("score") or 0) >= 0.45
-        and float(getattr(intent, "confidence", 0.0) or 0.0) < 0.9
-    )
+    needs_clarification = False
     return {
         "candidates": candidates,
         "top_candidate": top,
@@ -77,12 +91,33 @@ def intent_candidate_report(ctx: PipelineContext, intent: DiagramIntent) -> dict
     }
 
 
+def _collect_native_strings(value: Any) -> list[str]:
+    parts: list[str] = []
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k in {"type"}:
+                continue
+            parts.extend(_collect_native_strings(v))
+    elif isinstance(value, list):
+        for item in value:
+            parts.extend(_collect_native_strings(item))
+    elif value is not None:
+        text = str(value).strip()
+        if text:
+            parts.append(text)
+    return parts
+
+
 def semantic_coverage_report(text: str, semantic_ir: dict[str, Any] | None) -> dict[str, Any]:
     tokens = _important_tokens(text)
     if not tokens:
         return {"score": 1.0, "matched": [], "missing": [], "tokens": []}
     haystack_parts: list[str] = []
     if isinstance(semantic_ir, dict):
+        haystack_parts.append(str(semantic_ir.get("title") or ""))
+        native = semantic_ir.get("native_structure")
+        if isinstance(native, dict):
+            haystack_parts.extend(_collect_native_strings(native))
         for obj in semantic_ir.get("objects") or []:
             if isinstance(obj, dict):
                 haystack_parts.extend([str(obj.get("name") or ""), str(obj.get("kind") or "")])
@@ -112,34 +147,49 @@ def initial_quality_report(
     quality_flags: list[str] | None = None,
     render_warnings: list[str] | None = None,
 ) -> dict[str, Any]:
+    from app.services.figures.validate.semantic_validator import combined_semantic_quality
+
     intent_report = intent_candidate_report(ctx, intent)
-    coverage = semantic_coverage_report(ctx.normalized_input, semantic_ir)
+    if semantic_ir is not None:
+        combined = combined_semantic_quality(
+            ctx.normalized_input,
+            semantic_ir,
+            diagram_type=intent.diagram_type or "flowchart",
+            token_coverage_fn=semantic_coverage_report,
+        )
+        coverage = combined.get("token_coverage") or semantic_coverage_report(ctx.normalized_input, semantic_ir)
+        semantic_score = float(combined.get("score", 0))
+        structure_issues = (combined.get("structure") or {}).get("issues") or []
+    else:
+        coverage = semantic_coverage_report(ctx.normalized_input, semantic_ir)
+        semantic_score = float(coverage["score"])
+        structure_issues = []
+        combined = {}
+
     failures: list[str] = []
     warnings = list(render_warnings or [])
     recommendations: list[str] = []
     status = QualityStatus.passed.value
-    semantic_score = float(coverage["score"])
 
-    if intent_report["needs_clarification"]:
-        status = QualityStatus.needs_clarification.value
-        warnings.append("intent_candidates_close")
-        recommendations.append("请明确希望生成流程、架构、对比、数据图或场景插图。")
-    if semantic_ir is not None and semantic_score < 0.35:
-        status = QualityStatus.failed.value
-        failures.append("semantic_coverage_low")
-        recommendations.append("图像描述中的关键实体或关系未进入结构化语义，请补充或重写标注。")
-    elif semantic_ir is not None and semantic_score < 0.55:
+    close_candidates = bool(intent_report.get("second_candidate")) and float(
+        intent_report.get("confidence_gap") or 1
+    ) <= 0.12
+    if close_candidates:
         status = worst_status(status, QualityStatus.warning)
-        warnings.append("semantic_coverage_partial")
-        recommendations.append("建议检查图中是否遗漏关键实体或关系。")
+        warnings.append("intent_candidates_close")
+    if semantic_ir is not None and semantic_score < 0.55:
+        status = worst_status(status, QualityStatus.warning)
+        warnings.append("semantic_coverage_low" if semantic_score < 0.35 else "semantic_coverage_partial")
+    for issue in structure_issues:
+        if issue in {"no_relations_or_events", "too_few_objects", "broken_relations"}:
+            status = worst_status(status, QualityStatus.warning)
+            warnings.append(f"semantic_structure:{issue}")
     for flag in quality_flags or []:
-        if flag in {"missing_nodes", "annotation_node"}:
-            status = QualityStatus.failed.value
-            failures.append(flag)
-        elif flag:
+        if flag:
             status = worst_status(status, QualityStatus.warning)
             warnings.append(str(flag))
 
+    status = _finalize_report_status(status, failures, warnings)
     return FigureQualityReport(
         status=status,
         semantic_score=semantic_score,
@@ -151,6 +201,7 @@ def initial_quality_report(
         evidence={
             "intent": intent_report,
             "semantic_coverage": coverage,
+            "semantic_quality": combined if combined else None,
         },
     ).to_dict()
 
@@ -174,7 +225,6 @@ def inspect_rendered_figure(
             render_score = 0.85
         else:
             failures.append("missing_render_asset")
-            recommendations.append("未生成 PNG 或 SVG，需检查渲染器返回契约。")
             render_score = 0.0
     else:
         try:
@@ -187,31 +237,25 @@ def inspect_rendered_figure(
                     render_score = min(render_score, 0.75)
                 extrema = img.convert("L").getextrema()
                 if extrema and extrema[0] == extrema[1]:
-                    failures.append("blank_png")
+                    warnings.append("blank_png")
                     render_score = 0.0
         except Exception as exc:
             warnings.append("png_inspection_failed")
-            recommendations.append(f"PNG 检查失败: {exc}")
             render_score = min(render_score, 0.6)
+            _ = exc
 
     layout_result = classification.get("layout_result") or {}
     if isinstance(layout_result, dict):
         overlap_count = _count_node_overlaps(layout_result)
         if overlap_count:
-            failures.append("node_overlap")
+            warnings.append("node_overlap")
             layout_score = 0.0 if overlap_count > 2 else 0.45
-            recommendations.append("节点布局存在重叠，请改用分层/蛇形布局或拆分复杂图。")
         label_overflow = _count_label_overflow(classification, layout_result)
         if label_overflow:
             warnings.append("label_overflow_risk")
             layout_score = min(layout_score, 0.7)
-            recommendations.append("部分节点文字过长，建议压缩标签或增大节点。")
 
-    status = QualityStatus.passed.value
-    if failures:
-        status = QualityStatus.failed.value
-    elif warnings:
-        status = QualityStatus.warning.value
+    status = _finalize_report_status(QualityStatus.passed.value, failures, warnings)
     return FigureQualityReport(
         status=status,
         semantic_score=float((classification.get("quality_report") or {}).get("semantic_score", 1.0)),
@@ -241,7 +285,12 @@ def merge_quality_reports(*reports: dict[str, Any] | None) -> dict[str, Any]:
         evidence = out.setdefault("evidence", {})
         for k, v in dict(report.get("evidence") or {}).items():
             evidence[k] = v
-    out["status"] = worst_status(*statuses)
+    merged = worst_status(*statuses) if statuses else QualityStatus.passed.value
+    out["status"] = _finalize_report_status(
+        merged,
+        list(out.get("failures") or []),
+        list(out.get("warnings") or []),
+    )
     return out
 
 

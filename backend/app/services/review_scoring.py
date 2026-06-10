@@ -247,7 +247,25 @@ def aggregate_review(
             any_failed = True
         if status == "partial":
             any_partial = True
-        raw_score = clamp_score(det.get("raw_score", 70 if status not in {"failed", "unavailable"} else 0))
+        raw_val = det.get("raw_score")
+        if raw_val is None and status == "partial":
+            rows.append(
+                {
+                    "key": key,
+                    "dimension": key,
+                    "label": meta["label"],
+                    "weight": meta["weight"],
+                    "raw_score": None,
+                    "effective_score": None,
+                    "issue_count": 0,
+                    "summary": str(det.get("summary") or "")[:500],
+                    "detector": str(det.get("detector") or meta["detector"]),
+                    "confidence": _confidence(det.get("confidence"), 0.0),
+                    "status": "not_applicable",
+                }
+            )
+            continue
+        raw_score = clamp_score(raw_val if raw_val is not None else (70 if status not in {"failed", "unavailable"} else 0))
         active = [
             i
             for i in standardized
@@ -275,7 +293,12 @@ def aggregate_review(
 
 
 def compute_total_score(rows: list[dict[str, Any]]) -> int:
-    available = [r for r in rows if str(r.get("status") or "completed") in AVAILABLE_DIMENSION_STATUSES]
+    available = [
+        r
+        for r in rows
+        if str(r.get("status") or "completed") in AVAILABLE_DIMENSION_STATUSES
+        and r.get("effective_score") is not None
+    ]
     if not available:
         return 0
     numerator = sum(float(r.get("effective_score") or 0) * float(r.get("weight") or 0) for r in available)

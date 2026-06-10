@@ -1,35 +1,26 @@
-"""按 domain 注册知识补全器。"""
+"""知识补全 — 仅 LLM 增量补全，无领域模板规则。"""
 
 from __future__ import annotations
 
-from typing import Callable
-
-from app.services.figures.knowledge import agent as agent_knowledge
-from app.services.figures.knowledge import microservice as microservice_knowledge
-from app.services.figures.knowledge import rag as rag_knowledge
-from app.services.figures.knowledge import transformer as transformer_knowledge
+from app.services.figures.knowledge.llm_completer import llm_complete_knowledge
+from app.services.figures.schemas.diagram import PipelineContext
 from app.services.figures.semantic.schema import SemanticIR
 
-_COMPLETERS: dict[str, Callable[[SemanticIR], SemanticIR]] = {
-    "rag": rag_knowledge.complete,
-    "microservice": microservice_knowledge.complete,
-    "transformer": transformer_knowledge.complete,
-    "agent": agent_knowledge.complete,
-    "etl": microservice_knowledge.complete,
-}
 
-
-def complete_knowledge(ir: SemanticIR, *, domain: str = "") -> SemanticIR:
+def complete_knowledge(
+    ir: SemanticIR,
+    *,
+    domain: str = "",
+    ctx: PipelineContext | None = None,
+) -> tuple[SemanticIR, dict]:
+    meta: dict = {"completed": False, "added": [], "source": "none"}
     dom = (domain or ir.domain or "general").lower()
-    fn = _COMPLETERS.get(dom)
-    if fn:
-        return fn(ir)
-    if dom == "general" and _looks_microservice(ir):
-        return microservice_knowledge.complete(ir)
-    return ir
 
+    if ctx and (ir.unknowns or len(ir.objects) < 3):
+        ir, llm_meta = llm_complete_knowledge(ir, domain=dom, ctx=ctx)
+        if llm_meta.get("completed"):
+            meta["completed"] = True
+            meta["added"] = list(llm_meta.get("added") or [])
+            meta["source"] = llm_meta.get("source") or "llm_knowledge"
 
-def _looks_microservice(ir: SemanticIR) -> bool:
-    kinds = {o.kind for o in ir.objects}
-    names = " ".join(o.name for o in ir.objects)
-    return "service" in kinds or "gateway" in kinds or "微服务" in names or "网关" in names
+    return ir, meta

@@ -1,0 +1,10 @@
+[
+  {
+    "text": "研究表明，该系统性能提升明显。",
+    "expected_issue_type": "missing_citation"
+  },
+  {
+    "text": "见图1-1可知，微服务架构更加灵活。",
+    "expected_issue_type": "figure_semantic_mismatch"
+  }
+]

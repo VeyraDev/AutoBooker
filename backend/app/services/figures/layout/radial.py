@@ -13,11 +13,25 @@ _NODE_H = 44.0
 _RADIUS = 180.0
 
 
+def _pick_root(graph: GraphIR):
+    in_deg: dict[str, int] = {n.id: 0 for n in graph.nodes}
+    out_deg: dict[str, int] = {n.id: 0 for n in graph.nodes}
+    for e in graph.edges:
+        in_deg[e.target] = in_deg.get(e.target, 0) + 1
+        out_deg[e.source] = out_deg.get(e.source, 0) + 1
+    roots = [n for n in graph.nodes if in_deg.get(n.id, 0) == 0]
+    if len(roots) == 1:
+        return roots[0]
+    if roots:
+        return max(roots, key=lambda n: out_deg.get(n.id, 0))
+    return max(graph.nodes, key=lambda n: out_deg.get(n.id, 0))
+
+
 def layout_radial(graph: GraphIR) -> LayoutResult:
     positions: dict[str, NodePosition] = {}
     if not graph.nodes:
         return LayoutResult(strategy="radial", direction="RADIAL", node_positions=positions)
-    center = graph.nodes[0]
+    center = _pick_root(graph)
     cx, cy = 400.0, 300.0
     cw, ch = estimate_node_size(center.label, min_width=130.0, max_width=240.0)
     positions[center.id] = NodePosition(id=center.id, x=cx - cw / 2, y=cy - ch / 2, width=cw, height=ch)

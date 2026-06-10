@@ -9,11 +9,13 @@ from app.services.figures.quality import initial_quality_report, intent_candidat
 from app.services.figures.intent.taxonomy import (
     RENDERER_ILLUSTRATION,
     RENDERER_NEED_DATA,
+    RENDERER_STRUCTURED_CHART,
     RENDERER_UPLOAD,
     SUBTYPE_TO_LEGACY_IMAGE_TYPE,
     canonical_subtype,
     resolve_renderer_key,
 )
+from app.services.figures.layout.policies import field_constraints_for_subtype, get_layout_policy
 from app.services.figures.schemas.diagram import (
     ClassificationRecord,
     DiagramIntent,
@@ -190,30 +192,62 @@ def _shorten_title(raw: str, *, fallback: str = "示意图") -> str:
 def _structured_quality(parsed_spec: dict, subtype: str, renderer: str) -> tuple[list[str], list[str], str]:
     warnings: list[str] = []
     flags: list[str] = []
-    layout = str(parsed_spec.get("layout") or "").upper()
+    st = canonical_subtype(subtype)
+    policy = get_layout_policy(st)
+    constraints = field_constraints_for_subtype(st)
+    layout = str(parsed_spec.get("layout_strategy") or parsed_spec.get("layout") or "").upper()
     nodes = [n for n in (parsed_spec.get("nodes") or []) if isinstance(n, dict)]
     edges = [e for e in (parsed_spec.get("edges") or []) if isinstance(e, dict)]
-    strategy = "image_api" if renderer == RENDERER_ILLUSTRATION else (layout or "TB")
+
+    if renderer == RENDERER_ILLUSTRATION:
+        return warnings, flags, "image_api"
+    if st == "chart" or renderer == RENDERER_STRUCTURED_CHART:
+        return warnings, flags, "chart"
+
+    strategy = layout or (policy.strategies[0] if policy.strategies else policy.default_direction)
 
     if not renderer.startswith("structured."):
         return warnings, flags, strategy
 
-    if not nodes:
+    if st in {"chart"}:
+        return warnings, flags, "chart"
+
+    if not nodes and "nodes" in constraints["required_fields"]:
         flags.append("missing_nodes")
         warnings.append("结构化图缺少节点")
         return warnings, flags, strategy
-    if len(nodes) > 18:
+
+    max_soft = int(constraints.get("max_nodes_soft") or 16)
+    max_hard = int(constraints.get("max_nodes_hard") or 22)
+    if len(nodes) > max_hard:
         flags.append("complex_graph")
         warnings.append("节点过多，建议分组或拆成多张图")
         strategy = "grouped"
-    if subtype in {"process_flow", "business_workflow", "timeline_roadmap", "timeline", "roadmap"}:
+    elif len(nodes) > max_soft:
+        flags.append("dense_graph")
+        warnings.append("节点偏多，将启用紧凑布局")
+
+    for field in constraints["required_fields"]:
+        if field in {"nodes", "edges"}:
+            continue
+        if not parsed_spec.get(field):
+            flags.append(f"missing_{field}")
+            warnings.append(f"缺少推荐字段 {field}")
+
+    if st in {"process_flow", "business_workflow", "mechanism_diagram"}:
         if len(edges) < max(0, len(nodes) - 1):
             flags.append("edge_gap")
             warnings.append("流程/时间线边数量不足，渲染前会尝试补齐顺序连线")
-        strategy = "TB" if subtype in {"process_flow", "business_workflow"} else ("LR" if len(nodes) <= 8 else "TB_STACKED")
-    if subtype in {"decision_tree", "decision_flow"} and len(edges) < max(0, len(nodes) - 1):
+        strategy = policy.strategies[0] if policy.strategies else "TB"
+    elif st in {"timeline_roadmap", "timeline", "roadmap"}:
+        if len(edges) < max(0, len(nodes) - 1):
+            flags.append("edge_gap")
+            warnings.append("时间线边数量不足，渲染前会尝试补齐顺序连线")
+        strategy = "snake" if len(nodes) > 6 else "LR"
+    if st in {"decision_tree", "decision_flow"} and len(edges) < max(0, len(nodes) - 1):
         flags.append("decision_edge_gap")
         warnings.append("决策树分支不完整，渲染前会尝试补齐父子连线")
+        strategy = "TB_Decision"
     if parsed_spec.get("title") and _visual_len(str(parsed_spec.get("title"))) > 28:
         flags.append("long_title")
         warnings.append("图内标题过长，已压缩为短标题")
@@ -290,15 +324,17 @@ def build_classification_record(
         numeric = True
 
     renderer = resolve_renderer_key(subtype, has_numeric_data=numeric)
-    if _image_api_safe_for_structured(parsed.parsed_spec, subtype):
+    if subtype == "chart":
+        renderer = RENDERER_STRUCTURED_CHART
+    if _image_api_safe_for_structured(parsed.parsed_spec, subtype) and subtype != "chart":
         renderer = RENDERER_ILLUSTRATION
         parsed.parsed_spec.setdefault("quality_flags", []).append("image_api_structured_visual")
         parsed.parsed_spec.setdefault("render_warnings", []).append("低文字结构视觉图允许使用 Image API，并保留结构化计划用于审查")
     # Only real scene illustrations go to Image API. Text-heavy information graphics should stay structured.
     if intent.diagram_family == "illustration" and subtype in {"scene_illustration", "case_scene", "future_scene", "human_ai_scene"}:
         renderer = RENDERER_ILLUSTRATION
-    if subtype == "chart" and not numeric:
-        renderer = RENDERER_NEED_DATA
+    if subtype == "chart":
+        renderer = RENDERER_STRUCTURED_CHART
 
     image_type = SUBTYPE_TO_LEGACY_IMAGE_TYPE.get(subtype, "concept_diagram")
     if renderer == RENDERER_ILLUSTRATION:
@@ -324,7 +360,8 @@ def build_classification_record(
     if visual_plan and visual_plan.style:
         style = visual_plan.style
 
-    semantic_ir = (ir_bundle or {}).get("semantic_ir") if ir_bundle else None
+    ir = ir_bundle or {}
+    semantic_ir = ir.get("semantic_ir") or ir.get("native_ir")
     quality_report = initial_quality_report(
         ctx=ctx,
         intent=intent,
@@ -332,6 +369,15 @@ def build_classification_record(
         quality_flags=quality_flags,
         render_warnings=render_warnings,
     )
+    structural_critic = ir.get("structural_critic")
+    if structural_critic:
+        evidence = quality_report.setdefault("evidence", {})
+        evidence["structural_critic"] = structural_critic
+        if structural_critic.get("status") == "warning":
+            from app.services.quality import QualityStatus, worst_status
+
+            quality_report["status"] = worst_status(quality_report.get("status"), QualityStatus.warning)
+            quality_report.setdefault("warnings", []).append("structural_critic_warning")
 
     prompt_spec = {
         "title": title,
@@ -349,7 +395,6 @@ def build_classification_record(
         if visual_plan.layout:
             layout_strategy = visual_plan.layout
 
-    ir = ir_bundle or {}
     if parsed.parsed_spec.get("layout_strategy"):
         layout_strategy = str(parsed.parsed_spec.get("layout_strategy") or layout_strategy)
 
@@ -376,4 +421,6 @@ def build_classification_record(
         intent_understanding=ir.get("intent_understanding"),
         intent_candidates=intent_candidates,
         quality_report=quality_report,
+        pipeline_trace=list(ctx.pipeline_trace or []) or None,
+        structural_critic=structural_critic,
     )

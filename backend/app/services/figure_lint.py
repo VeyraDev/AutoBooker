@@ -54,6 +54,9 @@ def lint_figures(md: str, figures: list[Figure] | None) -> dict[str, Any]:
         quality_issue = _quality_report_issue(fig, _figure_quote((fig.figure_number or "").strip(), (fig.caption or fig.raw_annotation or "").strip()))
         if quality_issue:
             issues.append(quality_issue)
+        semantic_issue = _figure_semantic_alignment_issue(fig, md, _figure_quote((fig.figure_number or "").strip(), (fig.caption or fig.raw_annotation or "").strip()))
+        if semantic_issue:
+            issues.append(semantic_issue)
 
     for number, count in seen_numbers.items():
         if number and count > 1:
@@ -179,6 +182,42 @@ def _figure_quote(number: str, caption: str) -> str:
 def _has_source(text: str) -> bool:
     t = text.lower()
     return "来源" in text or "资料" in text or "source" in t or "据" in text
+
+
+def _figure_semantic_alignment_issue(fig: Figure, md: str, quote: str) -> dict[str, Any] | None:
+    clf = getattr(fig, "classification_json", None)
+    if not isinstance(clf, dict):
+        return None
+    semantic_ir = clf.get("semantic_ir")
+    if not isinstance(semantic_ir, dict):
+        return None
+    labels = [str(o.get("name") or "") for o in (semantic_ir.get("objects") or []) if isinstance(o, dict)]
+    labels = [x for x in labels if x]
+    if not labels or not quote:
+        return None
+    number = (fig.figure_number or "").strip()
+    if not number:
+        return None
+    ref = f"图{number}"
+    if ref not in (md or ""):
+        return None
+    idx = (md or "").find(ref)
+    context = (md or "")[max(0, idx - 120) : min(len(md or ""), idx + 200)]
+    matched = [lbl for lbl in labels if lbl in context or lbl in (md or "")]
+    if len(matched) >= max(1, len(labels) // 3):
+        return None
+    loc = locate_issue_anchor(md, quote=ref)
+    return _issue(
+        "figure_semantic_mismatch",
+        "low",
+        "正文与图语义可能不一致",
+        f"正文引用图 {number}，但图中关键实体（{', '.join(labels[:4])}）未在引用上下文中出现。",
+        quote or ref,
+        paragraph_index=loc.paragraph_index,
+        char_start=loc.char_start,
+        char_end=loc.char_end,
+        quality_evidence={"figure_labels": labels[:12], "context": context[:200]},
+    )
 
 
 def _broken_path(fig: Figure) -> bool:

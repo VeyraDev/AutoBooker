@@ -13,7 +13,13 @@ from app.models.chapter import Chapter
 from app.models.figure import Figure
 from app.services.preface_service import get_preface
 from app.services.publication.book_ast import AstBlock, BookAst
+from app.services.figure_service import repair_figure_file
+from app.services.figures.export_assets import prepare_book_figures_for_export
 from app.services.tiptap_convert import _inline_to_markdown
+
+
+def _strip_url_query(url: str | None) -> str:
+    return str(url or "").strip().split("?", 1)[0].split("#", 1)[0].strip()
 
 TABLE_CAPTION_RE = re.compile(r"^表\s*(\d+)\s*[-–—]\s*(\d+)\s*[:：]\s*(.+)$")
 FIGURE_CAPTION_RE = re.compile(r"^图\s*(\d+)\s*[-–—]\s*(\d+)\s*[:：]\s*(.+)$")
@@ -41,6 +47,7 @@ def _walk_tiptap(
     nodes: list[dict[str, Any]],
     blocks: list[AstBlock],
     *,
+    book_id: str,
     chapter_index: int,
     table_counter: list[int],
     figure_by_id: dict[str, Figure],
@@ -113,8 +120,18 @@ def _walk_tiptap(
             num = str(attrs.get("figureNumber") or (fig.figure_number if fig else "") or "").strip()
             cap = str(attrs.get("caption") or attrs.get("rawAnnotation") or "").strip()
             label = f"图 {num}" if num else "图"
-            if fig and fig.file_url and not attrs.get("fileUrl"):
-                attrs["fileUrl"] = fig.file_url
+            attrs["book_id"] = book_id
+            attrs["chapter_index"] = fig.chapter_index if fig else chapter_index
+            if fig:
+                if fig.file_url:
+                    attrs["fileUrl"] = _strip_url_query(fig.file_url)
+                if getattr(fig, "svg_url", None):
+                    attrs["svgUrl"] = _strip_url_query(fig.svg_url)
+                if fig.file_path:
+                    attrs["file_path"] = fig.file_path
+            else:
+                attrs["fileUrl"] = _strip_url_query(str(attrs.get("fileUrl") or ""))
+                attrs["svgUrl"] = _strip_url_query(str(attrs.get("svgUrl") or ""))
             node_for_export = {**node, "attrs": {**(node.get("attrs") or {}), **attrs}}
             blocks.append(
                 AstBlock(role="figure", text=label, attrs={**attrs, "tiptap_node": node_for_export})
@@ -146,12 +163,16 @@ def build_book_ast(book: Book, chapters: list[Chapter], db: Session) -> BookAst:
         _walk_tiptap(
             tj.get("content") or [],
             ast.blocks,
+            book_id=str(book.id),
             chapter_index=0,
             table_counter=[0],
             figure_by_id={},
         )
 
     figures = db.query(Figure).filter(Figure.book_id == book.id).all()
+    for fig in figures:
+        repair_figure_file(fig, db)
+    prepare_book_figures_for_export(figures)
     figure_by_id = {str(f.id): f for f in figures}
 
     for ch in chapters:
@@ -168,6 +189,7 @@ def build_book_ast(book: Book, chapters: list[Chapter], db: Session) -> BookAst:
             _walk_tiptap(
                 tj.get("content") or [],
                 ast.blocks,
+                book_id=str(book.id),
                 chapter_index=ch.index,
                 table_counter=[0],
                 figure_by_id=figure_by_id,

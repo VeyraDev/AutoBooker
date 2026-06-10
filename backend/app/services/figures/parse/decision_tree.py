@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import re
 
-from app.config import settings
-from app.llm.client import LLMClient
+from app.services.figures.parse.llm_helpers import call_llm_json, llm_available
 from app.services.figure_render.figure_structure import infer_structured_spec
 from app.services.figures.parse.generic_graph import parse_generic_graph
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
@@ -63,16 +62,9 @@ def _branches_to_graph(data: dict) -> dict:
 
 
 def parse_decision_tree(ctx: PipelineContext, intent: DiagramIntent) -> ParsedDiagram:
-    model = (ctx.model or settings.intent_model).strip()
-    if ctx.use_llm and model:
+    if llm_available(ctx):
         try:
-            out = LLMClient().chat_completion(
-                [{"role": "user", "content": _PROMPT.format(text=ctx.normalized_input[:3000])}],
-                model=model,
-                max_tokens=2048,
-                temperature=0.2,
-            )
-            data = parse_llm_json(out)
+            data = call_llm_json(ctx, _PROMPT, max_tokens=2048, temperature=0.2, text_limit=3000)
             if isinstance(data, dict) and data.get("branches"):
                 spec = _branches_to_graph(data)
                 if intent.title:

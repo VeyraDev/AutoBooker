@@ -25,15 +25,19 @@ class EdgeRoute:
     points: list[tuple[float, float]] = field(default_factory=list)
     label: str = ""
     style: str = "solid"
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "source": self.source,
             "target": self.target,
             "points": [[x, y] for x, y in self.points],
             "label": self.label,
             "style": self.style,
         }
+        if self.meta:
+            out["meta"] = dict(self.meta)
+        return out
 
 
 @dataclass
@@ -43,12 +47,16 @@ class LayoutResult:
     node_positions: dict[str, NodePosition] = field(default_factory=dict)
     edge_routes: list[EdgeRoute] = field(default_factory=list)
     canvas: dict[str, float] = field(default_factory=lambda: {"width": 800, "height": 600})
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "strategy": self.strategy,
             "direction": self.direction,
             "node_positions": {k: v.to_dict() for k, v in self.node_positions.items()},
             "edge_routes": [e.to_dict() for e in self.edge_routes],
             "canvas": dict(self.canvas),
         }
+        if self.meta:
+            out["meta"] = dict(self.meta)
+        return out

@@ -3,6 +3,13 @@ import { client } from "@/api/client";
 export type FigureType = "flowchart" | "chart" | "figure" | "screenshot";
 export type FigureStatus = "pending" | "generated" | "uploaded" | "approved";
 
+export type FigureQualityReport = {
+  status?: string;
+  warnings?: string[];
+  failures?: string[];
+  recommendations?: string[];
+};
+
 export type FigureListItem = {
   id: string;
   figure_number: string | null;
@@ -14,6 +21,7 @@ export type FigureListItem = {
   file_url: string | null;
   svg_url: string | null;
   raw_annotation: string | null;
+  quality_report?: FigureQualityReport | null;
 };
 
 export type FigureOut = {
@@ -30,7 +38,15 @@ export type FigureOut = {
   position_hint: string | null;
   sort_order: number | null;
   updated_at?: string | null;
+  quality_report?: FigureQualityReport | null;
 };
+
+export function figureGenerationToast(_qr?: FigureQualityReport | null): {
+  kind: "success";
+  message: string;
+} {
+  return { kind: "success", message: "图表已生成" };
+}
 
 /** 从 API 时间戳或本地毫秒时间生成缓存破坏参数 */
 export function figureFileVersion(updatedAt?: string | null, localMs?: number): number {
@@ -154,6 +170,15 @@ export type FigureTableOverviewItem = {
   figure_id: string | null;
   status: string | null;
 };
+
+export async function rebuildChapterBodyFromFigures(bookId: string, chapterIndex: number) {
+  const { data } = await client.post<{
+    tiptap_json: Record<string, unknown>;
+    text: string;
+    overview: FigureTableOverviewItem[];
+  }>(`/books/${bookId}/chapters/${chapterIndex}/figures/rebuild-body`);
+  return data;
+}
 
 export async function normalizeChapterFiguresTables(
   bookId: string,

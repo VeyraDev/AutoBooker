@@ -267,6 +267,10 @@ def confirm_review_application(
     if issue:
         review_repository.set_issue_status(db, issue, "resolved")
         review = db.get(ChapterReview, issue.review_id)
+        book = book_service.get_book_or_404(book_id, user, db)
+        if review and app.affected_dimensions:
+            _partial_recheck_dimensions(book, ch, _chapter_markdown(ch), db, review, list(app.affected_dimensions or []))
+            review = db.get(ChapterReview, issue.review_id)
         after_score = {"total_score": review.total_score, "dimensions": review.dimensions} if review else None
         app.score_after = after_score
         changes, warning = score_changes(
@@ -423,6 +427,66 @@ def apply_review_issue(
     )
 
 
+def _partial_recheck_dimensions(book, ch: Chapter, md: str, db: Session, review: ChapterReview, keys: list[str]) -> None:
+    """应用 issue 后仅重跑程序化 detector，更新受影响维度分数。"""
+    canonical = canonical_markdown(md)
+    detector_dims: dict[str, Any] = {}
+    for d in review.dimensions or []:
+        if not isinstance(d, dict):
+            continue
+        key = str(d.get("key") or d.get("dimension") or "")
+        if not key:
+            continue
+        detector_dims[key] = {
+            "raw_score": d.get("raw_score"),
+            "summary": d.get("summary"),
+            "status": d.get("status") or "completed",
+            "detector": d.get("detector"),
+            "confidence": d.get("confidence"),
+        }
+    key_set = set(keys)
+
+    if "citation_sources" in key_set or "factual_support" in key_set:
+        citation = lint_chapter_citation_detector(
+            canonical,
+            db,
+            book.id,
+            bracket_style=(book.citation_style and book.citation_style.value == "gb_t7714"),
+        )
+        detector_dims["citation_sources"] = citation
+        if "factual_support" in key_set and "factual_support" in detector_dims:
+            penalty = min(30, sum(int(i.get("penalty") or 0) for i in (citation.get("issues") or [])))
+            row = detector_dims["factual_support"]
+            base = int(row.get("raw_score") or 70)
+            row["effective_score"] = max(0, base - penalty)
+
+    if "figure_quality" in key_set:
+        figures = db.query(Figure).filter(Figure.book_id == book.id, Figure.chapter_index == ch.index).all()
+        detector_dims["figure_quality"] = lint_figures(canonical, figures)
+
+    if "ai_signature" in key_set or "style_consistency" in key_set:
+        ai_dim, _ = _ai_detector_result(canonical)
+        detector_dims["ai_signature"] = ai_dim
+
+    open_issues = [
+        {
+            "dimension": i.dimension,
+            "issue_type": i.issue_type,
+            "severity": i.severity,
+            "penalty": i.penalty,
+            "status": i.status,
+            "detector": i.detector,
+        }
+        for i in (review.issues or [])
+        if i.status == "open"
+    ]
+    dimensions, total, status_text = aggregate_review(detector_dims, open_issues)
+    review.dimensions = dimensions
+    review.total_score = total
+    review.status = status_text
+    db.commit()
+
+
 def _create_review_report(book, ch: Chapter, md: str, db: Session) -> ChapterReview:
     canonical = canonical_markdown(md)
     digest = snapshot_hash(canonical)
@@ -439,6 +503,7 @@ def _create_review_report(book, ch: Chapter, md: str, db: Session) -> ChapterRev
         book_type=book.book_type.value,
         citation_style=book.citation_style.value if book.citation_style else "无",
         user_material=(book.user_material or ""),
+        narrative_constitution=(book.narrative_constitution or ""),
         approved_citations=cite_lines,
         figure_summaries=figure_lines,
     )
@@ -453,6 +518,16 @@ def _create_review_report(book, ch: Chapter, md: str, db: Session) -> ChapterRev
         bracket_style=(book.citation_style and book.citation_style.value == "gb_t7714"),
     )
     detector_dims["citation_sources"] = citation
+    citation_quotes = {str(i.get("quote") or "")[:160] for i in (citation.get("issues") or [])}
+    issues = [
+        i
+        for i in issues
+        if not (
+            i.get("dimension") in {"factual_support", "citation_sources"}
+            and str(i.get("quote") or "")[:160] in citation_quotes
+            and i.get("detector") == "review_agent"
+        )
+    ]
     issues.extend(citation.get("issues") or [])
 
     figure = lint_figures(canonical, figures)
@@ -464,16 +539,14 @@ def _create_review_report(book, ch: Chapter, md: str, db: Session) -> ChapterRev
     issues.extend(ai_issues)
 
     for key in REVIEW_DIMENSIONS:
-        detector_dims.setdefault(
-            key,
-            {
-                "raw_score": 80,
-                "summary": "该维度未返回详细审校结果，使用默认基线分。",
-                "confidence": 0.45,
+        if key not in detector_dims:
+            detector_dims[key] = {
+                "raw_score": None,
+                "summary": "该维度未返回详细审校结果，不计入总分。",
+                "confidence": 0.0,
                 "status": "partial",
                 "detector": REVIEW_DIMENSIONS[key]["detector"],
-            },
-        )
+            }
 
     anchored: list[dict[str, Any]] = []
     for issue in issues:
@@ -482,6 +555,16 @@ def _create_review_report(book, ch: Chapter, md: str, db: Session) -> ChapterRev
         anchored.append(item)
 
     dimensions, total, status_text = aggregate_review(detector_dims, anchored)
+    detector_coverage = {
+        key: {
+            "status": str((detector_dims.get(key) or {}).get("status") or "partial"),
+            "detector": str((detector_dims.get(key) or {}).get("detector") or REVIEW_DIMENSIONS[key]["detector"]),
+        }
+        for key in REVIEW_DIMENSIONS
+    }
+    for row in dimensions:
+        key = str(row.get("key") or row.get("dimension") or "")
+        row["detector_coverage"] = detector_coverage.get(key, {})
     return review_repository.create_review(
         db,
         chapter=ch,
@@ -619,13 +702,16 @@ def _review_out(review: ChapterReview, ch: Chapter, *, current_md: str) -> Chapt
 
 def _dimension_out(raw: dict[str, Any]) -> ReviewDimensionOut:
     key = str(raw.get("key") or raw.get("dimension") or "")
-    effective = int(raw.get("effective_score", raw.get("score", raw.get("raw_score", 0))) or 0)
+    raw_score_val = raw.get("raw_score")
+    effective = raw.get("effective_score", raw.get("score", raw_score_val))
+    effective_int = int(effective) if effective is not None else 0
+    raw_int = int(raw_score_val) if raw_score_val is not None else effective_int
     return ReviewDimensionOut(
         key=key,
         dimension=key,
         label=str(raw.get("label") or dimension_labels().get(key, key)),
         weight=int(raw.get("weight") or 0),
-        raw_score=int(raw.get("raw_score", effective) or 0),
+        raw_score=raw_int,
         effective_score=effective,
         score=effective,
         issue_count=int(raw.get("issue_count") or 0),

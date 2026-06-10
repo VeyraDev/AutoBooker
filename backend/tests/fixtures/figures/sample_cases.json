@@ -1,0 +1,17 @@
+[
+  {
+    "description": "用户注册流程：提交申请、管理员审核、开通账号",
+    "expected_subtype": "process_flow",
+    "expected_family": "workflow"
+  },
+  {
+    "description": "RAG系统架构：用户查询、检索器、向量库、大模型",
+    "expected_subtype": "system_architecture",
+    "expected_family": "architecture"
+  },
+  {
+    "description": "画一张未来城市氛围插画，人物仰望星空",
+    "expected_subtype": "scene_illustration",
+    "expected_family": "illustration"
+  }
+]

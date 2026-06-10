@@ -1,0 +1,38 @@
+[
+  {
+    "name": "flow",
+    "subtype": "process_flow",
+    "grammar": "process_flow",
+    "render_profile": "svg.flow"
+  },
+  {
+    "name": "architecture",
+    "subtype": "system_architecture",
+    "grammar": "architecture",
+    "render_profile": "svg.architecture"
+  },
+  {
+    "name": "mechanism",
+    "subtype": "mechanism_diagram",
+    "grammar": "mechanism",
+    "render_profile": "svg.mechanism"
+  },
+  {
+    "name": "concept",
+    "subtype": "concept_diagram",
+    "grammar": "radial_concept",
+    "render_profile": "svg.radial"
+  },
+  {
+    "name": "network",
+    "subtype": "knowledge_graph",
+    "grammar": "network",
+    "render_profile": "svg.network"
+  },
+  {
+    "name": "decision",
+    "subtype": "decision_tree",
+    "grammar": "decision_tree",
+    "render_profile": "svg.decision"
+  }
+]

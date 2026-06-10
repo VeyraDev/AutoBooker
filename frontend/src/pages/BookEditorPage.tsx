@@ -17,7 +17,12 @@ import {
 } from "@/api/chapters";
 import { generateOutline, getOutline, putOutline } from "@/api/outline";
 import { getPreface, openPrefaceGenerateStream, putPreface, type PrefaceData } from "@/api/preface";
-import type { FigureOut, FigureTableOverviewItem } from "@/api/figures";
+import {
+  rebuildChapterBodyFromFigures,
+  type FigureListItem,
+  type FigureOut,
+  type FigureTableOverviewItem,
+} from "@/api/figures";
 import AddChapterDialog from "@/components/editor/AddChapterDialog";
 import type { AddChapterFormValues } from "@/components/editor/AddChapterDialog";
 import BookSettingsModal from "@/components/editor/BookSettingsModal";
@@ -40,6 +45,7 @@ import { effectiveSceneModel } from "@/lib/bookAiModels";
 import { phaseOf, type Phase } from "@/lib/bookStatus";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import type { Chapter } from "@/types/chapter";
+import { isChapterBodyEffectivelyEmpty } from "@/lib/chapterBodyEmpty";
 import type { OutlineChapter, OutlineChapterPatch } from "@/types/outline";
 
 /** 稳定引用：避免 outline 未返回时每次 render 新建 [] 触发下游 effect 抖动 */
@@ -158,6 +164,7 @@ export default function BookEditorPage() {
   const streamingIndexRef = useRef<number | null>(null);
   const streamingPrefaceRef = useRef(false);
   const applyingServerContentRef = useRef(false);
+  const bodyRebuildAttemptRef = useRef<string | null>(null);
   const prevChapterIndexNavRef = useRef<number | null>(null);
   const { start: startStream } = useChapterStream();
   const { status: saveStatus, savedAt, scheduleSave } = useAutoSave();
@@ -306,6 +313,58 @@ export default function BookEditorPage() {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "auto" });
     editorMainScrollRef.current?.scrollTo?.({ top: 0, behavior: "auto" });
+  }, [chapterDetail?.id]);
+
+  /** 正文被清空但图表库仍有记录时，自动从图表恢复编辑区 */
+  useEffect(() => {
+    if (!bookId || chapterIndex == null || !chapterDetail) return;
+    if (streamingIndex === chapterIndex) return;
+    if (bodyRebuildAttemptRef.current === chapterDetail.id) return;
+
+    const co = (chapterDetail.content ?? {}) as Record<string, unknown>;
+    if (!isChapterBodyEffectivelyEmpty(co)) return;
+    const figuresCache = qc.getQueryData<FigureListItem[]>(["figures", bookId]);
+    const hasFigures =
+      figureTableOverview.length > 0 ||
+      (figuresCache ?? []).some((f) => f.chapter === chapterIndex);
+    if (!hasFigures) return;
+
+    bodyRebuildAttemptRef.current = chapterDetail.id;
+    void rebuildChapterBodyFromFigures(bookId, chapterIndex)
+      .then((res) => {
+        applyingServerContentRef.current = true;
+        editorRef.current?.applyServerContent({
+          tiptap_json: res.tiptap_json,
+          text: res.text,
+        });
+        applyingServerContentRef.current = false;
+        const nextContent = {
+          ...co,
+          tiptap_json: res.tiptap_json,
+          text: res.text,
+          figure_table_overview: res.overview,
+        };
+        qc.setQueryData(["chapter", bookId, chapterIndex], {
+          ...chapterDetail,
+          content: nextContent,
+          word_count: res.text.replace(/\s/g, "").length,
+        });
+        toast.success(`已从 ${res.overview.length} 张图恢复本章正文`);
+      })
+      .catch(() => {
+        bodyRebuildAttemptRef.current = null;
+      });
+  }, [
+    bookId,
+    chapterIndex,
+    chapterDetail,
+    figureTableOverview.length,
+    streamingIndex,
+    qc,
+  ]);
+
+  useEffect(() => {
+    bodyRebuildAttemptRef.current = null;
   }, [chapterDetail?.id]);
 
   /** 切回正在生成的章节时，用已累计的正文一次性对齐编辑器 */
@@ -1348,6 +1407,17 @@ export default function BookEditorPage() {
                                 applyingServerContentRef.current
                               )
                                 return;
+                              const prevCo = (chapterDetail.content ?? {}) as Record<string, unknown>;
+                              if (
+                                chapterHasBody(chapterDetail) &&
+                                isChapterBodyEffectivelyEmpty({
+                                  text: p.text,
+                                  tiptap_json: p.json,
+                                }) &&
+                                !isChapterBodyEffectivelyEmpty(prevCo)
+                              ) {
+                                return;
+                              }
                               setLiveChapterChars(p.characters);
                               recordChars(p.characters);
                               setDailyWordsTick((x) => x + 1);
@@ -1499,6 +1569,7 @@ export default function BookEditorPage() {
                           status: fig.status,
                           caption: fig.caption,
                           figure_type: fig.figure_type,
+                          updated_at: fig.updated_at,
                         },
                         { targetFigureId: fig.id },
                       );

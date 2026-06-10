@@ -5,8 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.config import settings
-from app.llm.client import LLMClient
+from app.services.figures.parse.llm_helpers import call_llm_json, llm_available
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
 from app.utils.json_llm import parse_llm_json
 
@@ -100,22 +99,13 @@ def _to_graph(title: str, blocks: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def parse_infographic(ctx: PipelineContext, intent: DiagramIntent) -> ParsedDiagram:
-    model = (ctx.model or settings.intent_model).strip()
-    if ctx.use_llm and model:
-        try:
-            out = LLMClient().chat_completion(
-                [{"role": "user", "content": _PROMPT.format(text=ctx.normalized_input[:2500])}],
-                model=model,
-                max_tokens=2000,
-                temperature=0.1,
-            )
-            data = parse_llm_json(out)
-            if isinstance(data, dict):
-                blocks = _normalize_blocks(data.get("blocks"))
-                if blocks:
-                    title = _short(data.get("title") or intent.title or "信息图", 24)
-                    return ParsedDiagram(_to_graph(title, blocks), "llm_infographic")
-        except Exception:
-            pass
+    if llm_available(ctx):
+        data = call_llm_json(ctx, _PROMPT, max_tokens=2000)
+        if isinstance(data, dict):
+            blocks = _normalize_blocks(data.get("blocks"))
+            if blocks:
+                title = _short(data.get("title") or intent.title or "信息图", 24)
+                return ParsedDiagram(_to_graph(title, blocks), "llm_infographic")
+        return ParsedDiagram({"title": _short(intent.title or "信息图", 24)}, "llm_infographic_failed")
     blocks = _rule_blocks(ctx.normalized_input) or [{"label": "要点", "items": []}]
     return ParsedDiagram(_to_graph(_short(intent.title or "信息图", 24), blocks), "rules_infographic")

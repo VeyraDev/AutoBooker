@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="231" height="270" viewBox="0 0 231 270">
+<rect width="100%" height="100%" fill="#F8FAFC"/>
+<defs>
+<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#0F172A" flood-opacity="0.12"/></filter>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748B"/></marker>
+</defs>
+<text x="115.3" y="22.0" fill="#0F172A" font-size="16" text-anchor="middle" dominant-baseline="middle">&quot;大语言模型&quot;</text>
+<polyline points="115.3,91.0 115.3,179.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="48.0" y="48.0" width="134.7" height="40.0" rx="8" fill="#EEF3FD" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="115.3" y="74.0" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">&quot;大语言模型&quot;</text>
+<rect x="60.1" y="182.0" width="110.4" height="40.0" rx="8" fill="#EEF3FD" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="115.3" y="208.0" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">i</text>
+</svg>

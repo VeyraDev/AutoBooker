@@ -1,36 +1,25 @@
-"""Semantic IR 抽取（LLM 主路径 + 旧 semantic_plan fallback）。"""
+"""Semantic Native IR 抽取（V2 遗留，主路径已迁移至 brief/compiler）。"""
 
 from __future__ import annotations
 
 import logging
-import re
+import warnings
 from typing import Any
 
 from app.config import settings
 from app.llm.client import LLMClient
-from app.services.figures.parse.semantic_plan import call_semantic_plan
+from app.services.figures.intent.taxonomy import canonical_subtype
 from app.services.figures.prompts import format_prompt
 from app.services.figures.schemas.diagram import DiagramIntent, PipelineContext
+from app.services.figures.semantic.critic import run_semantic_critic
 from app.services.figures.semantic.normalizer import is_usable_semantic_ir, normalize_semantic_ir
-from app.services.figures.semantic.schema import SemanticEvent, SemanticIR, SemanticObject, SemanticReference
+from app.services.figures.semantic.repair import repair_semantic_ir
+from app.services.figures.semantic.schema import SemanticIR
 from app.utils.json_llm import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
-_TYPE_MAP = {
-    "service": "service",
-    "api": "gateway",
-    "gateway": "gateway",
-    "user": "user",
-    "data": "database",
-    "database": "database",
-    "process": "process",
-    "decision": "decision",
-    "external": "external",
-    "group": "module",
-    "queue": "queue",
-    "module": "module",
-}
+MAX_REPAIR_ATTEMPTS = 2
 
 
 def extract_semantic_ir(
@@ -39,18 +28,74 @@ def extract_semantic_ir(
     *,
     understanding: dict[str, Any] | None = None,
 ) -> tuple[SemanticIR | None, str]:
-    """返回 (SemanticIR, source)。"""
+    """Intent Understanding → Semantic Native IR → Critic → Repair（已废弃，仅供测试/兼容）。"""
+    warnings.warn(
+        "extract_semantic_ir is deprecated; use brief.visual + compiler.registry",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     ir = _call_semantic_ir_llm(ctx, intent, understanding=understanding)
-    if ir and is_usable_semantic_ir(ir):
-        ir, _ = normalize_semantic_ir(ir)
-        return ir, "semantic_ir_llm"
+    source = "semantic_native_llm"
 
-    legacy = call_semantic_plan(ctx, intent)
-    if legacy:
-        ir = _legacy_to_semantic_ir(legacy, intent)
-        ir, _ = normalize_semantic_ir(ir)
-        if is_usable_semantic_ir(ir):
-            return ir, "semantic_plan_fallback"
+    if not ir:
+        ir = _minimal_semantic_ir(intent, ctx, understanding)
+        source = "semantic_minimal_fallback"
+
+    subtype = canonical_subtype(intent.diagram_subtype)
+    ir, _ = normalize_semantic_ir(ir, subtype=subtype, text=ctx.normalized_input)
+    critic_meta: list[dict[str, Any]] = []
+
+    for attempt in range(MAX_REPAIR_ATTEMPTS + 1):
+        critic = run_semantic_critic(
+            ir,
+            ctx.normalized_input,
+            ctx=ctx,
+            diagram_type=intent.diagram_type or "",
+            diagram_subtype=subtype,
+        )
+        critic_meta.append(critic)
+        if critic.get("passed") and is_usable_semantic_ir(ir, subtype=intent.diagram_subtype):
+            ctx.pipeline_trace.append({
+                "step": "semantic_critic",
+                "passed": True,
+                "attempt": attempt,
+                "source": source,
+            })
+            return ir, source
+
+        if attempt >= MAX_REPAIR_ATTEMPTS:
+            break
+
+        repaired = repair_semantic_ir(ctx, intent, ir, critic.get("issues") or [], understanding=understanding)
+        if repaired:
+            ir, _ = normalize_semantic_ir(repaired, subtype=subtype, text=ctx.normalized_input)
+            source = "semantic_native_repaired"
+        else:
+            break
+
+    ctx.pipeline_trace.append({
+        "step": "semantic_critic",
+        "passed": False,
+        "issues": critic_meta[-1].get("issues") if critic_meta else [],
+        "source": source,
+    })
+
+    minimal = _minimal_semantic_ir(intent, ctx, understanding)
+    minimal, _ = normalize_semantic_ir(minimal, subtype=subtype, text=ctx.normalized_input)
+    from app.services.figures.semantic.flow_semantic import repair_process_flow_native
+
+    repaired_native = repair_process_flow_native(minimal.native_structure or {}, ctx.normalized_input)
+    if repaired_native.get("nodes"):
+        minimal = SemanticIR(
+            diagram_type=minimal.diagram_type,
+            title=minimal.title,
+            domain=minimal.domain,
+            native_structure=repaired_native,
+            visual_intent=minimal.visual_intent,
+        )
+    if is_usable_semantic_ir(minimal, subtype=intent.diagram_subtype):
+        return minimal, "semantic_rule_fallback"
+
     return None, "failed"
 
 
@@ -64,16 +109,14 @@ def _call_semantic_ir_llm(
     if not ctx.use_llm or not model or not ctx.normalized_input.strip():
         return None
     diagram_type = intent.diagram_type or "flowchart"
-    if understanding:
-        domain = str(understanding.get("domain") or "")
-        if domain:
-            diagram_type = diagram_type or "flowchart"
+    diagram_subtype = canonical_subtype(intent.diagram_subtype)
     layout_lines = "\n".join(f"- {x}" for x in (ctx.layout_instructions or [])) or "（无）"
     try:
         prompt = format_prompt(
             "semantic_ir",
             book_type=ctx.book_type or "nonfiction",
             diagram_type=diagram_type,
+            diagram_subtype=diagram_subtype,
             text=ctx.normalized_input[:3500],
             layout_instructions=layout_lines,
         )
@@ -83,7 +126,7 @@ def _call_semantic_ir_llm(
         out = LLMClient().chat_completion(
             [{"role": "system", "content": "只输出合法 JSON。"}, {"role": "user", "content": prompt}],
             model=model,
-            max_tokens=2000,
+            max_tokens=2400,
             temperature=0.0,
         )
         data = parse_llm_json(out)
@@ -97,84 +140,36 @@ def _call_semantic_ir_llm(
     return SemanticIR.from_dict(data)
 
 
-def _legacy_to_semantic_ir(data: dict[str, Any], intent: DiagramIntent) -> SemanticIR:
-    objects: list[SemanticObject] = []
-    for ent in data.get("entities") or []:
-        if not isinstance(ent, dict):
-            continue
-        objects.append(
-            SemanticObject(
-                id=str(ent.get("id") or ""),
-                name=str(ent.get("name") or ""),
-                kind=_TYPE_MAP.get(str(ent.get("type") or "process"), "process"),
-                importance=2,
-            )
-        )
-    events: list[SemanticEvent] = []
-    for rel in data.get("relations") or []:
-        if not isinstance(rel, dict):
-            continue
-        if rel.get("async"):
-            src = str(rel.get("from") or "")
-            tgt = str(rel.get("to") or "")
-            name_by_id = {o.id: o.name for o in objects}
-            events.append(
-                SemanticEvent(
-                    type="async_notification",
-                    sender=name_by_id.get(src, src),
-                    receiver=name_by_id.get(tgt, tgt),
-                    label=str(rel.get("label") or "异步"),
-                    async_flag=True,
-                    edge_style="dashed",
-                )
-            )
-    refs: list[SemanticReference] = []
-    unknowns: list[str] = []
-    for note in data.get("notes") or []:
-        note_s = str(note)
-        ref = _parse_ordinal_reference(note_s, objects)
-        if ref:
-            refs.append(ref)
-        elif "前" in note_s and "个" in note_s:
-            unknowns.append(note_s)
+def _minimal_semantic_ir(
+    intent: DiagramIntent,
+    ctx: PipelineContext,
+    understanding: dict[str, Any] | None,
+) -> SemanticIR:
+    """最后兜底：按 intent subtype 构造最小 native_structure（非 objects 扁平）。"""
+    from app.services.figures.intent.taxonomy import canonical_subtype, subtype_to_diagram_type
+
+    subtype = canonical_subtype(intent.diagram_subtype)
+    title = intent.title or ctx.normalized_input[:24] or "示意图"
+    from app.services.figures.semantic.native_bridge import expected_native_type
+
+    ntype = expected_native_type(subtype)
+    native: dict[str, Any] = {"type": ntype, "title": title}
+    if ntype == "concept":
+        native["concepts"] = [title]
+        native["relations"] = []
+    elif ntype == "infographic":
+        native["blocks"] = [{"label": title[:12], "items": []}]
+    elif ntype == "process_flow":
+        from app.services.figures.semantic.flow_semantic import infer_any_flow_from_text
+
+        inferred = infer_any_flow_from_text(ctx.normalized_input)
+        if inferred:
+            native = inferred
+
     return SemanticIR(
-        diagram_type=str(data.get("diagram_type") or intent.diagram_type or "flowchart"),
-        title=str(data.get("title") or intent.title or ""),
-        domain="",
-        objects=objects,
-        events=events,
-        relations=[dict(r) for r in (data.get("relations") or []) if isinstance(r, dict)],
-        references=refs,
-        groups=[dict(g) for g in (data.get("groups") or []) if isinstance(g, dict)],
-        unknowns=[str(n) for n in (data.get("notes") or [])] + unknowns,
-    )
-
-
-_ORDINAL_RE = re.compile(r"(.+?)(?:连接|连到|连向)?前([一二三四五六七八九十\d]+)个")
-_CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
-
-
-def _parse_ordinal_reference(note: str, objects: list[SemanticObject]) -> SemanticReference | None:
-    m = _ORDINAL_RE.search(note)
-    if not m:
-        return None
-    source = m.group(1).strip()
-    count_raw = m.group(2)
-    count = int(count_raw) if count_raw.isdigit() else _CN_NUM.get(count_raw, 3)
-    if not source:
-        for obj in objects:
-            if obj.kind == "gateway":
-                source = obj.name
-                break
-        if not source and objects:
-            source = objects[0].name
-    if not source:
-        return None
-    return SemanticReference(
-        type="ordinal_selection",
-        source=source,
-        target_set="services",
-        range_start=1,
-        range_end=count,
-        action="connect",
+        diagram_type=intent.diagram_type or subtype_to_diagram_type(subtype),
+        title=title,
+        domain=str((understanding or {}).get("domain") or "general"),
+        native_structure=native,
+        visual_intent={"goal": (understanding or {}).get("goal") or ""},
     )

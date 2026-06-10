@@ -36,11 +36,7 @@ function attrsFromFigure(
   const idMissing = !str(current.figureId);
   const currentVersion = Number(current.fileVersion ?? 0) || 0;
   const serverVersion = figureFileVersion(fig.updated_at, Date.now());
-  if (urlChanged || statusChanged || idMissing) {
-    next.fileVersion = Math.max(currentVersion, serverVersion);
-  } else {
-    next.fileVersion = Math.max(currentVersion, serverVersion);
-  }
+  next.fileVersion = Math.max(currentVersion, serverVersion);
 
   const keys = [
     "figureId",

@@ -11,6 +11,9 @@ from app.utils.json_llm import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
+MAX_ISSUES = 12
+MAX_CHUNK_ISSUES = 30
+
 REVIEW_SYSTEM = """你是一位资深图书审校编辑，熟悉中文非虚构与学术专著的出版规范。
 请对提交的章节正文做专业审校，输出严格 JSON（不要 markdown 代码块外的任何文字）。
 
@@ -82,6 +85,7 @@ class ReviewAgent:
         book_type: str,
         citation_style: str,
         user_material: str = "",
+        narrative_constitution: str = "",
         approved_citations: list[str] | None = None,
         figure_summaries: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -103,9 +107,10 @@ class ReviewAgent:
                 user_material=user_material,
                 approved_citations=approved_citations,
                 figure_summaries=figure_summaries,
+                narrative_constitution=narrative_constitution,
             )
 
-        truncated = text[:28_000]
+        truncated = _preprocess_code_blocks(text[:28_000])
         user_parts = [
             f"书名：{book_title or '未命名'}",
             f"类型：{book_type}",
@@ -113,6 +118,8 @@ class ReviewAgent:
             f"章节标题：{chapter_title}",
             CHAPTER_PUBLICATION_STANDARDS,
         ]
+        if (narrative_constitution or "").strip():
+            user_parts.append(f"【全书叙事宪法】\n{narrative_constitution.strip()[:2000]}")
         if user_material.strip():
             user_parts.append(f"作者写作约束（审校时参考）：\n{user_material[:3000]}")
         if approved_citations:
@@ -148,7 +155,7 @@ class ReviewAgent:
         if not isinstance(issues, list):
             issues = []
         normalized: list[dict[str, Any]] = []
-        for i, item in enumerate(issues[:12]):
+        for i, item in enumerate(issues[:MAX_ISSUES]):
             if not isinstance(item, dict):
                 continue
             normalized.append(
@@ -220,6 +227,7 @@ class ReviewAgent:
         book_type: str,
         citation_style: str,
         user_material: str = "",
+        narrative_constitution: str = "",
         approved_citations: list[str] | None = None,
         figure_summaries: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -235,9 +243,10 @@ class ReviewAgent:
                 user_material=user_material,
                 approved_citations=approved_citations,
                 figure_summaries=figure_summaries,
+                narrative_constitution=narrative_constitution,
             )
             chunk_results.append((len(chunk), result))
-        return _merge_chunk_reviews(chunk_results)
+        return _merge_chunk_reviews(chunk_results, max_issues=MAX_CHUNK_ISSUES)
 
 
 def _split_review_chunks(text: str, *, limit: int = 16_000) -> list[str]:
@@ -266,7 +275,23 @@ def _split_review_chunks(text: str, *, limit: int = 16_000) -> list[str]:
     return chunks or [text]
 
 
-def _merge_chunk_reviews(chunk_results: list[tuple[int, dict[str, Any]]]) -> dict[str, Any]:
+def _preprocess_code_blocks(text: str) -> str:
+    """代码块括号粗检，供 LLM 参考。"""
+    import re
+
+    notes: list[str] = []
+    for m in re.finditer(r"```(\w+)?\n([\s\S]*?)```", text):
+        body = m.group(2) or ""
+        if body.count("(") != body.count(")"):
+            notes.append("某代码块圆括号可能不匹配")
+        if body.count("{") != body.count("}"):
+            notes.append("某代码块花括号可能不匹配")
+    if notes:
+        return text + "\n\n【程序化代码块提示】" + "；".join(dict.fromkeys(notes))
+    return text
+
+
+def _merge_chunk_reviews(chunk_results: list[tuple[int, dict[str, Any]]], *, max_issues: int = MAX_CHUNK_ISSUES) -> dict[str, Any]:
     total_len = sum(max(1, length) for length, _ in chunk_results) or 1
     dim_acc: dict[str, dict[str, Any]] = {}
     issues: list[dict[str, Any]] = []
@@ -320,7 +345,7 @@ def _merge_chunk_reviews(chunk_results: list[tuple[int, dict[str, Any]]]) -> dic
     return {
         "summary": "长章分块审校完成：" + "；".join(summaries[:4]),
         "dimensions": dimensions,
-        "issues": issues[:18],
+        "issues": issues[:max_issues],
     }
 
 

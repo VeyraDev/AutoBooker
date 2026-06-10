@@ -1,0 +1,80 @@
+﻿=== 绗?绔犻厤鍥惧潡 vs 棰樻敞 ===
+figure鍧? 33, 棰樻敞: 34
+
+=== 鍒嗙被缁熻(绗?绔? ===
+figure_type: {'figure': 32, 'screenshot': 1}
+renderer: {'structured.generic_graph': 7, 'structured.architecture': 14, 'structured.taxonomy': 2, 'structured.timeline': 2, 'structured.comparison': 6, 'illustration.image_api': 1, '': 1}
+sub_kind: {'process_flow': 6, 'rag': 2, 'system_architecture': 3, 'taxonomy_map': 2, 'decision_tree': 2, 'timeline_roadmap': 2, 'comparison_matrix': 4, 'transformer': 1, 'mechanism_diagram': 1, 'concept_diagram': 2, 'chart': 4, 'scene_illustration': 2, 'infographic': 1}
+status: {'generated': 32, 'pending': 1}
+
+=== 閫愬浘鏄庣粏 ===
+鍥惧彿     绫诲瀷         娓叉煋鍣?         瀛愮被             鍍忕礌           瀹介珮姣?   璐ㄩ噺       棰樻敞/鏍囨敞
+1-1    figure     structured.generic_graph process_flow   776x214      3.63   passed   鐢ㄦ埛娉ㄥ唽娴佺▼锛屼粠濉啓琛ㄥ崟寮€濮嬶紝缁忚繃閭欢楠岃瘉銆佸畬鍠勮祫鏂欙紝鏈€缁堝畬鎴愭敞鍐岋紝鍏?涓楠わ紝 [!]svg_only_no_png
+1-2    figure     structured.generic_graph process_flow   508x606      0.84   passed   澶фā鍨嬪井璋冩祦绋嬪浘锛屽寘鍚暟鎹噯澶囥€佹ā鍨嬮€夋嫨涓や釜骞惰鍒嗘敮锛屾眹鍚堝悗杩涜璁粌锛屾渶鍚庤瘎浼版寚 [!]svg_only_no_png
+1-3    figure     structured.architecture rag            1408x370     3.81   warning  RAG妫€绱㈠寮虹敓鎴恜ipeline锛屾楠や緷娆′负锛氱敤鎴锋彁闂啋闂鍚戦噺鍖栤啋鍚戦噺鏁版嵁搴?[!]intent_candidates_close,knowledge_completed
+1-4    figure     structured.architecture system_architecture 808x134      6.03   warning  Web搴旂敤涓夊眰鏋舵瀯鍥撅紝椤跺眰鏄墠绔疪eact搴旂敤锛屼腑闂村眰鏄疐astAPI鍚庣鏈嶅姟锛?[!]knowledge_completed,dsl_repaired
+1-5    figure     structured.architecture system_architecture 612x386      1.59            寰湇鍔℃灦鏋勫浘锛屽寘鍚獳PI缃戝叧銆佺敤鎴锋湇鍔°€佽鍗曟湇鍔°€佹敮浠樻湇鍔°€佹秷鎭槦鍒椾簲涓ā鍧楋紝A
+1-6    figure     structured.architecture rag            708x488      1.45   warning  RAG绯荤粺瀹屾暣鏋舵瀯锛屽乏渚ф槸鏂囨。棰勫鐞嗘ā鍧楋紙瑙ｆ瀽銆佸垎鍧椼€佸祵鍏ワ級锛屽彸渚ф槸鏌ヨ妯″潡锛堝悜 [!]semantic_coverage_partial,svg_only_no_png
+1-7    figure     structured.taxonomy taxonomy_map   852x386      2.21   passed   澶ц瑷€妯″瀷鍒嗙被鍥撅紝鏍硅妭鐐逛负"澶ц瑷€妯″瀷"锛屽垎涓哄紑婧愭ā鍨嬪拰闂簮妯″瀷涓ょ被锛屽紑婧愭ā鍨嬩笅 [!]svg_only_no_png
+1-8    figure     structured.taxonomy taxonomy_map   714x587      1.22   passed   AI鎶€鏈爤鍒嗙被锛屼竴绾у垎涓烘劅鐭ャ€佽鐭ャ€佽鍔ㄤ笁绫伙紝鎰熺煡涓嬪垎鍥惧儚璇嗗埆鍜岃闊宠瘑鍒紝璁ょ煡涓?[!]svg_only_no_png
+1-9    figure     structured.generic_graph decision_tree  719x370      1.94   passed   鍐崇瓥鏍戝浘锛屼粠鏍硅妭鐐?浣犵殑涓昏闇€姹傛槸浠€涔堬紵"寮€濮嬶紝鍒嗕笁涓垎鏀細鏈€澶у寲鎺ㄧ悊鎬ц兘鈫掗€夋嫨 [!]svg_only_no_png
+1-10   figure     structured.generic_graph decision_tree  608x370      1.64   passed   鏄惁閫夋嫨鍏ㄩ噺寰皟鐨勫喅绛栨爲锛屾牴鑺傜偣"鏁版嵁閲忔槸鍚﹁秴杩?0涓囨潯"锛屾槸鈫?璁＄畻璧勬簮鏄惁鍏?[!]svg_only_no_png
+1-11   figure     structured.timeline timeline_roadmap 859x488      1.76   warning  Transformer鏋舵瀯婕旇繘鏃堕棿绾匡紝2017骞碅ttention Is All [!]娴佺▼/鏃堕棿绾胯竟鏁伴噺涓嶈冻锛屾覆鏌撳墠浼氬皾璇曡ˉ榻愰『搴忚繛绾?intent_candidates_close
+1-12   figure     structured.timeline timeline_roadmap 508x488      1.04   passed   AutoBook浜у搧璺嚎鍥撅紝Q1瀹屾垚鏍稿績鍐欎綔鍔熻兘锛孮2涓婄嚎鏂囩尞鎼滅储锛孮3娣诲姞澶氭ā [!]svg_only_no_png
+1-13   figure     structured.comparison comparison_matrix 661x485      1.36   warning  LoRA涓庡叏閲忓井璋冨姣斿浘锛屽姣旂淮搴﹀寘鎷樉瀛橀渶姹傘€佽缁冮€熷害銆佹晥鏋滀笂闄愩€侀€傜敤鍦烘櫙鍥涗釜 [!]intent_candidates_close,svg_only_no_png
+1-14   figure     structured.comparison comparison_matrix 661x485      1.36   passed   vLLM銆乀GI銆丏eepSpeed涓夌鎺ㄧ悊妗嗘灦瀵规瘮锛屽姣旂淮搴︼細鍚炲悙閲忋€佸欢杩熴€佹槗 [!]svg_only_no_png
+1-15   figure     structured.generic_graph comparison_matrix 670x638      1.05   warning  鑷敞鎰忓姏鏈哄埗绀烘剰鍥撅紝杈撳叆搴忓垪5涓猼oken锛屾瘡涓猼oken鐢熸垚Q銆並銆乂涓変釜鍚戦噺 [!]semantic_coverage_partial,svg_only_no_png
+1-16   figure     structured.architecture transformer    1184x638     1.86   warning  鏍囧噯Transformer缂栫爜鍣?瑙ｇ爜鍣ㄦ灦鏋勫浘锛屽乏渚х紪鐮佸櫒鍖呭惈澶氬ご鑷敞鎰忓姏鍜屽墠棣?[!]intent_candidates_close,knowledge_completed
+1-17   figure     structured.architecture mechanism_diagram 508x488      1.04   passed   绁炵粡缃戠粶鍙嶅悜浼犳挱绀烘剰鍥撅紝鍓嶅悜浼犳挱浠庡乏鍒板彸缁忚繃杈撳叆灞傘€侀殣钘忓眰銆佽緭鍑哄眰璁＄畻鎹熷け锛屽弽鍚?[!]svg_only_no_png
+1-18   figure     structured.architecture concept_diagram 697x422      1.65   passed   鎻愮ず宸ョ▼鏍稿績姒傚康鍥撅紝涓績鑺傜偣"Prompt Engineering"锛屽懆鍥磋繛鎺ヨ [!]svg_only_no_png
+1-19   figure     structured.architecture concept_diagram 697x422      1.65   passed   LLM涓庣浉鍏虫蹇电殑鍏崇郴鍥撅紝LLM涓績锛岃繛鎺ラ璁粌銆佸井璋冦€丷LHF銆佹帹鐞嗐€佽瘎浼颁簲涓?[!]svg_only_no_png
+1-20   figure     structured.comparison chart          403x330      1.22   warning  鏌辩姸鍥惧睍绀轰簲绉峀LM鍦∕MLU鍩哄噯涓婄殑寰楀垎锛孏PT-4寰楀垎86%锛孋laude- [!]structural_critic_warning,svg_only_no_png
+1-21   figure     illustration.image_api chart          1024x1024    1.0    passed   鎶樼嚎鍥惧睍绀鸿缁僱oss鏇茬嚎锛孹杞翠负璁粌姝ユ暟1000鍒?0000锛孻杞翠负loss鍊?
+1-22   figure     structured.comparison chart          2419x829     2.92   warning  楗煎浘灞曠ず2024骞翠腑鍥紸I搴旂敤甯傚満浠介锛屼紒涓氭湇鍔″崰35%锛屽尰鐤楀仴搴峰崰20%锛屾暀鑲?[!]semantic_dsl_misalignment,orphan_nodes
+1-23   figure     structured.comparison chart          808x370      2.18   warning  鎶樼嚎鍥惧姣斾笉鍚屽涔犵巼涓嬫ā鍨嬫敹鏁涢€熷害鐨勫彉鍖栬秼鍔?[!]knowledge_completed,structural_critic_warning
+1-24   figure     structured.architecture scene_illustration 708x370      1.91   passed   涓€浣嶅伐绋嬪笀鍦ㄦ殫鑹蹭富棰樼殑澶氬睆宸ヤ綔绔欏墠璋冭瘯AI妯″瀷锛屽睆骞曚笂鏄剧ずloss鏇茬嚎鍜屼唬鐮侊紝绉?[!]svg_only_no_png
+1-25   figure     structured.architecture scene_illustration 508x842      0.6    warning  灏嗗ぇ璇█妯″瀷姣斿柣涓哄法鍨嬪浘涔﹂锛屼功鏋舵棤闄愬欢浼革紝涓€鏉熷厜鍦ㄤ功鏋堕棿绌挎妫€绱紝璞″緛toke [!]knowledge_completed,dsl_repaired
+1-26   figure     structured.architecture infographic    2415x904     2.67   warning  淇℃伅鍥炬€荤粨鏈珷"鎻愮ず宸ョ▼"鏍稿績瑕佺偣锛屽寘鍚?涓叧閿蹇电殑鍥炬爣鍖栧睍绀猴細瑙掕壊璁惧畾銆佹€濈淮 [!]dsl_repaired,semantic_dsl_misalignment
+1-27   figure     structured.comparison comparison_matrix 376x142      2.65   warning  淇℃伅鍥惧姣斿井璋冨墠鍚庢ā鍨嬪湪涓撲笟浠诲姟涓婄殑琛ㄧ幇宸紓锛屽乏渚ч€氱敤妯″瀷鍥炬爣锛屽彸渚т笓涓氭ā鍨嬪浘鏍?[!]intent_candidates_close,svg_only_no_png
+1-28   screenshot                                          0               AutoBook缂栬緫鍣ㄧ晫闈紝鏄剧ず宸︿晶绔犺妭鐩綍銆佷腑闂村啓浣滃尯鍩熴€佸彸渚I鍔╂墜闈㈡澘鐨勪笁
+1-29   figure     structured.generic_graph process_flow   776x214      3.63   passed   娴佺▼鍥?[!]svg_only_no_png
+1-30   figure     structured.architecture process_flow   708x252      2.81   passed   RLHF training pipeline锛屽寘鍚玸upervised fine [!]svg_only_no_png
+1-31   figure     structured.generic_graph process_flow   974x214      4.55   passed   鎵归噺鎺ㄧ悊娴佺▼锛屾瘡鎵规澶勭悊32涓牱鏈紝缁忚繃tokenize銆乫orward pas [!]svg_only_no_png
+1-32   figure     structured.architecture process_flow   1408x842     1.67   warning  瀹屾暣鐨凩LM璁粌娴佺▼锛屽寘鍚暟鎹噰闆嗭紙缃戦〉鐖彇銆佷功绫嶆壂鎻忋€佷唬鐮佷粨搴撱€佸鏈鏂囷級銆佹暟 [!]鑺傜偣杩囧锛屽缓璁垎缁勬垨鎷嗘垚澶氬紶鍥?complex_graph
+1-33   figure     structured.architecture system_architecture 808x252      3.21   passed   鏁版嵁浠庣敤鎴风缁忚繃CDN銆佽礋杞藉潎琛°€佸簲鐢ㄦ湇鍔″櫒銆佺紦瀛樺眰銆佹暟鎹簱鐨勮矾寰勶紝灞曠ず姣忎釜鑺傜偣 [!]svg_only_no_png
+
+=== 鐤戜技鍒嗙被/甯冨眬闂 ===
+  - 1-1: 鐢诲竷杩囧(776x214, ratio=3.63)锛屽鍑轰細琚媺鎴愭í骞?
+  - 1-3: 鐢诲竷杩囧(1408x370, ratio=3.81)锛屽鍑轰細琚媺鎴愭í骞?
+  - 1-3: 璐ㄩ噺璀﹀憡 鈥?intent_candidates_close; knowledge_completed
+  - 1-4: 鐢诲竷杩囧(808x134, ratio=6.03)锛屽鍑轰細琚媺鎴愭í骞?
+  - 1-4: 璐ㄩ噺璀﹀憡 鈥?knowledge_completed; dsl_repaired
+  - 1-6: 璐ㄩ噺璀﹀憡 鈥?semantic_coverage_partial; svg_only_no_png
+  - 1-11: 璐ㄩ噺璀﹀憡 鈥?娴佺▼/鏃堕棿绾胯竟鏁伴噺涓嶈冻锛屾覆鏌撳墠浼氬皾璇曡ˉ榻愰『搴忚繛绾? intent_candidates_close
+  - 1-13: 璐ㄩ噺璀﹀憡 鈥?intent_candidates_close; svg_only_no_png
+  - 1-15: 璐ㄩ噺璀﹀憡 鈥?semantic_coverage_partial; svg_only_no_png
+  - 1-16: 璐ㄩ噺璀﹀憡 鈥?intent_candidates_close; knowledge_completed
+  - 1-20: 棰樻敞鍍忔暟鎹浘琛ㄤ絾娓叉煋涓?structured.comparison/figure
+  - 1-20: 璐ㄩ噺璀﹀憡 鈥?structural_critic_warning; svg_only_no_png
+  - 1-21: 棰樻敞鍍忔暟鎹浘琛ㄤ絾娓叉煋涓?illustration.image_api/figure
+  - 1-22: 棰樻敞鍍忔暟鎹浘琛ㄤ絾娓叉煋涓?structured.comparison/figure
+  - 1-22: 鐢诲竷杩囧(2419x829, ratio=2.92)锛屽鍑轰細琚媺鎴愭í骞?
+  - 1-22: 婧愬浘瓒呭 2419x829锛屽彲鑳藉竷灞€鏈敹鏁?
+  - 1-22: 璐ㄩ噺璀﹀憡 鈥?semantic_dsl_misalignment; orphan_nodes
+  - 1-23: 棰樻敞鍍忔暟鎹浘琛ㄤ絾娓叉煋涓?structured.comparison/figure
+  - 1-23: 璐ㄩ噺璀﹀憡 鈥?knowledge_completed; structural_critic_warning
+  - 1-25: 璐ㄩ噺璀﹀憡 鈥?knowledge_completed; dsl_repaired
+  - 1-26: 鐢诲竷杩囧(2415x904, ratio=2.67)锛屽鍑轰細琚媺鎴愭í骞?
+  - 1-26: 婧愬浘瓒呭 2415x904锛屽彲鑳藉竷灞€鏈敹鏁?
+  - 1-26: 璐ㄩ噺璀﹀憡 鈥?dsl_repaired; semantic_dsl_misalignment
+  - 1-27: 鐢诲竷杩囧(376x142, ratio=2.65)锛屽鍑轰細琚媺鎴愭í骞?
+  - 1-27: 璐ㄩ噺璀﹀憡 鈥?intent_candidates_close; svg_only_no_png
+  - 1-28: 鏈敓鎴?
+  - 1-29: 鐢诲竷杩囧(776x214, ratio=3.63)锛屽鍑轰細琚媺鎴愭í骞?
+  - 1-30: 鐢诲竷杩囧(708x252, ratio=2.81)锛屽鍑轰細琚媺鎴愭í骞?
+  - 1-31: 鐢诲竷杩囧(974x214, ratio=4.55)锛屽鍑轰細琚媺鎴愭í骞?
+  - 1-32: 璐ㄩ噺璀﹀憡 鈥?鑺傜偣杩囧锛屽缓璁垎缁勬垨鎷嗘垚澶氬紶鍥? complex_graph
+  - 1-33: 鐢诲竷杩囧(808x252, ratio=3.21)锛屽鍑轰細琚媺鎴愭í骞?
+
+=== 鐢诲竷闀垮姣斿垎甯?===
+  妯箙鍨?>2.0): 12  妯悜(1.18-2.0): 14  杩戞柟: 4  绔栧悜(<0.85): 2

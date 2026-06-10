@@ -66,10 +66,15 @@ def _get_chapter(book_id: UUID, chapter_index: int, db: Session) -> Chapter:
 
 
 def _chapter_payload(ch: Chapter, total_chapters: int) -> dict:
+    from app.services.heading_formatter import normalize_outline_sections
+
     meta = ch.content if isinstance(ch.content, dict) else {}
-    sections = meta.get("sections") or []
-    if not isinstance(sections, list):
-        sections = []
+    sections_raw = meta.get("sections") or []
+    sections = (
+        normalize_outline_sections([s for s in sections_raw if isinstance(s, dict)])
+        if isinstance(sections_raw, list)
+        else []
+    )
     return {
         "title": ch.title,
         "summary": ch.summary or "",

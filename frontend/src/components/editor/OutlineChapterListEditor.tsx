@@ -334,7 +334,8 @@ export default function OutlineChapterListEditor({
 
   async function addSection(ch: OutlineChapter) {
     const n = ch.sections.length + 1;
-    const nextSections = [...ch.sections, { title: `${ch.index}.${n} 新小节`, summary: "" }];
+    const cn = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"][n] ?? String(n);
+    const nextSections = [...ch.sections, { title: `第${cn}节 新小节`, summary: "" }];
     await saveChapterInline(ch, { sections: nextSections });
     toast.success("已添加小节");
   }

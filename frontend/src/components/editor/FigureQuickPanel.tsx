@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
 import {
+  figureGenerationToast,
   generateFigure,
   listFigures,
   normalizeChapterFiguresTables,
+  rebuildChapterBodyFromFigures,
   patchChapterOverviewCaptions,
   resolveFigureUrl,
   uploadFigure,
@@ -34,6 +36,9 @@ function figureError(e: unknown, fallback: string): string {
   if (axios.isAxiosError(e)) {
     const detail = e.response?.data?.detail;
     if (typeof detail === "string") return detail;
+    if (detail && typeof detail === "object" && "message" in detail) {
+      return String((detail as { message?: string }).message || fallback);
+    }
   }
   return e instanceof Error ? e.message : fallback;
 }
@@ -88,6 +93,7 @@ export default function FigureQuickPanel({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
   const [sortBusy, setSortBusy] = useState(false);
+  const [rebuildBusy, setRebuildBusy] = useState(false);
   const [captionBusy, setCaptionBusy] = useState(false);
   const [overview, setOverview] = useState<FigureTableOverviewItem[]>(initialOverview);
 
@@ -126,7 +132,7 @@ export default function FigureQuickPanel({
       const result = await generateFigure(bookId, fig.id);
       applyFigureToEditor(result);
       await invalidate();
-      toast.success("图表已重新生成", { id: loading });
+      toast.success(figureGenerationToast(result.quality_report).message, { id: loading });
     } catch (e) {
       toast.error(figureError(e, "生成失败"), { id: loading });
     } finally {
@@ -169,6 +175,27 @@ export default function FigureQuickPanel({
     await invalidate();
     setBatchBusy(false);
     toast.success(`已完成 ${ok}/${pending.length} 个`, { id: loading });
+  }
+
+  async function handleRebuildBody() {
+    if (chapterIndex == null) return;
+    setRebuildBusy(true);
+    const loading = toast.loading("正在从图表恢复正文…");
+    try {
+      const res = await rebuildChapterBodyFromFigures(bookId, chapterIndex);
+      setOverview(res.overview);
+      onApplyChapterContent?.({
+        tiptap_json: res.tiptap_json,
+        text: res.text,
+        overview: res.overview,
+      });
+      await invalidate();
+      toast.success(`已从 ${res.overview.length} 张图恢复正文`, { id: loading });
+    } catch (e) {
+      toast.error(figureError(e, "恢复失败"), { id: loading });
+    } finally {
+      setRebuildBusy(false);
+    }
   }
 
   async function handleNormalizeSort() {
@@ -341,7 +368,22 @@ export default function FigureQuickPanel({
             <button
               type="button"
               className="btn-secondary mt-2 inline-flex w-full items-center justify-center gap-1.5 text-xs"
-              disabled={batchBusy || busyId != null || sortBusy}
+              disabled={rebuildBusy || batchBusy || busyId != null || sortBusy}
+              onClick={() => void handleRebuildBody()}
+            >
+              {rebuildBusy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+              )}
+              从图表恢复正文
+            </button>
+          ) : null}
+          {chapterFigures.length > 0 ? (
+            <button
+              type="button"
+              className="btn-secondary mt-2 inline-flex w-full items-center justify-center gap-1.5 text-xs"
+              disabled={batchBusy || busyId != null || sortBusy || rebuildBusy}
               onClick={() => void handleBatchGenerate()}
             >
               {batchBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Zap className="h-3.5 w-3.5" aria-hidden />}

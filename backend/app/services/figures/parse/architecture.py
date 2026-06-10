@@ -5,10 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.config import settings
-from app.llm.client import LLMClient
+from app.services.figures.parse.llm_helpers import call_llm_json, llm_available
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
-from app.utils.json_llm import parse_llm_json
 
 _PROMPT = """解析系统架构 JSON。只输出 JSON：
 {
@@ -258,23 +256,17 @@ def _to_graph(title: str, layers: list[dict[str, Any]], connections: list[dict[s
 
 
 def parse_architecture(ctx: PipelineContext, intent: DiagramIntent) -> ParsedDiagram:
-    model = (ctx.model or settings.intent_model).strip()
-    if ctx.use_llm and model:
-        try:
-            out = LLMClient().chat_completion(
-                [{"role": "user", "content": _PROMPT.format(text=ctx.normalized_input[:2500])}],
-                model=model,
-                max_tokens=2400,
-                temperature=0.1,
-            )
-            data = parse_llm_json(out)
-            if isinstance(data, dict):
-                layers = _normalize_layers(data.get("layers"))
-                if layers:
-                    connections = _normalize_connections(data.get("connections"))
-                    return ParsedDiagram(_to_graph(_short(data.get("title") or intent.title, 24), layers, connections), "llm_architecture")
-        except Exception:
-            pass
+    if llm_available(ctx):
+        data = call_llm_json(ctx, _PROMPT, max_tokens=2400)
+        if isinstance(data, dict):
+            layers = _normalize_layers(data.get("layers"))
+            if layers:
+                connections = _normalize_connections(data.get("connections"))
+                return ParsedDiagram(
+                    _to_graph(_short(data.get("title") or intent.title, 24), layers, connections),
+                    "llm_architecture",
+                )
+        return ParsedDiagram({"title": _short(intent.title or "系统架构", 24)}, "llm_architecture_failed")
     layers = _rule_layers(ctx.normalized_input)
     connections = _rule_connections(ctx.normalized_input, layers)
     return ParsedDiagram(_to_graph(_short(intent.title or "系统架构", 24), layers, connections), "rules_architecture")

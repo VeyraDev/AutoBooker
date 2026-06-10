@@ -10,8 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.config import settings
-from app.llm.client import LLMClient
+from app.services.figures.parse.llm_helpers import call_llm_json, llm_available
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
 from app.utils.json_llm import parse_llm_json
 
@@ -156,29 +155,24 @@ def _to_graph(title: str, inputs: list[str], steps: list[dict[str, str]], output
 
 
 def parse_mechanism(ctx: PipelineContext, intent: DiagramIntent) -> ParsedDiagram:
-    if intent.diagram_subtype == "transformer":
-        return ParsedDiagram(_transformer_spec(ctx, intent), "grammar_transformer")
-
-    model = (ctx.model or settings.intent_model).strip()
-    if ctx.use_llm and model:
-        try:
-            out = LLMClient().chat_completion(
-                [{"role": "user", "content": _PROMPT.format(text=ctx.normalized_input[:2500])}],
-                model=model,
-                max_tokens=2400,
-                temperature=0.1,
-            )
-            data = parse_llm_json(out)
-            if isinstance(data, dict):
-                inputs = [_short(x, 18) for x in data.get("inputs", []) if _short(x, 18)] if isinstance(data.get("inputs"), list) else []
-                steps = _normalize_steps(data.get("steps"))
-                outputs = [_short(x, 18) for x in data.get("outputs", []) if _short(x, 18)] if isinstance(data.get("outputs"), list) else []
-                if steps:
-                    return ParsedDiagram(
-                        _to_graph(_title(intent, data.get("title") or ctx.normalized_input), inputs or ["输入"], steps, outputs or ["输出"], data.get("connections") or [], data.get("stacks") or []),
-                        "llm_mechanism",
-                    )
-        except Exception:
-            pass
+    if llm_available(ctx):
+        data = call_llm_json(ctx, _PROMPT, max_tokens=2400)
+        if isinstance(data, dict):
+            inputs = [_short(x, 18) for x in data.get("inputs", []) if _short(x, 18)] if isinstance(data.get("inputs"), list) else []
+            steps = _normalize_steps(data.get("steps"))
+            outputs = [_short(x, 18) for x in data.get("outputs", []) if _short(x, 18)] if isinstance(data.get("outputs"), list) else []
+            if steps:
+                return ParsedDiagram(
+                    _to_graph(
+                        _title(intent, data.get("title") or ctx.normalized_input),
+                        inputs or ["输入"],
+                        steps,
+                        outputs or ["输出"],
+                        data.get("connections") or [],
+                        data.get("stacks") or [],
+                    ),
+                    "llm_mechanism",
+                )
+        return ParsedDiagram({"title": _title(intent, ctx.normalized_input)}, "llm_mechanism_failed")
     inputs, steps, outputs = _rule_steps(ctx.normalized_input)
     return ParsedDiagram(_to_graph(_title(intent, ctx.normalized_input), inputs, steps, outputs), "rules_mechanism")

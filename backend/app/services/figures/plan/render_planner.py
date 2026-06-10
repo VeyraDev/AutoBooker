@@ -117,10 +117,8 @@ def _relations_topology(
 
     has_decision = any(str(e.get("type")) == "decision" for e in entities)
     branching = _graph_has_branching(relations) or len(roots) > 1
-    if branching or has_decision or has_feedback or len(ids) > 5:
-        layout = "TB"
-    else:
-        layout = "LR"
+    # 书稿内页优先竖向排版，避免 ≤5 节点流程被拉成 3:1+ 横条
+    layout = "TB"
     return positions, layout
 
 

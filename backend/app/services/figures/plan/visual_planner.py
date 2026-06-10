@@ -19,6 +19,7 @@ _LAYOUT_BY_TYPE: dict[str, str] = {
     "comparison": "COLUMNS_LR",
     "matrix": "QUADRANT",
     "timeline": "TIMELINE_LR",
+    "chart": "CHART_GRID",
 }
 
 _STYLE_BY_TYPE: dict[str, str] = {
@@ -38,6 +39,7 @@ _STYLE_BY_TYPE: dict[str, str] = {
     "comparison": "multi-column card layout; distinct color per option",
     "matrix": "2x2 quadrant layout with axis labels",
     "timeline": "horizontal timeline rail; milestone markers alternate above/below",
+    "chart": "data chart with axes; aspect ratio near 4:3; labels readable at print size",
 }
 
 

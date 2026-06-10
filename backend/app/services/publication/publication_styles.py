@@ -31,7 +31,10 @@ h1.book-title { font-size: 22pt; text-align: center; font-weight: bold; margin: 
 h1.preface-title { font-size: 18pt; text-align: center; font-weight: bold; margin: 24pt 0 12pt 0; color: #000; }
 h1.chapter-title { font-size: 16pt; text-align: center; font-weight: bold; margin: 24pt 0 12pt 0; color: #000; }
 h2.section-title { font-size: 14pt; text-align: left; font-weight: bold; margin: 16pt 0 8pt 0; color: #000; }
-h3, h4, h5, h6 { font-size: 13pt; text-align: left; font-weight: bold; margin: 12pt 0 6pt 0; color: #000; }
+h3.subsection-title { font-size: 13pt; text-align: left; font-weight: bold; margin: 14pt 0 6pt 0; color: #000; }
+h4.subsection-title { font-size: 12.5pt; text-align: left; font-weight: bold; margin: 12pt 0 6pt 0; color: #000; }
+h5.subsection-title { font-size: 12pt; text-align: left; font-weight: bold; margin: 10pt 0 4pt 0; color: #000; }
+h6.subsection-title { font-size: 12pt; text-align: left; font-weight: bold; margin: 8pt 0 4pt 0; color: #000; }
 .caption { font-size: 10.5pt; color: #000; text-align: center; margin: 6pt 0 12pt 0; }
 table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
 td, th { border: 1pt solid #333; padding: 4pt 6pt; font-size: 11pt; color: #000; }

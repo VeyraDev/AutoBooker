@@ -6,7 +6,7 @@ from typing import Any
 
 from app.services.figures.graph.schema import GraphEdge, GraphIR, GraphNode
 from app.services.figures.schemas.diagram import DiagramIntent
-from app.services.figures.schemas.dsl import slug_id
+from app.services.figures.schemas.dsl import DiagramDSL, slug_id
 from app.services.figures.semantic.schema import SemanticIR
 
 _KIND_TO_TYPE = {
@@ -23,6 +23,15 @@ _KIND_TO_TYPE = {
 
 
 def build_graph(ir: SemanticIR, intent: DiagramIntent) -> GraphIR:
+    from app.services.figures.graph.native_projector import project_native_to_graph
+
+    projected = project_native_to_graph(ir, intent)
+    if projected and projected.nodes:
+        return projected
+    return _build_legacy_object_graph(ir, intent)
+
+
+def _build_legacy_object_graph(ir: SemanticIR, intent: DiagramIntent) -> GraphIR:
     nodes: list[GraphNode] = []
     name_to_id = ir.object_by_name()
     for obj in ir.objects:
@@ -109,4 +118,134 @@ def build_graph(ir: SemanticIR, intent: DiagramIntent) -> GraphIR:
         groups=[dict(g) for g in ir.groups],
         layout_constraints={"hints": layout_hints},
         style_hints=list(ir.style_hints),
+    )
+
+
+def build_graph_from_parsed_spec(
+    spec: dict,
+    intent: DiagramIntent,
+    *,
+    layout_hints: list[str] | None = None,
+) -> GraphIR:
+    """从 grammar parser 输出的 nodes/edges 构建 GraphIR（各类型共用，布局提示由 policy 注入）。"""
+    from app.services.figures.intent.taxonomy import canonical_subtype, subtype_to_diagram_type
+    from app.services.figures.layout.policies import get_layout_policy
+
+    nodes: list[GraphNode] = []
+    for raw in spec.get("nodes") or []:
+        if not isinstance(raw, dict):
+            continue
+        nid = str(raw.get("id") or slug_id(str(raw.get("label") or "")))
+        raw_kind = str(raw.get("type") or raw.get("kind") or "module")
+        if raw_kind == "decision" or str(raw.get("shape") or "") == "diamond":
+            node_kind = "decision"
+        elif raw_kind in {"parallel", "branch"}:
+            node_kind = "process"
+        else:
+            node_kind = raw_kind
+        lc: dict[str, Any] = {}
+        if raw.get("level") is not None:
+            lc["level"] = int(raw.get("level"))
+        if raw.get("column") is not None:
+            lc["column"] = int(raw.get("column"))
+        if raw_kind in {"parallel", "branch"}:
+            lc["parallel"] = True
+        nodes.append(
+            GraphNode(
+                id=nid,
+                label=str(raw.get("label") or nid),
+                kind=node_kind,
+                group=str(raw.get("group") or raw.get("parent") or ""),
+                shape=str(raw.get("shape") or ""),
+                layout_constraints=lc,
+            )
+        )
+    node_ids = {n.id for n in nodes}
+    edges: list[GraphEdge] = []
+    raw_edges = list(spec.get("edges") or [])
+    for fb in spec.get("feedback") or []:
+        if isinstance(fb, dict) and fb not in raw_edges:
+            raw_edges.append(fb)
+    for raw in raw_edges:
+        if not isinstance(raw, dict):
+            continue
+        src = str(raw.get("from") or raw.get("source") or "")
+        tgt = str(raw.get("to") or raw.get("target") or "")
+        if src in node_ids and tgt in node_ids:
+            label = str(raw.get("label") or "")
+            is_feedback = raw in (spec.get("feedback") or []) or label in {"不达标", "返回", "重试", "未达标"}
+            edges.append(
+                GraphEdge(
+                    source=src,
+                    target=tgt,
+                    label=label,
+                    edge_type="return" if is_feedback else "sync",
+                    style="dashed" if is_feedback else "solid",
+                )
+            )
+
+    subtype = canonical_subtype(intent.diagram_subtype)
+    policy = get_layout_policy(subtype)
+    hints = list(layout_hints if layout_hints is not None else policy.layout_hints)
+    if any(isinstance(n, GraphNode) and (n.layout_constraints.get("parallel") or "level" in n.layout_constraints) for n in nodes):
+        if "parallel_merge" not in hints:
+            hints.append("parallel_merge")
+    if any(n.kind == "decision" for n in nodes):
+        if "TB_Decision" not in hints:
+            hints.append("TB_Decision")
+    if spec.get("root") or spec.get("children"):
+        if "tree_tb" not in hints:
+            hints.append("tree_tb")
+    style_hints: list[str] = []
+    if subtype == "taxonomy_map":
+        style_hints.append("taxonomy_tree")
+
+    return GraphIR(
+        diagram_type=spec.get("diagram_type") or intent.diagram_type or subtype_to_diagram_type(subtype),
+        title=str(spec.get("title") or intent.title or "示意图"),
+        nodes=nodes,
+        edges=edges,
+        groups=[g for g in (spec.get("groups") or []) if isinstance(g, dict)],
+        layout_constraints={"hints": hints},
+        style_hints=style_hints,
+    )
+
+
+def build_graph_from_dsl(dsl: DiagramDSL, intent: DiagramIntent) -> GraphIR:
+    """Legacy / parser 路径：从已有 DSL 节点边构建 GraphIR 以复用布局引擎。"""
+    nodes = [
+        GraphNode(
+            id=n.id,
+            label=n.label,
+            kind=n.type or "process",
+            group=n.group or "",
+            importance=n.importance,
+            shape=n.shape,
+            color=n.color,
+        )
+        for n in dsl.nodes
+    ]
+    edges = [
+        GraphEdge(
+            source=e.source,
+            target=e.target,
+            label=e.label,
+            edge_type=e.type or "sync",
+            style=e.style or "solid",
+            route_policy=e.routing or "orthogonal",
+        )
+        for e in dsl.edges
+    ]
+    layout_hints: list[str] = []
+    if any(n.type == "decision" for n in dsl.nodes):
+        layout_hints.append("TB_Decision")
+    groups = [g.to_dict() if hasattr(g, "to_dict") else dict(g) for g in dsl.groups]
+    return GraphIR(
+        diagram_type=dsl.diagram_type or intent.diagram_type or "flowchart",
+        title=dsl.title or intent.title or "示意图",
+        nodes=nodes,
+        edges=edges,
+        groups=groups,
+        layout_constraints={"hints": layout_hints},
+        style_hints=[],
     )

@@ -8,6 +8,13 @@ from typing import Any
 
 from app.llm.client import LLMClient
 from app.services.ai_detect import get_ai_detect_provider, result_to_dict
+from app.services.dedupe_verify import (
+    assess_similarity_warnings,
+    extract_facts,
+    similarity_score,
+    split_by_headings,
+    verify_facts_preserved,
+)
 from app.services.quality import QualityStatus
 
 _CODE_FENCE_RE = re.compile(r"```[\s\S]*?```", re.MULTILINE)
@@ -18,6 +25,9 @@ _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?%?|\d{4}年")
 _FIG_TABLE_REF_RE = re.compile(r"[图表]\s*\d+(?:[-－—]\d+)?")
 _TERM_RE = re.compile(r"[A-Z][A-Za-z0-9_+-]{2,}|《[^》]{2,40}》|“[^”]{2,40}”|「[^」]{2,40}」")
 _HEADING_RE = re.compile(r"(?m)^(#{1,6})\s+(.+)$")
+
+_MAX_REWRITE_ROUNDS = 2
+_RISK_ROLLBACK_DELTA = 0.15
 
 
 @dataclass
@@ -37,8 +47,16 @@ class DedupeService:
         client: LLMClient,
         chat_model: str,
         context: str = "",
+        glossary_terms: list[str] | None = None,
     ) -> DedupeResult:
-        return self._run(text, client=client, chat_model=chat_model, context_summary=context, whole_chapter=False)
+        return self._run(
+            text,
+            client=client,
+            chat_model=chat_model,
+            context_summary=context,
+            whole_chapter=False,
+            glossary_terms=glossary_terms,
+        )
 
     def dedupe_markdown(
         self,
@@ -47,8 +65,16 @@ class DedupeService:
         client: LLMClient,
         chat_model: str,
         context_summary: str = "",
+        glossary_terms: list[str] | None = None,
     ) -> DedupeResult:
-        return self._run(markdown, client=client, chat_model=chat_model, context_summary=context_summary, whole_chapter=True)
+        return self._run(
+            markdown,
+            client=client,
+            chat_model=chat_model,
+            context_summary=context_summary,
+            whole_chapter=True,
+            glossary_terms=glossary_terms,
+        )
 
     def _run(
         self,
@@ -58,16 +84,22 @@ class DedupeService:
         chat_model: str,
         context_summary: str,
         whole_chapter: bool,
+        glossary_terms: list[str] | None = None,
     ) -> DedupeResult:
         original = (text or "").strip()
         before_risk, before_raw, detect_warnings = self._detect_risk(original)
-        protected = _extract_protected(original)
+        facts = extract_facts(client, chat_model, original)
+        protected = _extract_protected(original, extra_terms=glossary_terms)
         masked, replacements = _mask_protected_blocks(original)
-        chunks = _split_chunks(masked, self.chunk_chars)
+        chunks = split_by_headings(masked, fallback_limit=self.chunk_chars) if whole_chapter else _split_chunks(masked, self.chunk_chars)
         rewritten_chunks: list[str] = []
+        chunk_reports: list[dict[str, Any]] = []
         running_summary = (context_summary or "")[:1600]
+        all_passed = True
+
         for idx, chunk in enumerate(chunks):
-            rewritten = self._rewrite_chunk(
+            chunk_original_risk, _, _ = self._detect_risk(chunk)
+            rewritten, chunk_report = self._rewrite_with_retry(
                 client,
                 chat_model,
                 chunk,
@@ -76,12 +108,19 @@ class DedupeService:
                 chunk_index=idx + 1,
                 chunk_count=len(chunks),
                 whole_chapter=whole_chapter,
+                facts=facts,
+                before_risk=chunk_original_risk,
             )
+            chunk_reports.append(chunk_report)
+            if chunk_report.get("status") != QualityStatus.passed.value:
+                all_passed = False
             rewritten_chunks.append(rewritten.strip())
             running_summary = _rolling_summary(running_summary, rewritten)
+
         rewritten_text = "\n\n".join(x for x in rewritten_chunks if x)
         rewritten_text = _restore_protected_blocks(rewritten_text, replacements)
-        if whole_chapter and len(chunks) > 1 and len(rewritten_text) <= 24000:
+
+        if whole_chapter and len(chunks) > 1 and len(rewritten_text) <= 24000 and all_passed:
             unified = self._style_unify_pass(client, chat_model, rewritten_text, protected=protected)
             rewritten_text = _restore_protected_blocks(unified.strip(), replacements)
 
@@ -89,8 +128,26 @@ class DedupeService:
         warnings = detect_warnings + after_warnings
         validation = _validate_preservation(original, rewritten_text, protected)
         warnings.extend(validation["warnings"])
+
+        sim = similarity_score(original, rewritten_text)
+        warnings.extend(assess_similarity_warnings(sim))
+        missing_facts = verify_facts_preserved(facts, rewritten_text)
+        if missing_facts:
+            validation["protected_tokens_changed"] = list(validation.get("protected_tokens_changed") or []) + [
+                f"fact:{f[:40]}" for f in missing_facts[:8]
+            ]
+
+        chunk_failed = any(
+            cr.get("status") == QualityStatus.failed.value for cr in chunk_reports
+        )
+        if chunk_failed and not validation["protected_tokens_changed"]:
+            validation["protected_tokens_changed"] = [
+                str(cr.get("last_failure") or "chunk_rewrite_failed")
+                for cr in chunk_reports
+                if cr.get("status") == QualityStatus.failed.value
+            ]
         status = QualityStatus.passed.value
-        if validation["protected_tokens_changed"]:
+        if validation["protected_tokens_changed"] or chunk_failed:
             status = QualityStatus.failed.value
         elif warnings or (after_risk is not None and before_risk is not None and after_risk > before_risk):
             status = QualityStatus.warning.value
@@ -100,10 +157,14 @@ class DedupeService:
             "before_ai_risk": before_risk,
             "after_ai_risk": after_risk,
             "risk_delta": None if before_risk is None or after_risk is None else round(after_risk - before_risk, 3),
-            "meaning_preserved": validation["meaning_preserved"],
+            "similarity_score": sim,
+            "meaning_preserved": validation["meaning_preserved"] and not missing_facts,
             "structure_preserved": validation["structure_preserved"],
             "protected_tokens_changed": validation["protected_tokens_changed"],
+            "facts_extracted": facts[:20],
+            "facts_missing": missing_facts[:12],
             "warnings": list(dict.fromkeys(warnings)),
+            "chunk_reports": chunk_reports,
             "protected_summary": {
                 "numbers": len(protected["numbers"]),
                 "citations": len(protected["citations"]),
@@ -117,7 +178,68 @@ class DedupeService:
                 "after": after_raw,
             },
         }
+        if status == QualityStatus.failed.value:
+            return DedupeResult(text=original, original_text=original, report=report)
         return DedupeResult(text=rewritten_text, original_text=original, report=report)
+
+    def _rewrite_with_retry(
+        self,
+        client: LLMClient,
+        chat_model: str,
+        chunk: str,
+        *,
+        protected: dict[str, list[str]],
+        context_summary: str,
+        chunk_index: int,
+        chunk_count: int,
+        whole_chapter: bool,
+        facts: list[str],
+        before_risk: float | None,
+    ) -> tuple[str, dict[str, Any]]:
+        failure_reason = ""
+        current = chunk
+        report: dict[str, Any] = {"chunk_index": chunk_index, "rounds": 0, "status": QualityStatus.passed.value}
+
+        for round_idx in range(1, _MAX_REWRITE_ROUNDS + 1):
+            report["rounds"] = round_idx
+            rewritten = self._rewrite_chunk(
+                client,
+                chat_model,
+                current,
+                protected=protected,
+                context_summary=context_summary,
+                chunk_index=chunk_index,
+                chunk_count=chunk_count,
+                whole_chapter=whole_chapter,
+                failure_reason=failure_reason,
+            )
+            validation = _validate_preservation(chunk, rewritten, protected)
+            missing_facts = verify_facts_preserved(facts, rewritten)
+            after_risk, _, _ = self._detect_risk(rewritten)
+            risk_up = (
+                before_risk is not None
+                and after_risk is not None
+                and after_risk - before_risk > _RISK_ROLLBACK_DELTA
+            )
+            if validation["protected_tokens_changed"] or missing_facts or risk_up:
+                failure_reason = (
+                    "保护元素丢失"
+                    if validation["protected_tokens_changed"]
+                    else "事实未保留"
+                    if missing_facts
+                    else "AI风险上升"
+                )
+                report["last_failure"] = failure_reason
+                if round_idx >= _MAX_REWRITE_ROUNDS:
+                    report["status"] = QualityStatus.failed.value
+                    return chunk, report
+                current = chunk
+                continue
+            report["status"] = QualityStatus.passed.value
+            return rewritten, report
+
+        report["status"] = QualityStatus.failed.value
+        return chunk, report
 
     def _rewrite_chunk(
         self,
@@ -130,16 +252,19 @@ class DedupeService:
         chunk_index: int,
         chunk_count: int,
         whole_chapter: bool,
+        failure_reason: str = "",
     ) -> str:
         system = "你是专业中文编辑，只输出改写后的正文，不要加引号、标题或前言。"
         constraints = _protected_prompt(protected)
         scope = "整章分块" if whole_chapter else "选区"
+        retry = f"\n上次失败原因：{failure_reason}。务必保留所有事实与保护元素。\n" if failure_reason else ""
         user = (
             "请对文本做降重改写：保留原意、事实、数字、引用、术语、标题层级、Markdown 表格、代码块和图表编号；"
             "通过调整句式、衔接和词序降低模板化与雷同表达。不要添加新观点，不要删减关键信息。\n\n"
             f"处理范围：{scope}，第 {chunk_index}/{chunk_count} 块。\n"
             f"上下文摘要：{context_summary or '无'}\n"
-            f"{constraints}\n\n"
+            f"{constraints}\n"
+            f"{retry}\n"
             f"---\n{chunk.strip()}"
         )
         return client.chat_completion(
@@ -200,14 +325,17 @@ def _restore_protected_blocks(text: str, replacements: dict[str, str]) -> str:
     return out
 
 
-def _extract_protected(text: str) -> dict[str, list[str]]:
+def _extract_protected(text: str, *, extra_terms: list[str] | None = None) -> dict[str, list[str]]:
+    terms = _unique(_TERM_RE.findall(text or ""))[:80]
+    if extra_terms:
+        terms = _unique(terms + [t for t in extra_terms if t])[:100]
     return {
         "headings": [m.group(1) for m in _HEADING_RE.finditer(text or "")],
         "code_blocks": _CODE_FENCE_RE.findall(text or ""),
         "tables": _TABLE_RE.findall(text or ""),
         "citations": _unique(_CITATION_RE.findall(text or "")),
         "numbers": _unique(_NUMBER_RE.findall(text or "")),
-        "terms": _unique(_TERM_RE.findall(text or ""))[:80],
+        "terms": terms,
         "figure_table_refs": _unique(_FIG_TABLE_REF_RE.findall(text or "")),
     }
 

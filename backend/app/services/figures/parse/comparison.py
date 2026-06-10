@@ -5,8 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.config import settings
-from app.llm.client import LLMClient
+from app.services.figures.parse.llm_helpers import call_llm_json, llm_available
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
 from app.utils.json_llm import parse_llm_json
 
@@ -117,26 +116,17 @@ def _to_graph(title: str, columns: list[str], dimensions: list[str], cells: list
 
 
 def parse_comparison(ctx: PipelineContext, intent: DiagramIntent) -> ParsedDiagram:
-    model = (ctx.model or settings.intent_model).strip()
-    if ctx.use_llm and model:
-        try:
-            out = LLMClient().chat_completion(
-                [{"role": "user", "content": _PROMPT.format(text=ctx.normalized_input[:2500])}],
-                model=model,
-                max_tokens=2200,
-                temperature=0.1,
-            )
-            data = parse_llm_json(out)
-            if isinstance(data, dict):
-                columns = _normalize_list(data.get("columns"), 5)
-                dimensions = _normalize_list(data.get("dimensions"), 8)
-                if columns and dimensions:
-                    return ParsedDiagram(
-                        _to_graph(_short(data.get("title") or intent.title, 24), columns, dimensions, data.get("cells") or []),
-                        "llm_comparison",
-                    )
-        except Exception:
-            pass
+    if llm_available(ctx):
+        data = call_llm_json(ctx, _PROMPT)
+        if isinstance(data, dict):
+            columns = _normalize_list(data.get("columns"), 5)
+            dimensions = _normalize_list(data.get("dimensions"), 8)
+            if columns and dimensions:
+                return ParsedDiagram(
+                    _to_graph(_short(data.get("title") or intent.title, 24), columns, dimensions, data.get("cells") or []),
+                    "llm_comparison",
+                )
+        return ParsedDiagram({"title": _short(intent.title or "对比矩阵", 24)}, "llm_comparison_failed")
     columns = _rule_columns(ctx.normalized_input) or ["对象 A", "对象 B"]
     dimensions = _rule_dimensions(ctx.normalized_input) or ["成本", "速度", "效果", "适用场景"]
     return ParsedDiagram(_to_graph(_short(intent.title or "对比矩阵", 24), columns, dimensions), "rules_comparison")

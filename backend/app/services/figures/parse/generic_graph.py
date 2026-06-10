@@ -186,27 +186,21 @@ def _rule_process_flow(ctx: PipelineContext, intent: DiagramIntent) -> dict[str,
 
 
 def parse_generic_graph(ctx: PipelineContext, intent: DiagramIntent) -> ParsedDiagram:
-    model = (ctx.model or settings.intent_model).strip()
-    if ctx.use_llm and model:
-        try:
-            out = LLMClient().chat_completion(
-                [{"role": "user", "content": _PARSE_PROMPT.format(
-                    family=intent.diagram_family,
-                    subtype=intent.diagram_subtype,
-                    chapter_title=ctx.chapter_title or "（无）",
-                    text=ctx.normalized_input[:3000],
-                )}],
-                model=model,
-                max_tokens=4096,
-                temperature=0.15,
-            )
-            data = parse_llm_json(out)
-            if isinstance(data, dict) and data.get("nodes"):
-                if intent.title and not data.get("title"):
-                    data["title"] = intent.title
-                return ParsedDiagram(_clean_structured_spec(data, intent), "llm_generic")
-        except Exception:
-            pass
+    from app.services.figures.parse.llm_helpers import call_llm_json, llm_available
+
+    if llm_available(ctx):
+        prompt = _PARSE_PROMPT.format(
+            family=intent.diagram_family,
+            subtype=intent.diagram_subtype,
+            chapter_title=ctx.chapter_title or "（无）",
+            text=ctx.normalized_input[:3000],
+        )
+        data = call_llm_json(ctx, prompt, max_tokens=4096, temperature=0.15)
+        if isinstance(data, dict) and data.get("nodes"):
+            if intent.title and not data.get("title"):
+                data["title"] = intent.title
+            return ParsedDiagram(_clean_structured_spec(data, intent), "llm_generic")
+        return ParsedDiagram({"title": intent.title or "示意图"}, "llm_generic_failed")
     rule_flow = _rule_process_flow(ctx, intent)
     if rule_flow:
         return ParsedDiagram(rule_flow, "rules_flow")

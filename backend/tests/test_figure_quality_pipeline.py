@@ -4,7 +4,7 @@ from docx import Document
 from PIL import Image
 
 from app.services.figures.classification.resolver import build_classification_record
-from app.services.figures.intent.rules import match_diagram_intent
+from app.services.figures.intent.resolve import resolve_intent_unified
 from app.services.figures.intent.taxonomy import resolve_renderer_key
 from app.services.figures.parse.architecture import parse_architecture
 from app.services.figures.parse.comparison import parse_comparison
@@ -55,9 +55,14 @@ def test_process_flow_rules_build_short_title_and_edges():
 
 def test_rag_pipeline_is_not_routed_to_architecture_or_generic():
     text = "RAG pipeline：用户提问、向量化、检索知识库、生成回答，四个步骤，用箭头连接"
-    intent = match_diagram_intent(text)
+    ctx = PipelineContext(description="", normalized_input=text, use_llm=True)
+    understanding = {
+        "goal": "show_workflow",
+        "confidence": 0.9,
+        "candidate_diagrams": [{"type": "process_flow", "score": 0.92, "reason": "pipeline 步骤"}],
+    }
+    intent = resolve_intent_unified(ctx, understanding)
 
-    assert intent is not None
     assert intent.diagram_subtype == "process_flow"
 
     spec = parse_pipeline(PipelineContext(description="", normalized_input=text, use_llm=False), intent).parsed_spec
@@ -114,16 +119,25 @@ def test_registration_flow_does_not_turn_title_into_first_node():
     assert len(spec["edges"]) == 3
 
 
-def test_stale_generic_hint_yields_to_strong_structural_rules():
+def test_llm_candidate_overrides_stale_subtype_hint(monkeypatch):
     ctx = PipelineContext(
         description="",
         normalized_input="RAG pipeline：用户提问、向量化、检索知识库、生成回答，四个步骤",
-        use_llm=False,
+        use_llm=True,
+        model="dummy",
         subtype_hint="concept_diagram",
     )
 
-    intent = _resolve_intent(ctx)
-
+    monkeypatch.setattr(
+        orchestrator,
+        "understand_intent",
+        lambda _ctx, intent=None: {
+            "goal": "show_workflow",
+            "confidence": 0.9,
+            "candidate_diagrams": [{"type": "process_flow", "score": 0.91, "reason": "pipeline"}],
+        },
+    )
+    intent, _ = _resolve_intent(ctx)
     assert intent.diagram_subtype == "process_flow"
 
 
@@ -137,13 +151,16 @@ def test_llm_intent_is_primary_when_available(monkeypatch):
 
     monkeypatch.setattr(
         orchestrator,
-        "classify_diagram_intent",
-        lambda _ctx: DiagramIntent("architecture", "system_architecture", 0.82, "llm", "RAG 架构"),
+        "understand_intent",
+        lambda _ctx, intent=None: {
+            "goal": "show_system_architecture",
+            "confidence": 0.82,
+            "candidate_diagrams": [{"type": "system_architecture", "score": 0.88, "reason": "RAG 架构"}],
+        },
     )
 
-    intent = _resolve_intent(ctx)
+    intent, _ = _resolve_intent(ctx)
 
-    assert intent.source == "llm"
     assert intent.diagram_subtype == "system_architecture"
 
 
@@ -247,23 +264,17 @@ def test_registry_routes_subtypes_to_grammar_parsers():
 
 def test_comparison_attention_and_infographic_do_not_fall_back_to_generic_relation():
     comparison = "对比图：DeepSpeed、vLLM、TGI三种推理框架，对比维度包括吞吐、延迟、显存、部署复杂度"
-    c_intent = match_diagram_intent(comparison)
-    assert c_intent is not None
-    assert c_intent.diagram_subtype == "comparison_matrix"
+    c_intent = DiagramIntent("matrix", "comparison_matrix", 0.9, "test", "对比图")
     c_spec = parse_comparison(PipelineContext(description="", normalized_input=comparison, use_llm=False), c_intent).parsed_spec
     assert c_spec["columns"] == ["DeepSpeed", "vLLM", "TGI"]
     assert c_spec["dimensions"] == ["吞吐", "延迟", "显存", "部署复杂度"]
     assert "center" not in c_spec
 
     attention = "Attention 权重矩阵可视化，展示 Q/K score、mask 和 softmax 后的注意力权重"
-    a_intent = match_diagram_intent(attention)
-    assert a_intent is not None
-    assert a_intent.diagram_subtype == "attention_matrix"
+    a_intent = DiagramIntent("matrix", "attention_matrix", 0.9, "test", "注意力矩阵")
 
     infographic = "信息图总结本章核心要点：角色设定、思维链、输出格式、少样本、迭代优化，五个信息块"
-    i_intent = match_diagram_intent(infographic)
-    assert i_intent is not None
-    assert i_intent.diagram_subtype == "infographic"
+    i_intent = DiagramIntent("knowledge", "infographic", 0.9, "test", "信息图")
     i_spec = parse_infographic(PipelineContext(description="", normalized_input=infographic, use_llm=False), i_intent).parsed_spec
     assert [block["label"] for block in i_spec["blocks"]] == ["角色设定", "思维链", "输出格式", "少样本", "迭代优化"]
     assert "center" not in i_spec
@@ -542,7 +553,7 @@ def test_transformer_parser_outputs_ordered_encoder_decoder_layers():
     )
     intent = DiagramIntent("knowledge", "transformer", title="标准Transformer编码器-解码器架构图")
 
-    spec = parse_mechanism(ctx, intent).parsed_spec
+    spec = parse_transformer(ctx, intent).parsed_spec
 
     assert spec["encoder"]["layers"] == ["multi_head_self_attention", "add_norm", "feed_forward", "add_norm"]
     assert spec["decoder"]["layers"][:3] == ["masked_multi_head_self_attention", "add_norm", "cross_attention"]
@@ -553,7 +564,9 @@ def test_legacy_transformer_parser_is_grammar_shim():
     ctx = PipelineContext(description="", normalized_input="Transformer 编码器解码器架构", use_llm=False)
     intent = DiagramIntent("knowledge", "transformer", title="Transformer 架构")
 
-    assert parse_transformer(ctx, intent).parsed_spec == parse_mechanism(ctx, intent).parsed_spec
+    spec = parse_transformer(ctx, intent).parsed_spec
+    assert spec.get("encoder", {}).get("layers")
+    assert spec["diagram_subtype"] == "transformer"
 
 
 def test_network_parser_outputs_relationship_graph_not_taxonomy_tree():

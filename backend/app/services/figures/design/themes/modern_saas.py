@@ -18,4 +18,7 @@ MODERN_SAAS = {
     "service": "#EEF3FD",
     "database": "#F1F5F9",
     "queue": "#ECFEFF",
+    "model": "#06B6D4",
+    "warning": "#FEF2F2",
+    "success": "#DCFCE7",
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 from app.services.figures.design.typography import estimate_text_width
 
 
-def estimate_node_size(label: str, *, min_width: float = 116.0, max_width: float = 220.0) -> tuple[float, float]:
+def estimate_node_size(label: str, *, min_width: float = 116.0, max_width: float = 280.0) -> tuple[float, float]:
     text = str(label or "")
     raw_width = estimate_text_width(text, font_size=13) + 24
     width = max(min_width, min(max_width, raw_width))

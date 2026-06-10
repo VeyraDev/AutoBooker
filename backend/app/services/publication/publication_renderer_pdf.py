@@ -20,9 +20,11 @@ from app.services.publication.publication_styles import (
     PUBLICATION_CSS,
 )
 from app.services.tiptap_convert import (
+    _figure_raster_for_export,
     _inline_to_markdown,
     _resolve_figure_local_path,
     _table_cell_inline_nodes,
+    merge_figure_export_attrs,
 )
 
 
@@ -87,11 +89,14 @@ def _prepare_figure_archive_entry(
     local = _resolve_figure_local_path(attrs)
     if not local:
         return None
+    raster = _figure_raster_for_export(local)
+    if not raster:
+        return None
     name = f"figure-{fig_idx}.png"
     try:
-        png_bytes, width_px, height_px = _figure_image_for_pdf(local)
+        png_bytes, width_px, height_px = _figure_image_for_pdf(raster)
     except Exception:
-        png_bytes = local.read_bytes()
+        png_bytes = raster.read_bytes()
         width_px = PDF_FIGURE_WIDTH_PX
         height_px = max(1, width_px * 3 // 4)
     archive.add(png_bytes, name)
@@ -223,9 +228,10 @@ def _tiptap_node_to_html(node: dict[str, Any]) -> str:
     if t == "heading":
         level = int((node.get("attrs") or {}).get("level") or 2)
         level = max(1, min(6, level))
-        tag = "h2" if level <= 2 else "h3"
+        tag = f"h{level}"
+        cls = "section-title" if level <= 2 else "subsection-title"
         inner = _inline_to_html(node.get("content"))
-        return f"<{tag} class='section-title'>{inner}</{tag}>"
+        return f"<{tag} class='{cls}'>{inner}</{tag}>"
     if t == "codeBlock":
         code = html.escape(_inline_to_markdown(node.get("content")))
         return f"<pre><code>{code}</code></pre>"
@@ -307,7 +313,8 @@ def _build_publication_html(
             fig_id = f"figgrp-{fig_idx}"
             fig_html = ""
             if isinstance(node, dict):
-                prepared = _prepare_figure_archive_entry(node.get("attrs") or {}, fig_idx, archive)
+                merged_attrs = merge_figure_export_attrs(block.attrs, node.get("attrs"))
+                prepared = _prepare_figure_archive_entry(merged_attrs, fig_idx, archive)
                 if prepared:
                     name, width_px, height_px = prepared
                     fig_html = _figure_img_html(name, width_px, height_px)

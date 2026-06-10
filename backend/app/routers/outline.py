@@ -27,6 +27,7 @@ from app.schemas.outline import (
 )
 from app.llm.providers import resolve_book_outline_model
 from app.services import book_service
+from app.services.heading_formatter import normalize_outline_sections
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +56,12 @@ def _agent_ndjson(location: str, message: str, data: dict, hypothesis_id: str) -
 
 def _chapter_to_outline(ch: Chapter) -> OutlineChapterOut:
     meta = ch.content if isinstance(ch.content, dict) else {}
-    sections_raw = meta.get("sections") or []
+    sections_raw = normalize_outline_sections(
+        [s for s in (meta.get("sections") or []) if isinstance(s, dict)]
+    )
     sections = [
         OutlineSectionOut(title=s.get("title", ""), summary=s.get("summary", ""))
         for s in sections_raw
-        if isinstance(s, dict)
     ]
     return OutlineChapterOut(
         id=ch.id,
@@ -149,9 +151,15 @@ def generate_outline(
         db.query(Chapter).filter(Chapter.book_id == book.id).delete()
 
         for ch in outline.get("chapters", []):
+            raw_sections = ch.get("sections", [])
+            sections = (
+                normalize_outline_sections(raw_sections)
+                if isinstance(raw_sections, list)
+                else []
+            )
             meta = {
                 "key_points": ch.get("key_points", []),
-                "sections": ch.get("sections", []),
+                "sections": sections,
                 "estimated_words": ch.get("estimated_words", 3000),
             }
             db.add(
@@ -237,7 +245,8 @@ def update_outline(
         if p.estimated_words is not None:
             meta["estimated_words"] = p.estimated_words
         if p.sections is not None:
-            meta["sections"] = [s.model_dump() for s in p.sections]
+            dumped = [s.model_dump() for s in p.sections]
+            meta["sections"] = normalize_outline_sections(dumped)
         ch.content = meta
 
     if body.confirm_start_writing:

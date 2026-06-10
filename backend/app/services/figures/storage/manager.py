@@ -78,15 +78,16 @@ class FigureStorageManager:
         return ddir
 
     def resolve_local_path(self, url_or_path: str) -> Path | None:
-        raw = str(url_or_path or "").strip()
+        raw = str(url_or_path or "").strip().split("?", 1)[0].split("#", 1)[0].strip()
         if not raw:
             return None
         if raw.startswith("/static/figures/"):
-            rel = raw.replace("/static/figures/", "", 1)
-            candidate = settings.figures_path / rel.replace("/", "\\") if "\\" in str(settings.figures_path) else settings.figures_path / rel
-            if candidate.is_file():
-                return candidate
-            parts = rel.split("/")
+            rel = raw.replace("/static/figures/", "", 1).replace("\\", "/")
+            parts = [p for p in rel.split("/") if p]
+            if parts:
+                candidate = settings.figures_path.joinpath(*parts)
+                if candidate.is_file():
+                    return candidate
             if len(parts) == 2:
                 legacy = settings.figures_path / parts[0] / parts[1]
                 if legacy.is_file():

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="560" viewBox="0 0 880 560" data-grammar="decision_tree" data-mandatory-semantics="top_down_tree,condition_diamonds,branch_labels,yes_no_paths,outcome_leaf_nodes,directive:node.decision_shape,directive:edge.branch_label,directive:layout.tree,directive:readability.mixed_text" data-visual-directives="node.decision_shape,edge.branch_label,layout.tree,readability.mixed_text,layout.symmetry">
+<rect width="100%" height="100%" fill="#F8FAFC"/>
+<defs>
+<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#0F172A" flood-opacity="0.12"/></filter>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748B"/></marker>
+<marker id="arrow-primary" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2563EB"/></marker>
+<marker id="arrow-forward" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2563EB"/></marker>
+<marker id="arrow-reverse" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#B45309"/></marker>
+</defs>
+<g class="mandatory-semantics" data-items="top_down_tree,condition_diamonds,branch_labels,yes_no_paths,outcome_leaf_nodes,directive:node.decision_shape,directive:edge.branch_label,directive:layout.tree,directive:readability.mixed_text"/>
+<g class="visual-directives" data-items="node.decision_shape,edge.branch_label,layout.tree,readability.mixed_text,layout.symmetry"/>
+<text x="440.0" y="28.0" fill="#0F172A" font-size="17" text-anchor="middle" dominant-baseline="middle">是否选择全量微调的决策树</text>
+<g class="branch-label yes-no-path decision-tree-edge" data-label="是">
+<path class="branch-label yes-no-path decision-tree-edge-path" d="M 440.0 136.0 L 440.0 157.0 L 440.0 157.0 L 440.0 180.0" fill="none" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arrow-primary)"/>
+<rect x="422.0" y="148.5" width="36.0" height="16" rx="3" fill="#FFFFFFCC" stroke="none"/>
+<text x="440.0" y="157.5" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">是</text>
+</g>
+<g class="branch-label yes-no-path decision-tree-edge" data-label="否">
+<path class="branch-label yes-no-path decision-tree-edge-path" d="M 440.0 136.0 L 440.0 157.0 L 440.0 157.0 L 440.0 180.0" fill="none" stroke="#2563EB" stroke-width="1.5" marker-end="url(#arrow-primary)"/>
+<rect x="422.0" y="148.5" width="36.0" height="16" rx="3" fill="#FFFFFFCC" stroke="none"/>
+<text x="440.0" y="157.5" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">否</text>
+</g>
+<g class="condition-diamond decision-node" data-label="是否选择全量微调的决策树，根节点&quot;数据量是否超过10万条&quot;，是→">
+<polygon points="440.0,57.0 520.0,96.0 440.0,135.0 360.0,96.0" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="440.0" y="80.4" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">是否选择全量</text>
+<text x="440.0" y="96.0" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">微调的决策树，</text>
+<text x="440.0" y="111.6" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">根节点&quot;数据量</text>
+</g>
+<g class="outcome-leaf-node decision-leaf" data-label="全量微调的决策树">
+<rect x="362.0" y="186.0" width="156.0" height="64.0" rx="8" fill="#DCFCE7" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="440.0" y="218.0" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">全量微调的决策树</text>
+</g>
+<g class="top-down-tree no-floating-leaves"/>
+</svg>

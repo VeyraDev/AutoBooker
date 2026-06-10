@@ -1,0 +1,80 @@
+<svg data-grammar="comparison_matrix" data-visual-directives="comparison.axis,comparison.quantitative_form,readability.mixed_text" data-mandatory-semantics="subjects,dimensions,cells,axis_headers,directive:comparison.axis,directive:comparison.quantitative_form,directive:readability.mixed_text" xmlns="http://www.w3.org/2000/svg" width="566" height="1296" viewBox="0 0 566 1296">
+<rect width="100%" height="100%" fill="#F8FAFC"/>
+<text x="283.0" y="42.0" fill="#0F172A" font-size="16" text-anchor="middle" dominant-baseline="middle">vLLM</text>
+<text x="48.0" y="86.0" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">吞吐量</text>
+<rect x="158.0" y="98.0" width="238.0" height="32.0" rx="4" fill="#BBF7D0" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="116.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">vLLM</text>
+<text x="404.0" y="116.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">高</text>
+<rect x="158.0" y="142.0" width="70.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="160.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">TGI</text>
+<text x="236.0" y="160.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">中</text>
+<rect x="158.0" y="186.0" width="70.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="204.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">DeepSpeed</text>
+<text x="236.0" y="204.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">中</text>
+<rect x="158.0" y="230.0" width="105.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="248.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">三种推理框架对比</text>
+<text x="271.0" y="248.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">见说明</text>
+<rect x="158.0" y="274.0" width="105.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="292.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">对比维度</text>
+<text x="271.0" y="292.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">见说明</text>
+<rect x="158.0" y="318.0" width="105.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="336.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">吞吐量</text>
+<text x="271.0" y="336.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">见说明</text>
+<text x="48.0" y="400.0" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">延迟</text>
+<rect x="158.0" y="412.0" width="98.0" height="32.0" rx="4" fill="#FECACA" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="430.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">vLLM</text>
+<text x="264.0" y="430.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">低</text>
+<rect x="158.0" y="456.0" width="70.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="474.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">TGI</text>
+<text x="236.0" y="474.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">中</text>
+<rect x="158.0" y="500.0" width="70.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="518.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">DeepSpeed</text>
+<text x="236.0" y="518.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">中</text>
+<rect x="158.0" y="544.0" width="238.0" height="32.0" rx="4" fill="#BBF7D0" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="562.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">三种推理框架对比</text>
+<text x="404.0" y="562.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">较快</text>
+<rect x="158.0" y="588.0" width="238.0" height="32.0" rx="4" fill="#BBF7D0" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="606.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">对比维度</text>
+<text x="404.0" y="606.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">较快</text>
+<rect x="158.0" y="632.0" width="238.0" height="32.0" rx="4" fill="#BBF7D0" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="650.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">吞吐量</text>
+<text x="404.0" y="650.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">较快</text>
+<text x="48.0" y="714.0" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">易用性</text>
+<rect x="158.0" y="726.0" width="70.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="744.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">vLLM</text>
+<text x="236.0" y="744.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">中</text>
+<rect x="158.0" y="770.0" width="238.0" height="32.0" rx="4" fill="#BBF7D0" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="788.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">TGI</text>
+<text x="404.0" y="788.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">高</text>
+<rect x="158.0" y="814.0" width="98.0" height="32.0" rx="4" fill="#FECACA" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="832.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">DeepSpeed</text>
+<text x="264.0" y="832.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">低</text>
+<rect x="158.0" y="858.0" width="70.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="876.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">三种推理框架对比</text>
+<text x="236.0" y="876.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">中等</text>
+<rect x="158.0" y="902.0" width="70.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="920.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">对比维度</text>
+<text x="236.0" y="920.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">中等</text>
+<rect x="158.0" y="946.0" width="70.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="964.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">吞吐量</text>
+<text x="236.0" y="964.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">中等</text>
+<text x="48.0" y="1028.0" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">社区活跃度</text>
+<rect x="158.0" y="1040.0" width="238.0" height="32.0" rx="4" fill="#BBF7D0" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="1058.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">vLLM</text>
+<text x="404.0" y="1058.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">高</text>
+<rect x="158.0" y="1084.0" width="70.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="1102.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">TGI</text>
+<text x="236.0" y="1102.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">中</text>
+<rect x="158.0" y="1128.0" width="238.0" height="32.0" rx="4" fill="#BBF7D0" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="1146.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">DeepSpeed</text>
+<text x="404.0" y="1146.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">高</text>
+<rect x="158.0" y="1172.0" width="105.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="1190.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">三种推理框架对比</text>
+<text x="271.0" y="1190.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">见说明</text>
+<rect x="158.0" y="1216.0" width="105.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="1234.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">对比维度</text>
+<text x="271.0" y="1234.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">见说明</text>
+<rect x="158.0" y="1260.0" width="105.0" height="32.0" rx="4" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="52.0" y="1278.0" fill="#64748B" font-size="10" text-anchor="middle" dominant-baseline="middle">吞吐量</text>
+<text x="271.0" y="1278.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">见说明</text>
+</svg>

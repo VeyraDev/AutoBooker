@@ -1,4 +1,4 @@
-"""Subtype → Parser 注册表（兜底路径）。"""
+"""Subtype → Parser 注册表（V2 兜底；主路径见 compiler/）。"""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from app.services.figures.parse.pipeline import parse_pipeline
 from app.services.figures.parse.swot import parse_swot
 from app.services.figures.parse.taxonomy import parse_taxonomy
 from app.services.figures.parse.timeline import parse_timeline
+from app.services.figures.parse.transformer import parse_transformer
+from app.services.figures.intent.taxonomy import canonical_subtype
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
 
 _PARSERS = {
@@ -26,7 +28,7 @@ _PARSERS = {
     "chapter_summary": parse_infographic,
     "decision_tree": parse_decision_tree,
     "decision_flow": parse_decision_tree,
-    "transformer": parse_mechanism,
+    "transformer": parse_transformer,
     "rag": parse_architecture,
     "agent": parse_architecture,
     "swot": parse_swot,
@@ -50,8 +52,10 @@ _PARSERS = {
 
 
 def parse_diagram_fallback(ctx: PipelineContext, intent: DiagramIntent) -> ParsedDiagram:
-    """语义解构失败时的子类型 parser 兜底（不调用 LLM 混合规划）。"""
-    fn = _PARSERS.get(intent.diagram_subtype, parse_generic_graph)
+    """catalog 注册的 grammar parser（仅 chart 规则兜底与测试）；主路径不走此注册表。"""
+    raw = (intent.diagram_subtype or "").strip().lower()
+    lookup = canonical_subtype(intent.diagram_subtype)
+    fn = _PARSERS.get(raw) or _PARSERS.get(lookup, parse_generic_graph)
     try:
         return sanitize_parsed_diagram(fn(ctx, intent), subtype=intent.diagram_subtype)
     except Exception:

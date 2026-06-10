@@ -13,6 +13,13 @@ _V_GAP = 72.0
 
 
 def layout_layered(graph: GraphIR) -> LayoutResult:
+    if not graph.nodes:
+        return LayoutResult(
+            strategy="layered",
+            direction="TB",
+            node_positions={},
+            canvas={"width": 800.0, "height": 420.0},
+        )
     layer_of: dict[str, int] = {}
     for grp in graph.groups:
         lid = str(grp.get("id") or grp.get("label") or "")
@@ -22,7 +29,9 @@ def layout_layered(graph: GraphIR) -> LayoutResult:
         in_deg: dict[str, int] = defaultdict(int)
         for e in graph.edges:
             in_deg[e.target] += 1
-        roots = [n.id for n in graph.nodes if in_deg.get(n.id, 0) == 0] or [graph.nodes[0].id]
+        roots = [n.id for n in graph.nodes if in_deg.get(n.id, 0) == 0]
+        if not roots and graph.nodes:
+            roots = [graph.nodes[0].id]
         visited: set[str] = set()
         frontier = list(roots)
         level = 0

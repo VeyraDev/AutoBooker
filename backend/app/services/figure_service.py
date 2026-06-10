@@ -375,6 +375,82 @@ def _figure_block_node(fig: Figure) -> dict[str, Any]:
     }
 
 
+_PID_COMMENT_RE = re.compile(r"<!--\s*pid:[^>]+-->\s*", re.I)
+
+
+def _strip_pid_comments(text: str) -> str:
+    return _PID_COMMENT_RE.sub("", text or "").strip()
+
+
+def is_chapter_body_empty(content: dict[str, Any] | None) -> bool:
+    """正文是否实质为空（仅剩空白或段落 id 占位）。"""
+    if not content or not isinstance(content, dict):
+        return True
+    text = _strip_pid_comments(str(content.get("text") or ""))
+    if len(text) > 40:
+        return False
+    tj = content.get("tiptap_json")
+    if not isinstance(tj, dict) or tj.get("type") != "doc":
+        return len(text) == 0
+    from app.services.tiptap_convert import tiptap_json_to_markdown
+
+    md = _strip_pid_comments(tiptap_json_to_markdown(tj))
+    if len(md) > 40:
+        return False
+    if _figure_ids_in_tiptap(tj):
+        return False
+    nodes = tj.get("content") or []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        ntype = node.get("type")
+        if ntype in ("heading", "table", "bulletList", "orderedList", "codeBlock", "blockquote", "figureBlock"):
+            return False
+        if ntype == "paragraph":
+            body = ""
+            for child in node.get("content") or []:
+                if isinstance(child, dict) and child.get("type") == "text":
+                    body += str(child.get("text") or "")
+            if body.strip():
+                return False
+    return True
+
+
+def rebuild_chapter_body_from_figures(
+    book_id: UUID,
+    chapter_index: int,
+    db: Session,
+    *,
+    book: Book | None = None,
+) -> dict[str, Any]:
+    """当章节正文丢失但图表库仍有记录时，从图表重建 TipTap 正文。"""
+    from app.services.chapter_figure_table_normalize import (
+        _make_para,
+        _short_title,
+        normalize_chapter_figures_tables,
+    )
+
+    figures = get_chapter_figures(book_id, chapter_index, db)
+    if not figures:
+        return {"tiptap_json": {"type": "doc", "content": [{"type": "paragraph"}]}, "text": "", "overview": []}
+
+    blocks: list[dict[str, Any]] = []
+    for fig in figures:
+        repair_figure_file(fig, db)
+        num = (fig.figure_number or f"{chapter_index}-0").strip()
+        parts = num.split("-", 1)
+        ch_n = parts[0] if parts else str(chapter_index)
+        seq_n = parts[1] if len(parts) > 1 else "0"
+        title = (fig.caption or fig.raw_annotation or "示意图").strip()
+        short = _short_title(title, fallback="示意图")
+        blocks.append(_make_para(f"如图{ch_n}-{seq_n}所示，{short}。"))
+        blocks.append(_figure_block_node(fig))
+        blocks.append(_make_para(f"图{ch_n}-{seq_n}：{short}", center=True))
+
+    draft = {"type": "doc", "content": blocks}
+    return normalize_chapter_figures_tables(book_id, chapter_index, draft, db, book=book)
+
+
 def sync_figures_to_tiptap(
     book_id: UUID,
     chapter_index: int,
@@ -429,34 +505,57 @@ def sync_figures_to_tiptap(
 
 
 def repair_figure_file(fig: Figure, db: Session) -> Figure:
-    """修复 Graphviz cairo 渲染遗留的 .cairo.png 与 DB 中 .png 路径不一致。"""
-    def clear_missing_svg(path: Path | None = None) -> bool:
+    """修复遗留路径、同步规范目录下的 figure.svg / figure.png 与 DB URL。"""
+    from app.services.figures.generation import sync_figure_urls_from_disk
+    from app.services.figures.storage.manager import figure_storage
+
+    changed = False
+
+    def clear_missing_svg() -> bool:
+        nonlocal changed
         if not getattr(fig, "svg_url", None):
             return False
-        if fig.status != FigureStatus.uploaded and path is not None:
-            svg_path = path.with_suffix(".svg")
-            if svg_path.is_file():
-                return False
+        canonical_svg = figure_storage.svg_path(fig.book_id, fig.chapter_index, fig.id)
+        if canonical_svg.is_file():
+            return False
+        legacy = figure_storage.legacy_dir(fig.book_id) / f"{fig.id.hex}.svg"
+        if legacy.is_file():
+            return False
         fig.svg_url = None
-        db.commit()
-        db.refresh(fig)
+        changed = True
         return True
 
-    if not fig.file_path:
-        clear_missing_svg()
-        return fig
-    path = Path(fig.file_path)
-    if path.is_file():
-        clear_missing_svg(path)
-        return fig
-    alt = path.with_name(f"{path.stem}.cairo.png")
-    if alt.is_file():
-        alt.replace(path)
-        fig.file_path = str(path.resolve())
-        fig.file_url = f"/static/figures/{fig.book_id}/{path.name}"
-        db.commit()
-        db.refresh(fig)
-    clear_missing_svg(path)
+    canonical_png = figure_storage.png_path(fig.book_id, fig.chapter_index, fig.id)
+    canonical_svg = figure_storage.svg_path(fig.book_id, fig.chapter_index, fig.id)
+    if canonical_png.is_file() or canonical_svg.is_file():
+        before_url = fig.file_url
+        before_svg = fig.svg_url
+        sync_figure_urls_from_disk(fig, chapter_index=fig.chapter_index)
+        if fig.file_url != before_url or fig.svg_url != before_svg or not fig.file_path:
+            changed = True
+    elif fig.file_path:
+        path = Path(fig.file_path)
+        if path.is_file():
+            clear_missing_svg()
+            return fig if not changed else _commit_figure(fig, db)
+        alt = path.with_name(f"{path.stem}.cairo.png")
+        if alt.is_file():
+            alt.replace(path)
+            fig.file_path = str(path.resolve())
+            fig.file_url = f"/static/figures/{fig.book_id}/{path.name}"
+            changed = True
+        elif fig.file_url:
+            resolved = figure_storage.resolve_local_path(fig.file_url)
+            if resolved and resolved.is_file():
+                fig.file_path = str(resolved.resolve())
+                changed = True
+    clear_missing_svg()
+    return _commit_figure(fig, db) if changed else fig
+
+
+def _commit_figure(fig: Figure, db: Session) -> Figure:
+    db.commit()
+    db.refresh(fig)
     return fig
 
 

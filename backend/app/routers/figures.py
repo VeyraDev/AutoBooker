@@ -36,10 +36,13 @@ from app.services.chapter_figure_table_normalize import (
     normalize_chapter_figures_tables,
 )
 from app.services.figure_generate import generate_figure_asset, save_uploaded_figure
+from app.services.figures.generation import FigureGenerationError
 from app.services.figure_service import (
     _LEGACY_TAG_BY_TYPE,
     get_figure_list,
     get_figure_or_404,
+    is_chapter_body_empty,
+    rebuild_chapter_body_from_figures,
     refresh_chapter_figures,
     repair_figure_file,
     sync_figures_to_tiptap,
@@ -116,6 +119,15 @@ def generate_figure(
             sub_kind=opts.sub_kind,
             legacy_tag=_LEGACY_TAG_BY_TYPE.get(fig.figure_type),
         )
+    except FigureGenerationError as e:
+        repair_figure_file(fig, db)
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": str(e),
+                "quality_report": e.quality_report,
+            },
+        ) from e
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
     except Exception as e:
@@ -248,6 +260,46 @@ def sync_chapter_figures(
     if last_err:
         raise last_err
     raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "图表同步失败")
+
+
+@router.post(
+    "/{book_id}/chapters/{chapter_index}/figures/rebuild-body",
+    response_model=FigureTableNormalizeOut,
+)
+def rebuild_chapter_body_route(
+    book_id: UUID,
+    chapter_index: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """正文丢失但本章仍有图表记录时，从图表库重建编辑区内容。"""
+    book = book_service.get_book_or_404(book_id, user, db)
+    ch = (
+        db.query(Chapter)
+        .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
+        .first()
+    )
+    if not ch:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chapter not found")
+    meta = ch.content if isinstance(ch.content, dict) else {}
+    if not is_chapter_body_empty(meta):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "章节正文非空，无需从图表恢复")
+    result = rebuild_chapter_body_from_figures(book_id, chapter_index, db, book=book)
+    if not (result.get("text") or "").strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "本章无可用图表可恢复正文")
+    overview = [FigureTableOverviewItem(**row) for row in result["overview"]]
+    meta = dict(meta)
+    meta["tiptap_json"] = result["tiptap_json"]
+    meta["text"] = result["text"]
+    meta["figure_table_overview"] = result["overview"]
+    ch.content = meta
+    ch.word_count = len(result["text"].replace("\n", "").replace(" ", ""))
+    db.commit()
+    return FigureTableNormalizeOut(
+        tiptap_json=result["tiptap_json"],
+        text=result["text"],
+        overview=overview,
+    )
 
 
 @router.post(

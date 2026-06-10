@@ -1,0 +1,215 @@
+[
+  {
+    "id": "chart",
+    "subtype_hint": "chart",
+    "prompt": "生成一张柱状图，对比三种部署方案的平均延迟：vLLM 为 42ms，TGI 为 58ms，普通 FastAPI 为 95ms，突出 vLLM 延迟最低。",
+    "expected_effect": "真实数值柱状图，横轴为部署方案，纵轴为平均延迟，不能编造数据，输出可读的 chart PNG/SVG。",
+    "expected": {
+      "route": "chart",
+      "diagram_subtype": "chart",
+      "renderer": "structured.chart",
+      "render_mode": "structured_chart",
+      "required_spec_fields": ["labels", "values"]
+    }
+  },
+  {
+    "id": "timeline_roadmap",
+    "subtype_hint": "timeline_roadmap",
+    "prompt": "画一张产品路线图时间线：2026 Q1 完成需求调研，2026 Q2 发布 MVP，2026 Q3 接入企业客户，2026 Q4 做性能优化和规模化部署。",
+    "expected_effect": "水平或蛇形时间线，有明确时间标记、里程碑节点和阶段顺序，避免退化成普通流程图。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "timeline_roadmap",
+      "renderer": "structured.timeline",
+      "geometry_kind": "timeline",
+      "render_profile": "svg.timeline",
+      "required_spec_fields": ["events"]
+    }
+  },
+  {
+    "id": "process_flow",
+    "subtype_hint": "process_flow",
+    "prompt": "生成模型上线流程图：提交模型、自动评估、人工复核、灰度发布；如果自动评估不达标则返回提交模型，如果复核通过则发布。",
+    "expected_effect": "流程图应有主流程脊柱、开始/结束、判断菱形、是/否或通过/不达标分支以及回路，不应只是节点散点图。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "process_flow",
+      "renderer": "structured.generic_graph",
+      "geometry_kind": "graph",
+      "graph_visual_grammar": "process_flow",
+      "render_profile": "svg.flow",
+      "required_spec_fields": ["nodes", "edges", "graph_visual_grammar"]
+    }
+  },
+  {
+    "id": "system_architecture",
+    "subtype_hint": "system_architecture",
+    "prompt": "生成 RAG 系统架构图：用户请求进入 API 网关，检索服务访问向量库召回文档，大模型服务融合上下文生成答案，日志进入消息队列和监控系统。",
+    "expected_effect": "架构图应有入口层、服务层、基础设施层，组件卡片、向量库/队列形态、跨层正交连线，避免线性流程化。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "system_architecture",
+      "renderer": "structured.architecture",
+      "geometry_kind": "graph",
+      "graph_visual_grammar": "architecture",
+      "render_profile": "svg.architecture",
+      "required_spec_fields": ["nodes", "edges", "graph_visual_grammar"]
+    }
+  },
+  {
+    "id": "mechanism_diagram",
+    "subtype_hint": "mechanism_diagram",
+    "prompt": "画一张 Transformer 注意力机制图：输入 tokens 经过 Q/K/V 投影，计算注意力权重，再加权求和得到上下文向量，残差连接把输出反馈到后续层。",
+    "expected_effect": "机制图应显示输入、操作、状态/输出 stage，包含 transformation arrows 和 feedback lane，不应退化成普通 graph。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "mechanism_diagram",
+      "renderer": "structured.generic_graph",
+      "geometry_kind": "graph",
+      "graph_visual_grammar": "mechanism",
+      "render_profile": "svg.mechanism",
+      "required_spec_fields": ["nodes", "edges", "graph_visual_grammar"]
+    }
+  },
+  {
+    "id": "comparison_matrix",
+    "subtype_hint": "comparison_matrix",
+    "prompt": "做一张对比矩阵，比较全量微调、LoRA、Prompt Engineering 在显存需求、训练速度、效果上限、适用场景四个维度上的差异。",
+    "expected_effect": "矩阵或对比卡片，列是方案，行是维度，单元格有简短结论，不能变成流程或关系图。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "comparison_matrix",
+      "renderer": "structured.comparison",
+      "geometry_kind": "matrix",
+      "render_profile": "svg.matrix",
+      "required_spec_fields": ["subjects", "dimensions", "cells"]
+    }
+  },
+  {
+    "id": "taxonomy_map",
+    "subtype_hint": "taxonomy_map",
+    "prompt": "生成一个 AI 应用类型分类图，根节点是 AI 应用，一级分类包括内容生成、知识管理、自动化执行、决策辅助；每类下面列出两个典型子类。",
+    "expected_effect": "分类树或层级图，有根节点、一级分类、二级子类，层级清楚，不能变成网络散点。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "taxonomy_map",
+      "renderer": "structured.taxonomy",
+      "geometry_kind": "tree",
+      "render_profile": "svg.tree",
+      "required_spec_fields": ["root", "children"]
+    }
+  },
+  {
+    "id": "knowledge_graph",
+    "subtype_hint": "knowledge_graph",
+    "prompt": "画一张智能体知识图谱：智能体连接目标、规划、工具、记忆、环境和反馈；规划调用工具，环境产生反馈，反馈更新记忆，记忆影响下一次规划。",
+    "expected_effect": "非树状关系网络，有 hub 强调、关系边标签、节点类型/聚类区分，不能画成线性流程。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "knowledge_graph",
+      "renderer": "structured.network",
+      "geometry_kind": "graph",
+      "graph_visual_grammar": "network",
+      "render_profile": "svg.network",
+      "required_spec_fields": ["nodes", "edges", "graph_visual_grammar"]
+    }
+  },
+  {
+    "id": "decision_tree",
+    "subtype_hint": "decision_tree",
+    "prompt": "生成模型选型决策树：先判断是否必须本地部署；是则选择开源模型，否则判断是否需要最高效果；需要则选择闭源大模型 API，不需要则选择轻量 API。",
+    "expected_effect": "自顶向下决策树，条件节点是菱形，分支有是/否标签，叶子是结果节点，不能有浮动叶子。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "decision_tree",
+      "renderer": "structured.generic_graph",
+      "geometry_kind": "graph",
+      "graph_visual_grammar": "decision_tree",
+      "render_profile": "svg.decision",
+      "required_spec_fields": ["nodes", "edges", "graph_visual_grammar"]
+    }
+  },
+  {
+    "id": "concept_diagram",
+    "subtype_hint": "concept_diagram",
+    "prompt": "生成提示工程概念图：中心是提示工程，周围关联角色设定、任务目标、上下文、约束、示例和输出格式，并标注它们与中心概念的关系。",
+    "expected_effect": "中心概念强化，外围卫星节点环绕，径向链接和关系标签清楚，禁止退化为线性流程。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "concept_diagram",
+      "renderer": "structured.generic_graph",
+      "geometry_kind": "graph",
+      "graph_visual_grammar": "radial_concept",
+      "render_profile": "svg.radial",
+      "required_spec_fields": ["nodes", "edges", "graph_visual_grammar"]
+    }
+  },
+  {
+    "id": "infographic",
+    "subtype_hint": "infographic",
+    "prompt": "生成章节总结信息图，包含六个信息块：问题背景、核心概念、关键流程、常见误区、实践建议、下一步行动，每个信息块用短标题和两条要点展示。",
+    "expected_effect": "2x3 或卡片栅格信息图，每个信息块等高，标题和要点清晰，不能变成普通节点边图。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "infographic",
+      "renderer": "structured.infographic",
+      "geometry_kind": "blocks",
+      "render_profile": "svg.blocks",
+      "required_spec_fields": ["blocks"]
+    }
+  },
+  {
+    "id": "scene_illustration",
+    "subtype_hint": "scene_illustration",
+    "prompt": "画一张书籍内页场景插画：夜晚办公室里，一位产品经理和 AI 助手一起审阅复杂报告，窗外是城市灯光，整体克制、专业、无可读文字。",
+    "expected_effect": "具象场景插画，表现人物、环境和氛围，不应出现流程框、箭头、节点标签或结构图样式。",
+    "expected": {
+      "route": "illustration",
+      "diagram_subtype": "scene_illustration",
+      "renderer": "illustration.image_api",
+      "render_mode": "image_api",
+      "required_spec_fields": ["illustration_brief"]
+    }
+  },
+  {
+    "id": "swot",
+    "subtype_hint": "swot",
+    "prompt": "生成 AI 写作工具的 SWOT 四象限图：优势包括效率高和灵感补全，劣势包括事实错误和风格不稳定，机会包括企业知识库和个性化写作，威胁包括版权风险和同质化竞争。",
+    "expected_effect": "标准 2x2 SWOT 四象限，S/W/O/T 背景色区分，项目以短条目放入象限，不能退化成流程图。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "swot",
+      "renderer": "structured.swot",
+      "geometry_kind": "matrix",
+      "render_profile": "svg.matrix",
+      "required_spec_fields": ["subjects", "dimensions", "cells"]
+    }
+  },
+  {
+    "id": "attention_matrix",
+    "subtype_hint": "attention_matrix",
+    "prompt": "生成一个 5x5 注意力矩阵热力图，tokens 为 用户、查询、检索、文档、答案，高注意力集中在查询到检索、检索到文档、文档到答案。",
+    "expected_effect": "注意力权重矩阵或热力格，横纵轴都是 tokens，颜色深浅表达权重，不能变成流程或概念网络。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "attention_matrix",
+      "renderer": "structured.matrix",
+      "geometry_kind": "matrix",
+      "render_profile": "svg.matrix",
+      "required_spec_fields": ["cells"]
+    }
+  },
+  {
+    "id": "swimlane",
+    "subtype_hint": "swimlane",
+    "prompt": "生成客户退款泳道图，泳道包括客户、客服、财务和系统；客户提交申请，客服审核，财务退款，系统发送通知；客服驳回时回到客户补充材料。",
+    "expected_effect": "泳道图应按角色分成横向或纵向泳道，步骤落在对应泳道内，跨泳道交接清楚，不能丢失 lane 语义。",
+    "expected": {
+      "route": "structured_diagram",
+      "diagram_subtype": "swimlane",
+      "renderer": "structured.generic_graph",
+      "geometry_kind": "lanes",
+      "required_spec_fields": ["lanes", "nodes", "edges"]
+    }
+  }
+]

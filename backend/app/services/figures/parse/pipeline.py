@@ -9,10 +9,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.config import settings
-from app.llm.client import LLMClient
+from app.services.figures.parse.flow_rules import build_default_flow_edges
+from app.services.figures.semantic.flow_semantic import infer_grammar_stages_from_text
+from app.services.figures.parse.llm_helpers import call_llm_json, llm_available
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
-from app.utils.json_llm import parse_llm_json
 
 _PROMPT = """解析流程/流水线 JSON。只输出 JSON：
 {
@@ -160,30 +160,7 @@ def _rule_stages(text: str) -> list[dict[str, str]]:
 
 
 def _rule_parallel_feedback(text: str) -> list[dict[str, str]] | None:
-    if not re.search(r"并行分支|并行|汇合", text):
-        return None
-    branch_match = re.search(r"(?:包含|包括|有)?([^，,。；;]+?)、([^，,。；;]+?)(?:两个|两条|多个)?并行分支", text)
-    merge_match = re.search(r"汇合后(?:进行)?([^，,。；;]+)", text)
-    eval_match = re.search(r"(?:最后|最终)([^，,。；;]+)", text)
-    feedback_match = re.search(r"若([^，,。；;]+?)则返回([^，,。；;]+?)(?:步骤|阶段|环节)?(?:，|,|。|$)", text)
-    if not branch_match or not merge_match:
-        return None
-    left = _clean_stage_label(branch_match.group(1))
-    right = _clean_stage_label(branch_match.group(2))
-    merge = _clean_stage_label(merge_match.group(1))
-    eval_label = _clean_stage_label(eval_match.group(1)) if eval_match else "评估"
-    condition = _clean_stage_label(feedback_match.group(1)) if feedback_match else "是否达标"
-    if condition == "不达标":
-        condition = "达标"
-    if condition and not condition.startswith("是否"):
-        condition = "是否" + condition
-    return [
-        {"id": "s0", "label": left, "kind": "parallel", "level": 0, "column": 0},
-        {"id": "s1", "label": right, "kind": "parallel", "level": 0, "column": 1},
-        {"id": "s2", "label": merge, "kind": "step", "level": 1, "column": 0},
-        {"id": "s3", "label": eval_label, "kind": "step", "level": 2, "column": 0},
-        {"id": "s4", "label": condition or "是否达标", "kind": "decision", "level": 3, "column": 0},
-    ]
+    return infer_grammar_stages_from_text(text)
 
 
 def _normalize_stages(raw: Any) -> list[dict[str, str]]:
@@ -235,16 +212,7 @@ def _normalize_edges(raw: Any, valid_ids: set[str]) -> list[dict[str, str]]:
 
 def _to_graph(title: str, stages: list[dict[str, str]], edges: list[dict[str, str]], feedback: list[dict[str, str]] | None = None) -> dict[str, Any]:
     if not edges:
-        if len(stages) >= 5 and stages[0].get("kind") == "parallel" and stages[1].get("kind") == "parallel":
-            edges = [
-                {"from": stages[0]["id"], "to": stages[2]["id"], "label": ""},
-                {"from": stages[1]["id"], "to": stages[2]["id"], "label": ""},
-                {"from": stages[2]["id"], "to": stages[3]["id"], "label": ""},
-                {"from": stages[3]["id"], "to": stages[4]["id"], "label": ""},
-                {"from": stages[4]["id"], "to": stages[0]["id"], "label": "不达标"},
-            ]
-        else:
-            edges = [{"from": stages[i]["id"], "to": stages[i + 1]["id"], "label": ""} for i in range(max(0, len(stages) - 1))]
+        edges = build_default_flow_edges(stages, feedback)
     edges = edges + [edge for edge in (feedback or []) if edge not in edges]
     shape_by_kind = {"decision": "diamond", "output": "rounded", "parallel": "box", "step": "rounded"}
     nodes = [
@@ -271,25 +239,19 @@ def _to_graph(title: str, stages: list[dict[str, str]], edges: list[dict[str, st
 
 
 def parse_pipeline(ctx: PipelineContext, intent: DiagramIntent) -> ParsedDiagram:
-    model = (ctx.model or settings.intent_model).strip()
-    if ctx.use_llm and model:
-        try:
-            out = LLMClient().chat_completion(
-                [{"role": "user", "content": _PROMPT.format(text=ctx.normalized_input[:2500])}],
-                model=model,
-                max_tokens=2200,
-                temperature=0.1,
-            )
-            data = parse_llm_json(out)
-            if isinstance(data, dict):
-                stages = _normalize_stages(data.get("stages"))
-                ids = {s["id"] for s in stages}
-                if stages:
-                    edges = _normalize_edges(data.get("edges"), ids)
-                    feedback = _normalize_edges(data.get("feedback"), ids)
-                    return ParsedDiagram(_to_graph(_title(intent, data.get("title") or ctx.normalized_input), stages, edges, feedback), "llm_pipeline")
-        except Exception:
-            pass
+    if llm_available(ctx):
+        data = call_llm_json(ctx, _PROMPT)
+        if isinstance(data, dict):
+            stages = _normalize_stages(data.get("stages"))
+            ids = {s["id"] for s in stages}
+            if stages:
+                edges = _normalize_edges(data.get("edges"), ids)
+                feedback = _normalize_edges(data.get("feedback"), ids)
+                return ParsedDiagram(
+                    _to_graph(_title(intent, data.get("title") or ctx.normalized_input), stages, edges, feedback),
+                    "llm_pipeline",
+                )
+        return ParsedDiagram({"title": _title(intent, ctx.normalized_input)}, "llm_pipeline_failed")
     stages = _rule_stages(ctx.normalized_input)
     if not stages:
         stages = [

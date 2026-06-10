@@ -36,6 +36,7 @@ import {
 import { cleanSuggestionText } from "@/lib/cleanSuggestion";
 import { migrateTiptapDoc } from "@/lib/migrateTiptapDoc";
 import type { EditorAiPreviewPayload } from "@/types/aiPreview";
+import { isChapterBodyEffectivelyEmpty } from "@/lib/chapterBodyEmpty";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import { tiptapDocToMarkdown } from "@/lib/tiptapDocToMarkdown";
 import { isRichMarkdown, markdownToTiptapDoc } from "@/lib/markdownToTiptapDoc";
@@ -436,6 +437,22 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     formatRecoveredChapterRef.current = null;
   }, [chapter.id]);
 
+  /** 服务端正文更新且编辑区仍为空时，重新载入（如从图表恢复后） */
+  useEffect(() => {
+    if (!editor || readOnly) return;
+    const co = chapter.content as Record<string, unknown> | null | undefined;
+    if (!co || !isChapterBodyEffectivelyEmpty({ text: editor.getText(), tiptap_json: editor.getJSON() })) {
+      return;
+    }
+    if (isChapterBodyEffectivelyEmpty(co)) return;
+    skipChangeEmitRef.current = true;
+    try {
+      safeSetContent(migrateTiptapDoc(resolveChapterEditorContent(co)));
+    } finally {
+      skipChangeEmitRef.current = false;
+    }
+  }, [chapter.id, chapter.content, editor, readOnly]);
+
   /** 从 DB 恢复：text 仍是 Markdown，但 tiptap_json 曾被 sync 压成纯段落 */
   useEffect(() => {
     if (!editor || readOnly) return;
@@ -712,7 +729,8 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
       },
       applyFigureResult: (fig, options) => {
         if (!editor) return;
-        const nextVersion = Date.now();
+        const serverVersion = fig.updated_at ? Date.parse(fig.updated_at) || 0 : 0;
+        const nextVersion = Math.max(Date.now(), serverVersion);
         const patch = {
           figureId: fig.figure_id,
           fileUrl: fig.file_url ?? "",
@@ -847,7 +865,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     return <div className="text-sm text-slate-500">编辑器加载中…</div>;
   }
 
-  function applyHeadingLevel(level: 0 | 1 | 2 | 3) {
+  function applyHeadingLevel(level: 0 | 1 | 2 | 3 | 4 | 5 | 6) {
     if (!editor || readOnly) return;
     const { from, to, empty } = editor.state.selection;
     if (level === 0) {
@@ -920,10 +938,19 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
                       H1　章标题
                     </button>
                     <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => applyHeadingLevel(2)}>
-                      H2　节标题
+                      H2　节（第X节）
                     </button>
                     <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => applyHeadingLevel(3)}>
-                      H3　小节标题
+                      H3　一、
+                    </button>
+                    <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => applyHeadingLevel(4)}>
+                      H4　（一）
+                    </button>
+                    <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => applyHeadingLevel(5)}>
+                      H5　1．
+                    </button>
+                    <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => applyHeadingLevel(6)}>
+                      H6　（1）
                     </button>
                     <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => applyHeadingLevel(0)}>
                       ¶　正文

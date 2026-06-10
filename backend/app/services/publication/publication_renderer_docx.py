@@ -18,7 +18,13 @@ from app.services.publication.publication_styles import (
     FIRST_LINE_INDENT_PT,
     SECTION_TITLE_PT,
 )
-from app.services.tiptap_convert import append_tiptap_to_document, docx_block, docx_figure_image_only, _add_code_paragraph
+from app.services.tiptap_convert import (
+    _add_code_paragraph,
+    append_tiptap_to_document,
+    docx_block,
+    docx_figure_image_only,
+    merge_figure_export_attrs,
+)
 
 BLACK = RGBColor(0, 0, 0)
 
@@ -114,7 +120,9 @@ def render_ast_to_docx(ast: BookAst) -> bytes:
         elif role == "figure":
             node = block.attrs.get("tiptap_node")
             if isinstance(node, dict):
-                if not docx_figure_image_only(doc, node):
+                merged_attrs = merge_figure_export_attrs(block.attrs, node.get("attrs"))
+                export_node = {**node, "attrs": merged_attrs}
+                if not docx_figure_image_only(doc, export_node):
                     p = doc.add_paragraph("【图片待生成】")
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             else:

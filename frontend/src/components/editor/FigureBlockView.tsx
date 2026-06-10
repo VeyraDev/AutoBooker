@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 
 import {
+  figureGenerationToast,
   formatFigureLabel,
   generateFigure,
   resolveFigureUrl,
@@ -22,6 +23,9 @@ function figureApiErrorMessage(e: unknown, fallback: string): string {
     }
     const detail = e.response?.data?.detail;
     if (typeof detail === "string") return detail;
+    if (detail && typeof detail === "object" && "message" in detail) {
+      return String((detail as { message?: string }).message || fallback);
+    }
   }
   return e instanceof Error ? e.message : fallback;
 }
@@ -93,6 +97,8 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
   const { bookId, chapterIndex, onFigureUpdated, onQuoteFigure, refreshFigureNumbers } =
     useFigureBlockContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** 已成功加载的预览键，避免 refresh 触发的二次 fetch 失败时清掉已显示的新图 */
+  const loadedPreviewKeyRef = useRef("");
   const [busy, setBusy] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
@@ -130,16 +136,26 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
     return `[DIAGRAM: ${diagramDesc}]`;
   })();
 
-  const loadFreshImageBlob = useCallback(async (url: string) => {
-    if (!url) return;
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-    setBlobSrc((prev) => {
-      if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
-      return URL.createObjectURL(blob);
-    });
+  const previewCacheKey = useCallback((url: string, version: number | string) => {
+    return `${url}::${version}`;
   }, []);
+
+  const loadFreshImageBlob = useCallback(
+    async (url: string, version: number | string) => {
+      if (!url) return false;
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const key = previewCacheKey(url, version);
+      loadedPreviewKeyRef.current = key;
+      setBlobSrc((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(blob);
+      });
+      return true;
+    },
+    [previewCacheKey],
+  );
 
   const applyPatch = useCallback(
     (patch: Record<string, unknown>) => {
@@ -164,28 +180,41 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
     const version = imgEpoch || fileVersion || Date.now();
     const url = resolveFigureUrl(displayUrl, version);
     if (!url) return;
-    const canFallbackToPng = Boolean(svgUrl && displayUrl === svgUrl && fileUrl);
+    const previewKey = previewCacheKey(url, version);
+    if (loadedPreviewKeyRef.current === previewKey && blobSrc) return;
+    const canFallbackToPng = Boolean(
+      svgUrl && displayUrl === svgUrl && fileUrl && fileUrl !== svgUrl && /\.png(\?|$)/i.test(fileUrl),
+    );
     const fallbackUrl = canFallbackToPng ? resolveFigureUrl(fileUrl, version) : "";
     let cancelled = false;
-    void loadFreshImageBlob(url).catch(() => {
+    void loadFreshImageBlob(url, version).catch(() => {
       if (cancelled) return;
       if (fallbackUrl) {
         const nextVersion = Date.now();
         setSvgFailed(true);
         setImgFailed(false);
         setImgEpoch(nextVersion);
-        applyPatch({ svgUrl: "", fileVersion: nextVersion });
-        void loadFreshImageBlob(resolveFigureUrl(fileUrl, nextVersion)).catch(() => {
-          if (!cancelled) setBlobSrc(null);
+        void loadFreshImageBlob(fallbackUrl, nextVersion).catch(() => {
+          /* 保留已有 blob 或 remoteSrc，避免 refresh 后把预览清空 */
         });
         return;
       }
-      setBlobSrc(null);
+      /* fetch 失败时不主动清空 blobSrc，防止刚生成的新图被旧缓存顶回 */
     });
     return () => {
       cancelled = true;
     };
-  }, [displayUrl, fileUrl, fileVersion, imgEpoch, status, svgUrl, loadFreshImageBlob, applyPatch]);
+  }, [
+    displayUrl,
+    fileUrl,
+    fileVersion,
+    imgEpoch,
+    status,
+    svgUrl,
+    blobSrc,
+    loadFreshImageBlob,
+    previewCacheKey,
+  ]);
 
   useEffect(() => {
     setImgFailed(false);
@@ -206,7 +235,9 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
     const loadingToast = toast.loading("正在生成图表，可能需要 1–3 分钟…");
     try {
       const fig = await generateFigure(bookId, figureId);
-      const nextVersion = Date.now();
+      const serverVersion = fig.updated_at ? Date.parse(fig.updated_at) || 0 : 0;
+      const nextVersion = Math.max(Date.now(), serverVersion);
+      loadedPreviewKeyRef.current = "";
       setImgEpoch(nextVersion);
       setImgFailed(false);
       setSvgFailed(false);
@@ -214,7 +245,8 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return null;
       });
-      const freshUrl = resolveFigureUrl(fig.svg_url || fig.file_url || "", nextVersion);
+      const previewUrl = fig.svg_url || fig.file_url || "";
+      const freshUrl = resolveFigureUrl(previewUrl, nextVersion);
       applyPatch({
         status: fig.status,
         fileUrl: fig.file_url ?? "",
@@ -226,17 +258,16 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
       if (freshUrl) {
         let previewLoaded = false;
         try {
-          await loadFreshImageBlob(freshUrl);
-          previewLoaded = true;
+          previewLoaded = await loadFreshImageBlob(freshUrl, nextVersion);
         } catch {
-          if (fig.svg_url && fig.file_url) {
-            const fallbackVersion = Date.now();
+          const pngUrl =
+            fig.file_url && fig.file_url !== fig.svg_url && /\.png(\?|$)/i.test(fig.file_url)
+              ? resolveFigureUrl(fig.file_url, nextVersion)
+              : "";
+          if (pngUrl) {
             setSvgFailed(true);
-            setImgEpoch(fallbackVersion);
-            applyPatch({ svgUrl: "", fileVersion: fallbackVersion });
             try {
-              await loadFreshImageBlob(resolveFigureUrl(fig.file_url, fallbackVersion));
-              previewLoaded = true;
+              previewLoaded = await loadFreshImageBlob(pngUrl, nextVersion);
             } catch {
               previewLoaded = false;
             }
@@ -246,8 +277,8 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
           toast("图表已生成，预览加载较慢，可点击重新生成刷新", { icon: "ℹ️" });
         }
       }
-      await refreshFigureNumbers();
-      toast.success("图表已生成", { id: loadingToast });
+      toast.success(figureGenerationToast(fig.quality_report).message, { id: loadingToast });
+      void refreshFigureNumbers();
     } catch (e) {
       toast.error(figureApiErrorMessage(e, "生成失败"), { id: loadingToast });
     } finally {
@@ -274,7 +305,7 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
       });
       if (freshUrl) {
         try {
-          await loadFreshImageBlob(freshUrl);
+          await loadFreshImageBlob(freshUrl, nextVersion);
         } catch {
           /* 上传已成功，img 标签仍可用 remoteSrc */
         }
@@ -357,8 +388,17 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
               className="max-h-[360px] w-full cursor-zoom-in object-contain"
               onDoubleClick={() => setFullscreen(true)}
               onError={() => {
-                if (svgUrl && displayUrl === svgUrl && fileUrl) {
+                const canFallbackToPng = Boolean(
+                  svgUrl &&
+                    !svgFailed &&
+                    displayUrl === svgUrl &&
+                    fileUrl &&
+                    fileUrl !== svgUrl &&
+                    /\.png(\?|$)/i.test(fileUrl),
+                );
+                if (canFallbackToPng) {
                   const fallbackVersion = Date.now();
+                  loadedPreviewKeyRef.current = "";
                   setSvgFailed(true);
                   setImgFailed(false);
                   setImgEpoch(fallbackVersion);
@@ -366,7 +406,6 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
                     if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
                     return null;
                   });
-                  applyPatch({ svgUrl: "", fileVersion: fallbackVersion });
                   return;
                 }
                 setImgFailed(true);

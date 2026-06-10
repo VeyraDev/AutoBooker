@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="594" viewBox="0 0 1120 594" data-grammar="architecture" data-mandatory-semantics="zones_layers_groups,component_cards,data_store_queue_shapes,orthogonal_cross_layer_edges,layer_titles,directive:layout.layers,directive:edge.label,directive:readability.mixed_text" data-visual-directives="layout.layers,edge.label,readability.mixed_text">
+<rect width="100%" height="100%" fill="#F8FAFC"/>
+<defs>
+<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#0F172A" flood-opacity="0.12"/></filter>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748B"/></marker>
+<marker id="arrow-primary" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2563EB"/></marker>
+<marker id="arrow-forward" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2563EB"/></marker>
+<marker id="arrow-reverse" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#B45309"/></marker>
+</defs>
+<g class="mandatory-semantics" data-items="zones_layers_groups,component_cards,data_store_queue_shapes,orthogonal_cross_layer_edges,layer_titles,directive:layout.layers,directive:edge.label,directive:readability.mixed_text"/>
+<g class="visual-directives" data-items="layout.layers,edge.label,readability.mixed_text"/>
+<text x="560.0" y="28.0" fill="#0F172A" font-size="17" text-anchor="middle" dominant-baseline="middle">Web应用三层架构图</text>
+<g class="architecture-zone layer-group" data-label="入口层">
+<rect x="56.0" y="72.0" width="1008.0" height="128.0" rx="14" fill="#DBEAFE" stroke="#CBD5E1" stroke-width="1.5"/>
+<text class="layer-title" x="78" y="100.0" fill="#0F172A" font-size="13" font-weight="bold">入口层</text>
+</g>
+<g class="component-card architecture-component" data-label="Web应用三层架构图">
+<rect x="122.0" y="133.0" width="170.0" height="64.0" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="207.0" y="165.0" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">Web应用三层架构图</text>
+</g>
+<g class="data-store-shape architecture-component" data-label="底层是PostgreSQL数据库">
+<ellipse cx="645.0" cy="133.0" rx="85.0" ry="9.6" fill="#EDE9FE" stroke="#CBD5E1" stroke-width="1.5"/><rect x="560.0" y="133.0" width="170.0" height="64.0" fill="#EDE9FE" stroke="none"/><line x1="560.0" y1="133.0" x2="730.0" y2="133.0" stroke="#CBD5E1" stroke-width="1.5"/><ellipse cx="645.0" cy="197.0" rx="85.0" ry="9.6" fill="#EDE9FE" stroke="#CBD5E1" stroke-width="1.5"/><line x1="560.0" y1="133.0" x2="560.0" y2="197.0" stroke="#CBD5E1" stroke-width="1.5"/><line x1="730.0" y1="133.0" x2="730.0" y2="197.0" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="645.0" y="163.2" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">底层是PostgreSQL数据</text>
+<text x="645.0" y="178.8" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">库</text>
+</g>
+<g class="architecture-zone layer-group" data-label="服务层">
+<rect x="56.0" y="222.0" width="1008.0" height="128.0" rx="14" fill="#CCFBF1" stroke="#CBD5E1" stroke-width="1.5"/>
+<text class="layer-title" x="78" y="250.0" fill="#0F172A" font-size="13" font-weight="bold">服务层</text>
+</g>
+<g class="component-card architecture-component" data-label="顶层是前端React应用">
+<rect x="122.0" y="283.0" width="170.0" height="64.0" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="207.0" y="315.0" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">顶层是前端React应用</text>
+</g>
+<g class="component-card architecture-component" data-label="各层之间用箭头标注HTTP请求和SQL查询">
+<rect x="560.0" y="283.0" width="170.0" height="64.0" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="645.0" y="307.2" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">各层之间用箭头标注HTT</text>
+<text x="645.0" y="322.8" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">P请求和SQL查询</text>
+</g>
+<g class="architecture-zone layer-group" data-label="数据与基础设施层">
+<rect x="56.0" y="372.0" width="1008.0" height="128.0" rx="14" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text class="layer-title" x="78" y="400.0" fill="#0F172A" font-size="13" font-weight="bold">数据与基础设施层</text>
+</g>
+<g class="component-card architecture-component" data-label="中间层是FastAPI后端服务">
+<rect x="122.0" y="433.0" width="170.0" height="64.0" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="207.0" y="457.2" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">中间层是FastAPI后端</text>
+<text x="207.0" y="472.8" fill="#0F172A" font-size="12" text-anchor="middle" dominant-baseline="middle">服务</text>
+</g>
+<g class="orthogonal-cross-layer-edge architecture-edge" data-label="请求转发">
+<path class="orthogonal-cross-layer-edge architecture-edge-path" d="M 207.0 499.0 L 207.0 315.0 L 207.0 315.0 L 207.0 131.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="187.0" y="306.0" width="40.0" height="16" rx="3" fill="#FFFFFFCC" stroke="none"/>
+<text x="207.0" y="315.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">请求转发</text>
+</g>
+<g class="orthogonal-cross-layer-edge architecture-edge" data-label="请求转发">
+<path class="orthogonal-cross-layer-edge architecture-edge-path" d="M 207.0 499.0 L 207.0 390.0 L 207.0 390.0 L 207.0 281.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="187.0" y="381.0" width="40.0" height="16" rx="3" fill="#FFFFFFCC" stroke="none"/>
+<text x="207.0" y="390.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">请求转发</text>
+</g>
+<g class="orthogonal-cross-layer-edge architecture-edge" data-label="请求转发">
+<path class="orthogonal-cross-layer-edge architecture-edge-path" d="M 207.0 499.0 L 207.0 315.0 L 645.0 315.0 L 645.0 131.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="406.0" y="306.0" width="40.0" height="16" rx="3" fill="#FFFFFFCC" stroke="none"/>
+<text x="426.0" y="315.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">请求转发</text>
+</g>
+<g class="orthogonal-cross-layer-edge architecture-edge" data-label="请求转发">
+<path class="orthogonal-cross-layer-edge architecture-edge-path" d="M 207.0 499.0 L 207.0 390.0 L 645.0 390.0 L 645.0 281.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="406.0" y="381.0" width="40.0" height="16" rx="3" fill="#FFFFFFCC" stroke="none"/>
+<text x="426.0" y="390.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">请求转发</text>
+</g>
+</svg>

@@ -1,0 +1,1461 @@
+[
+  {
+    "id": "1-A",
+    "subtype_hint": "process_flow",
+    "prompt": "用户注册流程，从填写表单开始，经过邮件验证、完善资料，最终完成注册，共4个步骤，箭头连接",
+    "expected": "Graphviz DOT，4个节点线性排列，箭头方向一致，无文字重叠。",
+    "classification_summary": {
+      "diagram_subtype": "process_flow",
+      "renderer": "structured.generic_graph",
+      "image_type": "process_flow",
+      "layout_strategy": "flow_branch",
+      "quality_flags": [
+        "native_invalid",
+        "dsl_repaired",
+        "orphan_node",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "process_flow",
+      "geometry_kind": "graph",
+      "render_profile": "svg.flow",
+      "graph_visual_grammar": "process_flow",
+      "matrix_visual_grammar": null,
+      "directive_ids": [],
+      "mandatory_semantics": [
+        "main_spine",
+        "start_end_nodes",
+        "decision_diamond",
+        "branch_labels",
+        "loop_optional_parallel"
+      ],
+      "node_count": 8,
+      "edge_count": 8,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "native_invalid",
+        "dsl_repaired",
+        "orphan_node",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\1_A.svg",
+      "profile": "svg.flow"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "1-B",
+    "subtype_hint": "process_flow",
+    "prompt": "大模型微调流程图，包含数据准备、模型选择两个并行分支，汇合后进行训练，最后评估指标，若不达标则返回数据准备步骤",
+    "expected": "Graphviz DOT，有分支、有回路，判断节点用菱形，循环箭头不穿越其他节点。",
+    "classification_summary": {
+      "diagram_subtype": "process_flow",
+      "renderer": "structured.generic_graph",
+      "image_type": "process_flow",
+      "layout_strategy": "flow_branch",
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "process_flow",
+      "geometry_kind": "graph",
+      "render_profile": "svg.flow",
+      "graph_visual_grammar": "process_flow",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "layout.parallel",
+        "edge.feedback",
+        "node.decision_shape"
+      ],
+      "mandatory_semantics": [
+        "main_spine",
+        "start_end_nodes",
+        "decision_diamond",
+        "branch_labels",
+        "loop_optional_parallel",
+        "directive:layout.parallel",
+        "directive:edge.feedback",
+        "directive:node.decision_shape"
+      ],
+      "node_count": 8,
+      "edge_count": 8,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\1_B.svg",
+      "profile": "svg.flow"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "1-C",
+    "subtype_hint": "process_flow",
+    "prompt": "RAG检索增强生成pipeline，步骤依次为：用户提问→问题向量化→向量数据库检索→召回文档片段→拼接上下文→LLM生成回答→返回用户，每个步骤用方框表示",
+    "expected": "7个节点，水平或垂直排列，节点宽度足以容纳中文标签。",
+    "classification_summary": {
+      "diagram_subtype": "process_flow",
+      "renderer": "structured.generic_graph",
+      "image_type": "process_flow",
+      "layout_strategy": "flow_branch",
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "process_flow",
+      "geometry_kind": "graph",
+      "render_profile": "svg.flow",
+      "graph_visual_grammar": "process_flow",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "edge.feedback",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "main_spine",
+        "start_end_nodes",
+        "decision_diamond",
+        "branch_labels",
+        "loop_optional_parallel",
+        "directive:edge.feedback",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 11,
+      "edge_count": 11,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\1_C.svg",
+      "profile": "svg.flow"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "2-A",
+    "subtype_hint": "system_architecture",
+    "prompt": "Web应用三层架构图，顶层是前端React应用，中间层是FastAPI后端服务，底层是PostgreSQL数据库，各层之间用箭头标注HTTP请求和SQL查询",
+    "expected": "三层垂直排列，箭头有标签，层间距均匀，无文字溢出。",
+    "classification_summary": {
+      "diagram_subtype": "system_architecture",
+      "renderer": "structured.architecture",
+      "image_type": "system_architecture",
+      "layout_strategy": "layered_architecture",
+      "quality_flags": [
+        "dsl_repaired",
+        "semantic_dsl_misalignment",
+        "missing_layers"
+      ],
+      "render_warnings": [
+        "缺少推荐字段 layers"
+      ]
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "system_architecture",
+      "geometry_kind": "graph",
+      "render_profile": "svg.architecture",
+      "graph_visual_grammar": "architecture",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "layout.layers",
+        "edge.label",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "zones_layers_groups",
+        "component_cards",
+        "data_store_queue_shapes",
+        "orthogonal_cross_layer_edges",
+        "layer_titles",
+        "directive:layout.layers",
+        "directive:edge.label",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 5,
+      "edge_count": 4,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "dsl_repaired",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\2_A.svg",
+      "profile": "svg.architecture"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "2-B",
+    "subtype_hint": "system_architecture",
+    "prompt": "微服务架构图，包含API网关、用户服务、订单服务、支付服务、消息队列五个模块，API网关连接前三个服务，订单服务通过消息队列异步通知支付服务",
+    "expected": "5个节点，API网关居中左侧，消息队列体现异步语义，连线不交叉。",
+    "classification_summary": {
+      "diagram_subtype": "system_architecture",
+      "renderer": "structured.architecture",
+      "image_type": "system_architecture",
+      "layout_strategy": "layered_architecture",
+      "quality_flags": [
+        "dsl_repaired",
+        "semantic_dsl_misalignment",
+        "missing_layers"
+      ],
+      "render_warnings": [
+        "缺少推荐字段 layers"
+      ]
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "system_architecture",
+      "geometry_kind": "graph",
+      "render_profile": "svg.architecture",
+      "graph_visual_grammar": "architecture",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "edge.label",
+        "edge.async",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "zones_layers_groups",
+        "component_cards",
+        "data_store_queue_shapes",
+        "orthogonal_cross_layer_edges",
+        "layer_titles",
+        "directive:edge.label",
+        "directive:edge.async",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 8,
+      "edge_count": 7,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "dsl_repaired",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\2_B.svg",
+      "profile": "svg.architecture"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "2-C",
+    "subtype_hint": "system_architecture",
+    "prompt": "RAG系统完整架构，左侧是文档预处理模块（解析、分块、嵌入），右侧是查询模块（向量检索、重排序、LLM生成），两侧共享向量数据库，箭头标明数据流向",
+    "expected": "两列布局，共享节点居中，箭头不穿越无关节点。**（重点观察）**",
+    "classification_summary": {
+      "diagram_subtype": "system_architecture",
+      "renderer": "structured.architecture",
+      "image_type": "system_architecture",
+      "layout_strategy": "layered_architecture",
+      "quality_flags": [
+        "semantic_dsl_misalignment",
+        "missing_layers"
+      ],
+      "render_warnings": [
+        "缺少推荐字段 layers"
+      ]
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "system_architecture",
+      "geometry_kind": "graph",
+      "render_profile": "svg.architecture",
+      "graph_visual_grammar": "architecture",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "edge.label",
+        "layout.columns",
+        "layout.shared_resource",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "zones_layers_groups",
+        "component_cards",
+        "data_store_queue_shapes",
+        "orthogonal_cross_layer_edges",
+        "layer_titles",
+        "directive:edge.label",
+        "directive:layout.columns",
+        "directive:layout.shared_resource",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 3,
+      "edge_count": 3,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\2_C.svg",
+      "profile": "svg.architecture"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "3-A",
+    "subtype_hint": "taxonomy_map",
+    "prompt": "大语言模型分类图，根节点为\"大语言模型\"，分为开源模型和闭源模型两类，开源模型下有LLaMA、Mistral、Qwen，闭源模型下有GPT-4、Claude、Gemini",
+    "expected": "树形结构，根节点居中，叶节点均匀分布，叶节点宽度容纳英文名称。",
+    "classification_summary": {
+      "diagram_subtype": "taxonomy_map",
+      "renderer": "structured.taxonomy",
+      "image_type": "taxonomy_map",
+      "layout_strategy": "layered",
+      "quality_flags": [
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "taxonomy_map",
+      "geometry_kind": "tree",
+      "render_profile": "svg.tree",
+      "graph_visual_grammar": null,
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "layout.tree",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "directive:layout.tree",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 2,
+      "edge_count": 1,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\3_A.svg",
+      "profile": "svg.tree"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "3-B",
+    "subtype_hint": "taxonomy_map",
+    "prompt": "AI技术栈分类，一级分为感知、认知、行动三类，感知下分图像识别和语音识别，认知下分自然语言处理和知识推理，行动下分机器人控制和决策优化",
+    "expected": "三级树，叶节点文字不重叠，每级高度一致。",
+    "classification_summary": {
+      "diagram_subtype": "taxonomy_map",
+      "renderer": "structured.taxonomy",
+      "image_type": "taxonomy_map",
+      "layout_strategy": "layered",
+      "quality_flags": [
+        "dsl_repaired",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "taxonomy_map",
+      "geometry_kind": "tree",
+      "render_profile": "svg.tree",
+      "graph_visual_grammar": null,
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "layout.tree"
+      ],
+      "mandatory_semantics": [
+        "directive:layout.tree"
+      ],
+      "node_count": 2,
+      "edge_count": 1,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "dsl_repaired",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\3_B.svg",
+      "profile": "svg.tree"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "4-A",
+    "subtype_hint": "decision_tree",
+    "prompt": "决策树图，从根节点\"你的主要需求是什么？\"开始，分三个分支：最大化推理性能→选择vLLM，构建复杂工作流→选择LangChain，快速开发应用→选择Hermes，每个结果节点下有2-3行核心优势描述",
+    "expected": "对称三叉树，各节点高度足以容纳多行文字，节点间无重叠。**（已知问题图，重点测）**",
+    "classification_summary": {
+      "diagram_subtype": "decision_tree",
+      "renderer": "structured.generic_graph",
+      "image_type": "decision_tree",
+      "layout_strategy": "layered",
+      "quality_flags": [
+        "dsl_repaired",
+        "orphan_node",
+        "semantic_dsl_misalignment",
+        "orphan_nodes"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "decision_tree",
+      "geometry_kind": "graph",
+      "render_profile": "svg.decision",
+      "graph_visual_grammar": "decision_tree",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "node.decision_shape",
+        "edge.branch_label",
+        "layout.tree",
+        "readability.mixed_text",
+        "layout.symmetry"
+      ],
+      "mandatory_semantics": [
+        "top_down_tree",
+        "condition_diamonds",
+        "branch_labels",
+        "yes_no_paths",
+        "outcome_leaf_nodes",
+        "directive:node.decision_shape",
+        "directive:edge.branch_label",
+        "directive:layout.tree",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 3,
+      "edge_count": 2,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "dsl_repaired",
+        "orphan_node",
+        "semantic_dsl_misalignment",
+        "orphan_nodes"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\4_A.svg",
+      "profile": "svg.decision"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "4-B",
+    "subtype_hint": "decision_tree",
+    "prompt": "是否选择全量微调的决策树，根节点\"数据量是否超过10万条\"，是→\"计算资源是否充足\"→是→全量微调/否→LoRA微调，否→提示工程",
+    "expected": "二叉树结构，是/否标签在箭头上，叶节点清晰可读。",
+    "classification_summary": {
+      "diagram_subtype": "decision_tree",
+      "renderer": "structured.generic_graph",
+      "image_type": "decision_tree",
+      "layout_strategy": "layered",
+      "quality_flags": [
+        "dsl_repaired",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "decision_tree",
+      "geometry_kind": "graph",
+      "render_profile": "svg.decision",
+      "graph_visual_grammar": "decision_tree",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "node.decision_shape",
+        "edge.branch_label",
+        "layout.tree",
+        "readability.mixed_text",
+        "layout.symmetry"
+      ],
+      "mandatory_semantics": [
+        "top_down_tree",
+        "condition_diamonds",
+        "branch_labels",
+        "yes_no_paths",
+        "outcome_leaf_nodes",
+        "directive:node.decision_shape",
+        "directive:edge.branch_label",
+        "directive:layout.tree",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 2,
+      "edge_count": 2,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "dsl_repaired",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\4_B.svg",
+      "profile": "svg.decision"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "5-A",
+    "subtype_hint": "timeline_roadmap",
+    "prompt": "Transformer架构演进时间线，2017年Attention Is All You Need，2018年BERT，2020年GPT-3，2022年ChatGPT，2023年GPT-4，2024年多模态大模型普及，从左到右横向排列",
+    "expected": "水平时间轴，节点按年份排列，标签在节点上下交替避免重叠。",
+    "classification_summary": {
+      "diagram_subtype": "timeline_roadmap",
+      "renderer": "structured.timeline",
+      "image_type": "timeline_roadmap",
+      "layout_strategy": "LR",
+      "quality_flags": [
+        "dsl_repaired",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "timeline_roadmap",
+      "geometry_kind": "timeline",
+      "render_profile": "svg.timeline",
+      "graph_visual_grammar": null,
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "layout.timeline",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "directive:layout.timeline",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 6,
+      "edge_count": 5,
+      "event_count": 6,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "dsl_repaired",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\5_A.svg",
+      "profile": "svg.timeline"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "5-B",
+    "subtype_hint": "timeline_roadmap",
+    "prompt": "AutoBook产品路线图，Q1完成核心写作功能，Q2上线文献搜索，Q3添加多模型支持，Q4发布企业版，时间节点用竖线标记在水平轴上",
+    "expected": "四个里程碑，时间轴清晰，节点文字不超出边界。",
+    "classification_summary": {
+      "diagram_subtype": "timeline_roadmap",
+      "renderer": "structured.timeline",
+      "image_type": "timeline_roadmap",
+      "layout_strategy": "LR",
+      "quality_flags": [
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "timeline_roadmap",
+      "geometry_kind": "timeline",
+      "render_profile": "svg.timeline",
+      "graph_visual_grammar": null,
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "layout.timeline",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "directive:layout.timeline",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 4,
+      "edge_count": 3,
+      "event_count": 4,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\5_B.svg",
+      "profile": "svg.timeline"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "6-A",
+    "subtype_hint": "comparison_matrix",
+    "prompt": "LoRA与全量微调对比图，对比维度包括显存需求、训练速度、效果上限、适用场景四个维度，两列并排显示，用深浅颜色区分优劣",
+    "expected": "两列对比布局或表格式，维度标签在左侧，每行对比清晰。",
+    "classification_summary": {
+      "diagram_subtype": "comparison_matrix",
+      "renderer": "structured.comparison",
+      "image_type": "comparison_matrix",
+      "layout_strategy": "grid",
+      "quality_flags": [],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "comparison_matrix",
+      "geometry_kind": "matrix",
+      "render_profile": "svg.matrix",
+      "graph_visual_grammar": null,
+      "matrix_visual_grammar": "comparison_matrix",
+      "directive_ids": [
+        "layout.columns",
+        "comparison.axis",
+        "encoding.color_scale",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "subjects",
+        "dimensions",
+        "cells",
+        "axis_headers",
+        "directive:layout.columns",
+        "directive:comparison.axis",
+        "directive:encoding.color_scale",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 0,
+      "edge_count": 0,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 24,
+      "quality_flags": []
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\6_A.svg",
+      "profile": "svg.matrix"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "6-B",
+    "subtype_hint": "comparison_matrix",
+    "prompt": "vLLM、TGI、DeepSpeed三种推理框架对比，对比维度：吞吐量、延迟、易用性、社区活跃度，横向条形对比或雷达图形式",
+    "expected": "三列对比，或并行条形，维度标签清晰，不出现重叠。",
+    "classification_summary": {
+      "diagram_subtype": "comparison_matrix",
+      "renderer": "structured.comparison",
+      "image_type": "comparison_matrix",
+      "layout_strategy": "grid",
+      "quality_flags": [],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "comparison_matrix",
+      "geometry_kind": "matrix",
+      "render_profile": "svg.matrix",
+      "graph_visual_grammar": null,
+      "matrix_visual_grammar": "comparison_matrix",
+      "directive_ids": [
+        "comparison.axis",
+        "comparison.quantitative_form",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "subjects",
+        "dimensions",
+        "cells",
+        "axis_headers",
+        "directive:comparison.axis",
+        "directive:comparison.quantitative_form",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 0,
+      "edge_count": 0,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 24,
+      "quality_flags": []
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\6_B.svg",
+      "profile": "svg.matrix"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "7-A",
+    "subtype_hint": "mechanism_diagram",
+    "prompt": "自注意力机制示意图，输入序列5个token，每个token生成Q、K、V三个向量，Q与所有K做点积得到注意力权重，权重乘以V加权求和得到输出，用箭头和矩阵符号表示",
+    "expected": "能清晰表达Q/K/V三路，权重矩阵示意，不因节点过多导致拥挤。**（重点观察）**",
+    "classification_summary": {
+      "diagram_subtype": "mechanism_diagram",
+      "renderer": "structured.generic_graph",
+      "image_type": "mechanism_diagram",
+      "layout_strategy": "mechanism_layered",
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "mechanism_diagram",
+      "geometry_kind": "graph",
+      "render_profile": "svg.mechanism",
+      "graph_visual_grammar": "mechanism",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "semantic.qkv",
+        "notation.matrix",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "stage_bands",
+        "input_operation_output_roles",
+        "transformation_arrows",
+        "feedback_lane",
+        "state_tensor_operation_shapes",
+        "directive:semantic.qkv",
+        "directive:notation.matrix",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 7,
+      "edge_count": 6,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\7_A.svg",
+      "profile": "svg.mechanism"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "7-B",
+    "subtype_hint": "mechanism_diagram",
+    "prompt": "标准Transformer编码器-解码器架构图，左侧编码器包含多头自注意力和前馈网络，N次堆叠，右侧解码器包含掩码自注意力、交叉注意力和前馈网络，N次堆叠，编码器输出通过交叉注意力传入解码器",
+    "expected": "两列对称，子模块按层叠加，交叉注意力箭头横向连接，无文字溢出。**（已知问题图，重点测）**",
+    "classification_summary": {
+      "diagram_subtype": "mechanism_diagram",
+      "renderer": "structured.generic_graph",
+      "image_type": "mechanism_diagram",
+      "layout_strategy": "dual_column",
+      "quality_flags": [
+        "native_invalid",
+        "dsl_repaired",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "mechanism_diagram",
+      "geometry_kind": "graph",
+      "render_profile": "svg.mechanism",
+      "graph_visual_grammar": "mechanism",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "layout.columns",
+        "layout.encoder_decoder",
+        "layout.stack",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "stage_bands",
+        "input_operation_output_roles",
+        "transformation_arrows",
+        "feedback_lane",
+        "state_tensor_operation_shapes",
+        "directive:layout.columns",
+        "directive:layout.encoder_decoder",
+        "directive:layout.stack",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 6,
+      "edge_count": 6,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "native_invalid",
+        "dsl_repaired",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\7_B.svg",
+      "profile": "svg.mechanism"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "7-C",
+    "subtype_hint": "mechanism_diagram",
+    "prompt": "神经网络反向传播示意图，前向传播从左到右经过输入层、隐藏层、输出层计算损失，反向传播从右到左用链式法则更新各层梯度，用不同颜色箭头区分前向和反向",
+    "expected": "双向箭头，颜色区分前向/反向，层次对齐。",
+    "classification_summary": {
+      "diagram_subtype": "mechanism_diagram",
+      "renderer": "structured.generic_graph",
+      "image_type": "mechanism_diagram",
+      "layout_strategy": "mechanism_layered",
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "mechanism_diagram",
+      "geometry_kind": "graph",
+      "render_profile": "svg.mechanism",
+      "graph_visual_grammar": "mechanism",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "encoding.color_scale",
+        "edge.bidirectional"
+      ],
+      "mandatory_semantics": [
+        "stage_bands",
+        "input_operation_output_roles",
+        "transformation_arrows",
+        "feedback_lane",
+        "state_tensor_operation_shapes",
+        "directive:encoding.color_scale",
+        "directive:edge.bidirectional"
+      ],
+      "node_count": 6,
+      "edge_count": 5,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\7_C.svg",
+      "profile": "svg.mechanism"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "8-A",
+    "subtype_hint": "concept_diagram",
+    "prompt": "提示工程核心概念图，中心节点\"Prompt Engineering\"，周围连接角色设定、思维链、少样本学习、指令跟随、输出格式控制五个子概念，辐射状布局",
+    "expected": "辐射布局，中心节点突出，子节点均匀分布，连线不交叉。",
+    "classification_summary": {
+      "diagram_subtype": "concept_diagram",
+      "renderer": "structured.generic_graph",
+      "image_type": "concept_diagram",
+      "layout_strategy": "radial",
+      "quality_flags": [
+        "dsl_repaired",
+        "orphan_node",
+        "semantic_dsl_misalignment",
+        "orphan_nodes"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "concept_diagram",
+      "geometry_kind": "graph",
+      "render_profile": "svg.radial",
+      "graph_visual_grammar": "radial_concept",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "edge.label",
+        "layout.radial",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "center_node",
+        "satellite_nodes",
+        "radial_links",
+        "relationship_labels",
+        "non_linear_layout",
+        "directive:edge.label",
+        "directive:layout.radial",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 9,
+      "edge_count": 15,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "dsl_repaired",
+        "orphan_node",
+        "semantic_dsl_misalignment",
+        "orphan_nodes"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\8_A.svg",
+      "profile": "svg.radial"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "8-B",
+    "subtype_hint": "concept_diagram",
+    "prompt": "LLM与相关概念的关系图，LLM中心，连接预训练、微调、RLHF、推理、评估五个节点，每条连线标注关系类型如\"通过\"、\"需要\"、\"影响\"",
+    "expected": "节点标签清晰，边标签不与节点重叠。",
+    "classification_summary": {
+      "diagram_subtype": "concept_diagram",
+      "renderer": "structured.generic_graph",
+      "image_type": "concept_diagram",
+      "layout_strategy": "radial",
+      "quality_flags": [
+        "dsl_repaired",
+        "orphan_node",
+        "semantic_dsl_misalignment",
+        "orphan_nodes"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "concept_diagram",
+      "geometry_kind": "graph",
+      "render_profile": "svg.radial",
+      "graph_visual_grammar": "radial_concept",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "edge.label",
+        "layout.radial",
+        "edge.relationship_label",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "center_node",
+        "satellite_nodes",
+        "radial_links",
+        "relationship_labels",
+        "non_linear_layout",
+        "directive:edge.label",
+        "directive:layout.radial",
+        "directive:edge.relationship_label",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 11,
+      "edge_count": 19,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "dsl_repaired",
+        "orphan_node",
+        "semantic_dsl_misalignment",
+        "orphan_nodes"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\8_B.svg",
+      "profile": "svg.radial"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "11-A",
+    "subtype_hint": "infographic",
+    "prompt": "信息图总结本章\"提示工程\"核心要点，包含5个关键概念的图标化展示：角色设定、思维链、输出格式、少样本、迭代优化，白底简洁风格，配色蓝白灰",
+    "expected": "AI生成信息图，五个模块排布整齐，无可读中文文字（因AI生图中文渲染差），图标化表达。",
+    "classification_summary": {
+      "diagram_subtype": "infographic",
+      "renderer": "structured.infographic",
+      "image_type": "infographic",
+      "layout_strategy": "grid",
+      "quality_flags": [],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "infographic",
+      "geometry_kind": "blocks",
+      "render_profile": "svg.blocks",
+      "graph_visual_grammar": null,
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "layout.card_grid",
+        "encoding.iconic",
+        "encoding.palette"
+      ],
+      "mandatory_semantics": [
+        "directive:layout.card_grid",
+        "directive:encoding.iconic",
+        "directive:encoding.palette"
+      ],
+      "node_count": 0,
+      "edge_count": 0,
+      "event_count": 0,
+      "block_count": 6,
+      "cell_count": 0,
+      "quality_flags": []
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\11_A.png",
+      "profile": "svg.blocks"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "11-B",
+    "subtype_hint": "infographic",
+    "prompt": "信息图对比微调前后模型在专业任务上的表现差异，左侧通用模型图标，右侧专业模型图标，中间箭头表示微调过程，扁平设计，蓝色系配色",
+    "expected": "AI生成，左右对比布局，箭头中间，颜色区分两侧。",
+    "classification_summary": {
+      "diagram_subtype": "infographic",
+      "renderer": "structured.infographic",
+      "image_type": "infographic",
+      "layout_strategy": "grid",
+      "quality_flags": [],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "infographic",
+      "geometry_kind": "blocks",
+      "render_profile": "svg.blocks",
+      "graph_visual_grammar": null,
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "layout.card_grid",
+        "layout.columns",
+        "encoding.iconic",
+        "encoding.palette"
+      ],
+      "mandatory_semantics": [
+        "directive:layout.card_grid",
+        "directive:layout.columns",
+        "directive:encoding.iconic",
+        "directive:encoding.palette"
+      ],
+      "node_count": 0,
+      "edge_count": 0,
+      "event_count": 0,
+      "block_count": 6,
+      "cell_count": 0,
+      "quality_flags": []
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\11_B.png",
+      "profile": "svg.blocks"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "E-1",
+    "subtype_hint": "process_flow",
+    "prompt": "流程图",
+    "expected": "应有降级处理，提示用户补充描述，或生成极简单节点图。",
+    "classification_summary": {
+      "diagram_subtype": "process_flow",
+      "renderer": "structured.generic_graph",
+      "image_type": "process_flow",
+      "layout_strategy": "flow_branch",
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "process_flow",
+      "geometry_kind": "graph",
+      "render_profile": "svg.flow",
+      "graph_visual_grammar": "process_flow",
+      "matrix_visual_grammar": null,
+      "directive_ids": [],
+      "mandatory_semantics": [
+        "main_spine",
+        "start_end_nodes",
+        "decision_diamond",
+        "branch_labels",
+        "loop_optional_parallel"
+      ],
+      "node_count": 3,
+      "edge_count": 3,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\E_1.svg",
+      "profile": "svg.flow"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "E-2",
+    "subtype_hint": "process_flow",
+    "prompt": "RLHF training pipeline，包含supervised fine-tuning、reward model training、PPO optimization三个阶段，箭头连接，每阶段标注中文说明",
+    "expected": "Graphviz DOT，节点内中英文混排不换行溢出。",
+    "classification_summary": {
+      "diagram_subtype": "process_flow",
+      "renderer": "structured.generic_graph",
+      "image_type": "process_flow",
+      "layout_strategy": "flow_branch",
+      "quality_flags": [
+        "native_invalid",
+        "dsl_repaired",
+        "orphan_node",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "process_flow",
+      "geometry_kind": "graph",
+      "render_profile": "svg.flow",
+      "graph_visual_grammar": "process_flow",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "main_spine",
+        "start_end_nodes",
+        "decision_diamond",
+        "branch_labels",
+        "loop_optional_parallel",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 7,
+      "edge_count": 7,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "native_invalid",
+        "dsl_repaired",
+        "orphan_node",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\E_2.svg",
+      "profile": "svg.flow"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "E-3",
+    "subtype_hint": "process_flow",
+    "prompt": "批量推理流程，每批次处理32个样本，经过tokenize、forward pass、decode三步，最终输出结果，32是批大小不是坐标数据",
+    "expected": "路由到 `process_flow`，走Graphviz，**不应**路由到 `data_visualization`。（检验数值不该影响类型判断）",
+    "classification_summary": {
+      "diagram_subtype": "process_flow",
+      "renderer": "structured.generic_graph",
+      "image_type": "process_flow",
+      "layout_strategy": "flow_branch",
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ],
+      "render_warnings": []
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "process_flow",
+      "geometry_kind": "graph",
+      "render_profile": "svg.flow",
+      "graph_visual_grammar": "process_flow",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "routing.numeric_attribute",
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "main_spine",
+        "start_end_nodes",
+        "decision_diamond",
+        "branch_labels",
+        "loop_optional_parallel",
+        "directive:routing.numeric_attribute",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 9,
+      "edge_count": 9,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\E_3.svg",
+      "profile": "svg.flow"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "E-4",
+    "subtype_hint": "process_flow",
+    "prompt": "完整的LLM训练流程，包含数据采集（网页爬取、书籍扫描、代码仓库、学术论文）、数据清洗（去重、过滤、质量评分、多语言识别）、预处理（分词、编码、格式化）、预训练（分布式训练、混合精度、梯度检查点）、监督微调（指令数据构建、损失计算）、RLHF（人工标注偏好数据、奖励模型训练、PPO优化）、评估（基准测试、人工评估、红队测试）、部署（量化、推理优化、API封装），每个阶段包含2-4个子步骤，用不同颜色区分各大阶段",
+    "expected": "**关注点**：节点数过多时是否截断/简化而不是强行塞进一张图。（检验Graphviz超载行为）",
+    "classification_summary": {
+      "diagram_subtype": "process_flow",
+      "renderer": "structured.generic_graph",
+      "image_type": "process_flow",
+      "layout_strategy": "flow_branch",
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment",
+        "dense_graph"
+      ],
+      "render_warnings": [
+        "节点偏多，将启用紧凑布局"
+      ]
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "process_flow",
+      "geometry_kind": "graph",
+      "render_profile": "svg.flow",
+      "graph_visual_grammar": "process_flow",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "encoding.color_scale",
+        "readability.mixed_text",
+        "complexity.summarize"
+      ],
+      "mandatory_semantics": [
+        "main_spine",
+        "start_end_nodes",
+        "decision_diamond",
+        "branch_labels",
+        "loop_optional_parallel",
+        "directive:encoding.color_scale",
+        "directive:readability.mixed_text",
+        "directive:complexity.summarize"
+      ],
+      "node_count": 18,
+      "edge_count": 18,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "native_invalid",
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\E_4.svg",
+      "profile": "svg.flow"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  },
+  {
+    "id": "E-5",
+    "subtype_hint": "system_architecture",
+    "prompt": "数据从用户端经过CDN、负载均衡、应用服务器、缓存层、数据库的路径，展示每个节点处理的内容",
+    "expected": "判断路由方向（`process_flow` 或 `system_architecture`），观察实际走哪个分支，结果是否符合预期。",
+    "classification_summary": {
+      "diagram_subtype": "system_architecture",
+      "renderer": "structured.architecture",
+      "image_type": "system_architecture",
+      "layout_strategy": "layered_architecture",
+      "quality_flags": [
+        "semantic_dsl_misalignment",
+        "missing_layers"
+      ],
+      "render_warnings": [
+        "缺少推荐字段 layers"
+      ]
+    },
+    "parsed_spec_summary": {
+      "diagram_subtype": "system_architecture",
+      "geometry_kind": "graph",
+      "render_profile": "svg.architecture",
+      "graph_visual_grammar": "architecture",
+      "matrix_visual_grammar": null,
+      "directive_ids": [
+        "readability.mixed_text"
+      ],
+      "mandatory_semantics": [
+        "zones_layers_groups",
+        "component_cards",
+        "data_store_queue_shapes",
+        "orthogonal_cross_layer_edges",
+        "layer_titles",
+        "directive:readability.mixed_text"
+      ],
+      "node_count": 6,
+      "edge_count": 5,
+      "event_count": 0,
+      "block_count": 0,
+      "cell_count": 0,
+      "quality_flags": [
+        "semantic_dsl_misalignment"
+      ]
+    },
+    "render": {
+      "status": "rendered",
+      "path": "E:\\My code\\自动化写书\\AutoBooker\\autobooker\\backend\\tests\\fixtures\\figures\\file_prompt_outputs\\E_5.svg",
+      "profile": "svg.architecture"
+    },
+    "evaluation": {
+      "status": "passed",
+      "failures": [],
+      "warnings": []
+    }
+  }
+]

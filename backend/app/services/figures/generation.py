@@ -14,10 +14,20 @@ from app.llm.providers import resolve_book_writing_model
 from app.models.book import Book
 from app.models.figure import Figure, FigureSource, FigureStatus, FigureType
 from app.services.figures.pipeline.orchestrator import classify_and_persist
+from app.services.figures.critic.layout_critic import run_layout_critic
+from app.services.figures.critic.structural import run_structural_critic
 from app.services.figures.quality import FigureQualityReport, inspect_rendered_figure, merge_quality_reports
 from app.services.figures.render.dispatcher import render_figure
 from app.services.figures.storage.manager import figure_storage
 from app.services.quality import QualityStatus
+
+
+class FigureGenerationError(ValueError):
+    """渲染链路未产出可用图像文件。"""
+
+    def __init__(self, message: str, *, quality_report: dict | None = None) -> None:
+        super().__init__(message)
+        self.quality_report = quality_report or {}
 
 
 def chat_model_for_book(book: Book) -> str:
@@ -32,6 +42,24 @@ def public_url(book_id: UUID, chapter_index: int, figure_id: UUID, *, ext: str =
     return figure_storage.public_url(book_id, chapter_index, figure_id, ext=ext)
 
 
+def sync_figure_urls_from_disk(fig: Figure, *, chapter_index: int | None = None) -> None:
+    """根据磁盘上的规范路径同步 file_path / file_url / svg_url。"""
+    ch = chapter_index if chapter_index is not None else fig.chapter_index
+    png_path = figure_storage.png_path(fig.book_id, ch, fig.id)
+    svg_path = figure_storage.svg_path(fig.book_id, ch, fig.id)
+    has_png = png_path.is_file()
+    has_svg = svg_path.is_file()
+    if has_svg:
+        fig.svg_url = public_url(fig.book_id, ch, fig.id, ext="svg")
+        fig.file_path = str(svg_path.resolve())
+        fig.file_url = public_url(fig.book_id, ch, fig.id, ext="png") if has_png else fig.svg_url
+    elif has_png:
+        fig.svg_url = None
+        fig.file_path = str(png_path.resolve())
+        fig.file_url = public_url(fig.book_id, ch, fig.id, ext="png")
+    return None
+
+
 def _classification(fig: Figure) -> dict:
     return dict(fig.classification_json) if isinstance(fig.classification_json, dict) else {}
 
@@ -42,9 +70,14 @@ def _set_quality_report(fig: Figure, report: dict) -> None:
     fig.classification_json = clf
 
 
-def _blocking_quality_status(report: dict | None) -> bool:
-    status = str((report or {}).get("status") or "")
-    return status in {QualityStatus.failed.value, QualityStatus.needs_clarification.value}
+def _render_failure_message(report: dict | None, *, default: str = "渲染未产出图像文件") -> str:
+    report = report or {}
+    failures = [str(x) for x in (report.get("failures") or []) if str(x).strip()]
+    if "render_exception" in failures:
+        recs = report.get("recommendations") or []
+        if recs:
+            return f"图表渲染失败：{recs[0]}"
+    return default
 
 
 def _render_exception_report(exc: Exception) -> dict:
@@ -104,16 +137,6 @@ def generate_figure_asset(
         use_llm=True,
     )
 
-    initial_report = _classification(fig).get("quality_report")
-    if _blocking_quality_status(initial_report):
-        fig.updated_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(fig)
-        return fig
-
-    if (fig.renderer or "").strip().lower() == "need_data":
-        raise ValueError("数据图缺少可解析的数值，请编辑标注后重试")
-
     chapter_id = fig.chapter_index
     out_path = figure_output_path(book.id, fig.id, chapter_index=chapter_id)
     svg_path = figure_storage.svg_path(book.id, chapter_id, fig.id)
@@ -122,40 +145,60 @@ def generate_figure_asset(
     candidate_svg = candidate_base.with_suffix(".svg")
 
     model = chat_model_for_book(book)
+    render_result = None
+    png: Path | None = None
+    rendered_svg: Path | None = None
     try:
         render_result = render_figure(fig, book, candidate_png, model=model, chart_type=chart_type)
         png = render_result.primary_png_path
         rendered_svg = render_result.optional_svg_path
+        clf = _classification(fig)
         render_report = inspect_rendered_figure(
             png_path=png,
             svg_path=rendered_svg,
-            classification=_classification(fig),
+            classification=clf,
+        )
+        qr_evidence = (clf.get("quality_report") or {}).get("evidence") or {}
+        structural = clf.get("structural_critic") or qr_evidence.get("structural_critic") or run_structural_critic(
+            semantic_ir=clf.get("semantic_ir"),
+            dsl_json=clf.get("dsl_json"),
+            parsed_spec=clf.get("parsed_spec"),
+            source_text=description,
+        )
+        layout_critic = run_layout_critic(
+            layout_result=clf.get("layout_result"),
+            svg_path=rendered_svg,
+            classification=clf,
+        )
+        render_report = merge_quality_reports(
+            render_report,
+            {
+                "status": structural.get("status"),
+                "semantic_score": structural.get("alignment_rate", 1.0),
+                "layout_score": layout_critic.get("layout_score", 1.0),
+                "failures": structural.get("failures", []) + layout_critic.get("failures", []),
+                "warnings": structural.get("warnings", []) + layout_critic.get("warnings", []),
+                "recommendations": structural.get("recommendations", []) + layout_critic.get("recommendations", []),
+                "evidence": {"structural_critic": structural, "layout_critic": layout_critic},
+            },
         )
     except Exception as exc:
-        render_result = None
-        png = None
-        rendered_svg = None
         render_report = _render_exception_report(exc)
-
-    clf = _classification(fig)
-    merged_report = merge_quality_reports(clf.get("quality_report"), render_report)
-    _set_quality_report(fig, merged_report)
-
-    if str(merged_report.get("status")) == QualityStatus.failed.value:
-        _cleanup_candidates(png, rendered_svg, candidate_png, candidate_svg)
-        fig.updated_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(fig)
-        return fig
 
     has_png = bool(png and png.is_file())
     has_svg = bool(rendered_svg and rendered_svg.is_file())
     if not has_png and not has_svg:
-        _cleanup_candidates(rendered_svg, candidate_png, candidate_svg)
+        _cleanup_candidates(png, rendered_svg, candidate_png, candidate_svg)
+        clf = _classification(fig)
+        merged_report = merge_quality_reports(clf.get("quality_report"), render_report)
+        _set_quality_report(fig, merged_report)
         fig.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(fig)
-        return fig
+        raise FigureGenerationError(
+            _render_failure_message(merged_report),
+            quality_report=merged_report,
+        )
 
     if has_png:
         if out_path.is_file():
@@ -171,10 +214,11 @@ def generate_figure_asset(
     elif svg_path.is_file():
         svg_path.unlink()
 
-    if False:
-        raise RuntimeError(f"图表文件未写入: {png}")
-
     clf = _classification(fig)
+    merged_report = merge_quality_reports(clf.get("quality_report"), render_report)
+    _set_quality_report(fig, merged_report)
+    parsed_spec = clf.get("parsed_spec") if isinstance(clf.get("parsed_spec"), dict) else {}
+
     figure_storage.save_assets(
         book_id=book.id,
         chapter_id=chapter_id,
@@ -186,26 +230,17 @@ def generate_figure_asset(
             "chapter_id": chapter_id,
             "source_prompt": description,
             "diagram_type": clf.get("diagram_type") or clf.get("diagram_subtype"),
+            "graph_visual_grammar": parsed_spec.get("graph_visual_grammar"),
+            "mandatory_semantics": parsed_spec.get("mandatory_semantics"),
             "renderer": fig.renderer,
             "render_diagnostics": getattr(render_result, "diagnostics", {}) if render_result else {},
             "quality_report": clf.get("quality_report"),
-            "version": 1,
+            "version": int(datetime.now(timezone.utc).timestamp()),
         },
     )
 
     fig.render_source = render_result.render_source if render_result else ""
-    if has_svg:
-        fig.svg_url = public_url(book.id, chapter_id, fig.id, ext="svg")
-        fig.file_path = str(svg_path.resolve())
-        fig.file_url = (
-            public_url(book.id, chapter_id, fig.id, ext="png")
-            if has_png
-            else fig.svg_url
-        )
-    else:
-        fig.svg_url = None
-        fig.file_path = str(out_path.resolve())
-        fig.file_url = public_url(book.id, chapter_id, fig.id, ext="png")
+    sync_figure_urls_from_disk(fig, chapter_index=chapter_id)
     fig.status = FigureStatus.generated
     fig.updated_at = datetime.now(timezone.utc)
     if not fig.caption:

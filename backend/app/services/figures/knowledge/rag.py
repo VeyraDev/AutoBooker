@@ -1,34 +1,53 @@
-"""RAG 领域知识补全。"""
+"""RAG 领域知识补全（仅增量追加）。"""
 
 from __future__ import annotations
 
-from app.services.figures.schemas.dsl import slug_id
-from app.services.figures.semantic.schema import SemanticIR, SemanticObject
+from app.services.figures.knowledge.helpers import (
+    append_object_if_missing,
+    has_object_named,
+    link_sequential,
+    should_use_template_completion,
+)
+from app.services.figures.semantic.schema import SemanticIR
 
-_RAG_OBJECTS = [
+_STANDARD = [
     ("用户查询", "user"),
     ("检索器", "module"),
     ("向量库", "database"),
     ("大模型", "module"),
-    ("生成回答", "process"),
 ]
 
 
-def complete(ir: SemanticIR) -> SemanticIR:
+def complete(ir: SemanticIR) -> tuple[SemanticIR, dict]:
+    meta: dict = {"completed": False, "added": [], "source": "rules_rag"}
     ir.domain = "rag"
-    if len(ir.objects) < 3:
-        ir.objects = [
-            SemanticObject(id=slug_id(name, "o"), name=name, kind=kind, importance=2)
-            for name, kind in _RAG_OBJECTS
+
+    if not ir.objects and not should_use_template_completion(ir):
+        return ir, meta
+
+    added: list[str] = []
+    new_ids: list[str] = []
+    for name, kind in _STANDARD:
+        oid = append_object_if_missing(ir, name, kind)
+        if oid:
+            added.append(name)
+            new_ids.append(oid)
+
+    if added and len(ir.objects) >= 2:
+        all_ids = [o.id for o in ir.objects]
+        link_sequential(ir, all_ids)
+
+    if not ir.groups and has_object_named(ir, "检索", "向量", "大模型"):
+        retrieval = [
+            o.id for o in ir.objects
+            if (o.kind in {"database", "module"} and ("检索" in o.name or "向量" in o.name))
         ]
-        ids = [o.id for o in ir.objects]
-        ir.relations = [
-            {"from": ids[i], "to": ids[i + 1], "verb": "流向", "async": False}
-            for i in range(len(ids) - 1)
-        ]
-    if not ir.groups:
-        ir.groups = [
-            {"id": "g_retrieval", "label": "检索", "members": [o.id for o in ir.objects if o.kind in {"database", "module"}][:2]},
-            {"id": "g_gen", "label": "生成", "members": [o.id for o in ir.objects if o.name in {"大模型", "生成回答"}]},
-        ]
-    return ir
+        gen = [o.id for o in ir.objects if "大模型" in o.name or o.name == "生成回答"]
+        if retrieval:
+            ir.groups.append({"id": "g_retrieval", "label": "检索", "members": retrieval[:2]})
+        if gen:
+            ir.groups.append({"id": "g_gen", "label": "生成", "members": gen})
+
+    if added:
+        meta = {"completed": True, "added": added, "source": "rules_rag"}
+    return ir, meta

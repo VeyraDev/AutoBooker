@@ -125,8 +125,8 @@ class OutlineAgent:
             parts.append("参考资料摘录（请结合这些内容规划大纲）：")
             parts.extend([f"---\n{s}" for s in snippets[:5]])
         parts.append(
-            "再次强调：每章 sections 的 title 必须带章号小节号前缀（如 1.1、1.2、2.1），"
-            "禁止冒号对仗式标题，摘要只写在 summary；"
+            "再次强调：每章 sections 的 title 必须以「第X节」开头（如 第一节、第二节；每章从一节重新计），"
+            "禁止使用 1.1、2.3 等小数编号；禁止冒号对仗式标题，摘要只写在 summary；"
             "preface_brief 必填 2-4 句前言写作要点（散文语气，与主题和大纲结构呼应，不要条目标签）。"
         )
         return "\n".join(parts)

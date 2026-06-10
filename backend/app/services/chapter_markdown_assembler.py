@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from app.services.heading_formatter import (
+    normalize_outline_sections,
     section_anchor_id,
     section_heading_level,
     strip_duplicate_section_title_line,
@@ -138,6 +139,9 @@ def assemble_chapter_tiptap_from_markdown(
     outline_sections: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], str, int]:
     """Returns (tiptap_json, canonical_markdown, word_count)."""
+    outline_sections = normalize_outline_sections(
+        outline_sections if isinstance(outline_sections, list) else []
+    )
     aligned = align_markdown_to_outline(raw, outline_sections)
     content: list[dict[str, Any]] = []
 

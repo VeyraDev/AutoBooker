@@ -1422,6 +1422,24 @@ body.theme-dark {
   .tiptap-content h3 {
     @apply mt-4 text-lg font-semibold text-slate-800;
   }
+  .tiptap-content h4 {
+    @apply mt-3 text-base font-semibold text-slate-800;
+  }
+  .tiptap-content h5 {
+    @apply mt-3 text-sm font-semibold text-slate-700;
+  }
+  .tiptap-content h6 {
+    @apply mt-2 text-sm font-medium text-slate-700;
+  }
+  .book-md-body h4 {
+    @apply mt-3 text-base font-semibold text-slate-800;
+  }
+  .book-md-body h5 {
+    @apply mt-3 text-sm font-semibold text-slate-700;
+  }
+  .book-md-body h6 {
+    @apply mt-2 text-sm font-medium text-slate-700;
+  }
   .tiptap-content ul,
   .tiptap-content ol {
     @apply my-2 pl-5;

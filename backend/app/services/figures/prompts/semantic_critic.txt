@@ -1,0 +1,28 @@
+审查 Semantic Native IR 是否正确表达原文图意。只输出 JSON：
+{{
+  "passed": true,
+  "issues": [],
+  "severity": "none|warning|error"
+}}
+
+检查项：
+1. native_structure.type 是否与 diagram_subtype 一致？
+2. 对比图是否误抽成流程？（comparison 应有 subjects+dimensions）
+3. 时间线是否丢失 milestones.time？
+4. 分类图是否扁平？
+5. 版式/布局说明是否误入结构字段？
+
+【process_flow 专用 — Flow Semantic Critic】
+6. 禁止 steps/feedback/level/column 旧格式；必须是 nodes + edges。
+7. 两个并列 task 但没有 parallel_split？
+8. 有“汇合/共同进入”语义但没有 parallel_join？
+9. 有“若/否则/不达标/通过”语义但没有 decision 节点？
+10. 有“返回/重试/重新/回到”语义但没有 loop_back 边？
+11. loop_back 是否指回更早的前置 task（不能指前向节点）？
+12. 是否用普通边冒充回环？
+
+diagram_subtype: {diagram_subtype}
+diagram_type: {diagram_type}
+原文：{text}
+当前 IR：
+{semantic_json}

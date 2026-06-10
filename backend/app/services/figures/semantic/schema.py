@@ -113,6 +113,9 @@ class SemanticIR:
     diagram_type: str = "flowchart"
     title: str = ""
     domain: str = ""
+    visual_intent: dict[str, Any] = field(default_factory=dict)
+    native_structure: dict[str, Any] = field(default_factory=dict)
+    graph_projection: dict[str, Any] | None = None
     objects: list[SemanticObject] = field(default_factory=list)
     events: list[SemanticEvent] = field(default_factory=list)
     relations: list[dict[str, Any]] = field(default_factory=list)
@@ -123,11 +126,17 @@ class SemanticIR:
     style_hints: list[str] = field(default_factory=list)
     unknowns: list[str] = field(default_factory=list)
 
+    def native_type(self) -> str:
+        return str((self.native_structure or {}).get("type") or "").strip().lower()
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "diagram_type": self.diagram_type,
             "title": self.title,
             "domain": self.domain,
+            "visual_intent": dict(self.visual_intent or {}),
+            "native_structure": dict(self.native_structure or {}),
+            "graph_projection": dict(self.graph_projection) if isinstance(self.graph_projection, dict) else None,
             "objects": [o.to_dict() for o in self.objects],
             "events": [e.to_dict() for e in self.events],
             "relations": list(self.relations),
@@ -144,10 +153,15 @@ class SemanticIR:
         objs = [SemanticObject.from_dict(o) for o in (data.get("objects") or data.get("entities") or []) if isinstance(o, dict)]
         evts = [SemanticEvent.from_dict(e) for e in (data.get("events") or []) if isinstance(e, dict)]
         refs = [SemanticReference.from_dict(r) for r in (data.get("references") or []) if isinstance(r, dict)]
+        native = data.get("native_structure") if isinstance(data.get("native_structure"), dict) else {}
+        gp = data.get("graph_projection")
         return cls(
             diagram_type=str(data.get("diagram_type") or "flowchart"),
             title=str(data.get("title") or ""),
             domain=str(data.get("domain") or ""),
+            visual_intent=dict(data.get("visual_intent") or {}),
+            native_structure=dict(native),
+            graph_projection=dict(gp) if isinstance(gp, dict) else None,
             objects=objs,
             events=evts,
             relations=[dict(r) for r in (data.get("relations") or []) if isinstance(r, dict)],

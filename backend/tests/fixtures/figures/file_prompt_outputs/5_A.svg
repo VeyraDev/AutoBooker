@@ -1,0 +1,50 @@
+<svg data-grammar="timeline" data-visual-directives="layout.timeline,readability.mixed_text" xmlns="http://www.w3.org/2000/svg" width="960" height="320" viewBox="0 0 960 320">
+<rect width="100%" height="100%" fill="#F8FAFC"/>
+<g class="timeline-directives layout.timeline readability.mixed_text"/>
+<text x="480.0" y="28.0" fill="#0F172A" font-size="16" text-anchor="middle" dominant-baseline="middle">Transformer架构演进时间线</text>
+<line x1="56.0" y1="176.0" x2="904.0" y2="176.0" stroke="#2563EB" stroke-width="2"/>
+<circle cx="56.0" cy="176.0" r="8.0" fill="#2563EB"/>
+<line x1="56.0" y1="176.0" x2="56.0" y2="140.0" stroke="#CBD5E1" stroke-width="1"/>
+<g class="timeline-event alternating-timeline-labels" data-time="2017年">
+<rect x="0.0" y="80.0" width="112.0" height="48.0" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="56.0" y="94.0" fill="#2563EB" font-size="11" text-anchor="middle" dominant-baseline="middle">2017年</text>
+<text x="56.0" y="104.8" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">Attention Is</text>
+<text x="56.0" y="119.1" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle"> All You Nee</text>
+</g>
+<circle cx="225.6" cy="176.0" r="8.0" fill="#2563EB"/>
+<line x1="225.6" y1="176.0" x2="225.6" y2="212.0" stroke="#CBD5E1" stroke-width="1"/>
+<g class="timeline-event alternating-timeline-labels lower-label" data-time="2018年">
+<rect x="169.6" y="248.0" width="112.0" height="48.0" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="225.6" y="262.0" fill="#2563EB" font-size="11" text-anchor="middle" dominant-baseline="middle">2018年</text>
+<text x="225.6" y="280.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">BERT</text>
+</g>
+<circle cx="395.2" cy="176.0" r="8.0" fill="#2563EB"/>
+<line x1="395.2" y1="176.0" x2="395.2" y2="140.0" stroke="#CBD5E1" stroke-width="1"/>
+<g class="timeline-event alternating-timeline-labels" data-time="2020年">
+<rect x="339.2" y="80.0" width="112.0" height="48.0" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="395.2" y="94.0" fill="#2563EB" font-size="11" text-anchor="middle" dominant-baseline="middle">2020年</text>
+<text x="395.2" y="112.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">GPT-3</text>
+</g>
+<circle cx="564.8" cy="176.0" r="8.0" fill="#2563EB"/>
+<line x1="564.8" y1="176.0" x2="564.8" y2="212.0" stroke="#CBD5E1" stroke-width="1"/>
+<g class="timeline-event alternating-timeline-labels lower-label" data-time="2022年">
+<rect x="508.8" y="248.0" width="112.0" height="48.0" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="564.8" y="262.0" fill="#2563EB" font-size="11" text-anchor="middle" dominant-baseline="middle">2022年</text>
+<text x="564.8" y="280.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">ChatGPT</text>
+</g>
+<circle cx="734.4" cy="176.0" r="8.0" fill="#2563EB"/>
+<line x1="734.4" y1="176.0" x2="734.4" y2="140.0" stroke="#CBD5E1" stroke-width="1"/>
+<g class="timeline-event alternating-timeline-labels" data-time="2023年">
+<rect x="678.4" y="80.0" width="112.0" height="48.0" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="734.4" y="94.0" fill="#2563EB" font-size="11" text-anchor="middle" dominant-baseline="middle">2023年</text>
+<text x="734.4" y="112.0" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">GPT-4</text>
+</g>
+<circle cx="904.0" cy="176.0" r="8.0" fill="#2563EB"/>
+<line x1="904.0" y1="176.0" x2="904.0" y2="212.0" stroke="#CBD5E1" stroke-width="1"/>
+<g class="timeline-event alternating-timeline-labels lower-label" data-time="2024年">
+<rect x="848.0" y="248.0" width="112.0" height="48.0" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="904.0" y="262.0" fill="#2563EB" font-size="11" text-anchor="middle" dominant-baseline="middle">2024年</text>
+<text x="904.0" y="272.9" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">多模态大模型普</text>
+<text x="904.0" y="287.2" fill="#0F172A" font-size="11" text-anchor="middle" dominant-baseline="middle">及</text>
+</g>
+</svg>

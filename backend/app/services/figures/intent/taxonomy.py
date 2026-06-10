@@ -154,6 +154,8 @@ DIAGRAM_TYPE_TO_SUBTYPE: dict[str, str] = {
     "matrix": "swot",
     "timeline": "timeline_roadmap",
     "illustration": "scene_illustration",
+    "chart": "chart",
+    "data": "chart",
 }
 
 SUBTYPE_TO_DIAGRAM_TYPE: dict[str, str] = {
@@ -181,8 +183,11 @@ SUBTYPE_TO_DIAGRAM_TYPE: dict[str, str] = {
     "infographic": "taxonomy",
     "concept_diagram": "taxonomy",
     "mechanism_diagram": "flowchart",
-    "chart": "matrix",
+    "chart": "chart",
     "scene_illustration": "illustration",
+    "case_scene": "illustration",
+    "future_scene": "illustration",
+    "human_ai_scene": "illustration",
 }
 
 
@@ -197,28 +202,56 @@ def subtype_to_diagram_type(diagram_subtype: str) -> str:
 
 
 def canonical_subtype(diagram_subtype: str) -> str:
+    """遗留/别名 subtype → 规范主类型（见 catalog/type_catalog.py）。"""
     st = (diagram_subtype or "").strip().lower()
     aliases = {
+        # 形式别名
         "architecture": "system_architecture",
         "flowchart": "process_flow",
         "workflow": "process_flow",
+        "business_workflow": "process_flow",
+        "dataflow": "process_flow",
+        "sequence": "process_flow",
+        "pipeline": "process_flow",
         "taxonomy": "taxonomy_map",
+        "mindmap": "taxonomy_map",
+        "mind_map": "taxonomy_map",
+        "org_chart": "taxonomy_map",
+        "hierarchy": "taxonomy_map",
+        "hierarchy_chart": "taxonomy_map",
+        "timeline": "timeline_roadmap",
+        "roadmap": "timeline_roadmap",
         "timeline_map": "timeline_roadmap",
         "concept": "concept_diagram",
         "illustration": "scene_illustration",
+        "case_scene": "scene_illustration",
+        "future_scene": "scene_illustration",
+        "human_ai_scene": "scene_illustration",
         "summary": "infographic",
         "chapter_summary": "infographic",
         "decision_flow": "decision_tree",
-        "hierarchy": "org_chart",
         "comparison": "comparison_matrix",
-        "matrix": "swot",
-        "dataflow": "process_flow",
-        "sequence": "process_flow",
+        "quadrant_matrix": "swot",
+        "data_visualization": "chart",
+        # 领域词归并（非独立类型）
+        "rag": "system_architecture",
+        "agent": "system_architecture",
+        "microservice_architecture": "system_architecture",
+        "transformer": "mechanism_diagram",
     }
-    return aliases.get(st, st or "concept_diagram")
+    if st in aliases:
+        return aliases[st]
+    if st == "matrix":
+        return "swot"
+    return st or "concept_diagram"
 
 
 def resolve_renderer_key(diagram_subtype: str, *, has_numeric_data: bool = False) -> str:
+    raw = (diagram_subtype or "").strip().lower()
+    if raw == "chart" and not has_numeric_data:
+        return RENDERER_NEED_DATA
+    if raw in SUBTYPE_TO_RENDERER:
+        return SUBTYPE_TO_RENDERER[raw]
     st = canonical_subtype(diagram_subtype)
     if st == "chart" and not has_numeric_data:
         return RENDERER_NEED_DATA

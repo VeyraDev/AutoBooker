@@ -19,6 +19,10 @@ class PipelineContext:
     model: str = ""
     use_llm: bool = True
     layout_instructions: list[str] = field(default_factory=list)
+    intent_understanding: dict[str, Any] | None = None
+    pipeline_trace: list[dict[str, Any]] = field(default_factory=list)
+    parser_attempt: int = 0
+    parser_critique: str = ""
 
 
 @dataclass
@@ -31,6 +35,19 @@ class DiagramIntent:
     diagram_type: str = ""
     reason: str = ""
     fallback_allowed: bool = True
+
+    def __post_init__(self) -> None:
+        from app.services.figures.catalog.type_catalog import get_type_spec
+        from app.services.figures.intent.taxonomy import canonical_subtype, subtype_to_diagram_type
+
+        spec = get_type_spec(self.diagram_subtype)
+        if spec:
+            self.diagram_subtype = spec.subtype
+            self.diagram_family = spec.family
+        else:
+            self.diagram_subtype = canonical_subtype(self.diagram_subtype)
+        if not self.diagram_type:
+            self.diagram_type = subtype_to_diagram_type(self.diagram_subtype)
 
 
 @dataclass
@@ -93,6 +110,8 @@ class ClassificationRecord:
     intent_understanding: dict[str, Any] | None = None
     intent_candidates: dict[str, Any] | None = None
     quality_report: dict[str, Any] | None = None
+    pipeline_trace: list[dict[str, Any]] | None = None
+    structural_critic: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
         out = {
@@ -126,4 +145,8 @@ class ClassificationRecord:
             out["intent_candidates"] = self.intent_candidates
         if self.quality_report:
             out["quality_report"] = self.quality_report
+        if self.pipeline_trace:
+            out["pipeline_trace"] = self.pipeline_trace
+        if self.structural_critic:
+            out["structural_critic"] = self.structural_critic
         return out

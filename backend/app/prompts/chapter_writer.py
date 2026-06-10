@@ -4,7 +4,7 @@
 
 from app.prompts.publication_standards import CHAPTER_PUBLICATION_STANDARDS
 
-from app.services.heading_formatter import section_heading_level
+from app.services.heading_formatter import normalize_outline_sections, section_heading_level
 
 
 
@@ -28,7 +28,7 @@ CHAPTER_WRITER_MARKDOWN_RULES = """
 
 - 「（一）」「（二）」→ 使用 ####（四级标题）
 
-- 「1.」「2.」或「1、」→ 使用 #####（五级标题）
+- 「1．」「2．」（全角点）或「1、」→ 使用 #####（五级标题）
 
 - 「（1）」「（2）」→ 使用 ######（六级标题）
 
@@ -250,7 +250,7 @@ def build_writer_system_prompt(
 
     """拼接系统提示词；Markdown 规则须在 format 之后追加，避免花括号被误解析。"""
 
-    sections = outline_sections or []
+    sections = normalize_outline_sections(outline_sections or [])
 
     structure = build_section_structure_lines(sections)
 

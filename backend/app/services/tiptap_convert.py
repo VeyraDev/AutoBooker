@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
@@ -337,14 +339,143 @@ def _table_cell_inline_nodes(cell: dict[str, Any]) -> list[dict[str, Any]]:
     return [{"type": "text", "text": text}]
 
 
-def _resolve_figure_local_path(attrs: dict[str, Any]) -> Path | None:
-    path = str(attrs.get("fileUrl") or attrs.get("file_url") or attrs.get("file_path") or "")
-    if path.startswith("/static/figures/"):
-        from app.services.figures.storage.manager import figure_storage
+_FIGURE_URL_RE = re.compile(
+    r"/static/figures/([0-9a-f-]+)/(\d+)/([0-9a-f-]+)/figure\.(\w+)",
+    re.I,
+)
+_RASTER_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp"}
 
-        local = figure_storage.resolve_local_path(path)
-        if local and local.is_file():
-            return local
+
+def _figure_path_rank(path: Path) -> int:
+    ext = path.suffix.lower()
+    if ext == ".png":
+        return 0
+    if ext in {".jpg", ".jpeg", ".webp"}:
+        return 1
+    if ext == ".gif":
+        return 2
+    if ext == ".svg":
+        return 3
+    return 4
+
+
+def _strip_figure_url(raw: str) -> str:
+    return str(raw or "").strip().split("?", 1)[0].split("#", 1)[0].strip()
+
+
+def _parse_figure_ids(attrs: dict[str, Any]) -> tuple[str, str | None, int | None]:
+    figure_id = str(attrs.get("figureId") or attrs.get("figure_id") or "").strip()
+    book_id = str(attrs.get("book_id") or attrs.get("bookId") or "").strip() or None
+    chapter_raw = attrs.get("chapter_index", attrs.get("chapterIndex"))
+    chapter_index: int | None = (
+        int(chapter_raw) if chapter_raw is not None and str(chapter_raw) != "" else None
+    )
+    for key in ("fileUrl", "file_url", "svgUrl", "svg_url", "file_path"):
+        raw = _strip_figure_url(str(attrs.get(key) or ""))
+        match = _FIGURE_URL_RE.search(raw)
+        if match:
+            book_id = book_id or match.group(1)
+            if not figure_id:
+                figure_id = match.group(3)
+            if chapter_index is None:
+                chapter_index = int(match.group(2))
+            break
+    return figure_id, book_id, chapter_index
+
+
+def merge_figure_export_attrs(
+    block_attrs: dict[str, Any],
+    node_attrs: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """合并导出用 figure 属性，避免 TipTap 中空 URL 覆盖数据库/AST 中的有效路径。"""
+    base = {k: v for k, v in block_attrs.items() if k != "tiptap_node"}
+    merged = {**base, **(node_attrs or {})}
+    for key in ("fileUrl", "file_url", "svgUrl", "svg_url", "file_path"):
+        block_val = str(base.get(key) or "").strip()
+        node_val = str((node_attrs or {}).get(key) or "").strip()
+        if block_val and not node_val:
+            merged[key] = base[key]
+    return merged
+
+
+def _canonical_figure_paths(attrs: dict[str, Any]) -> list[Path]:
+    from app.services.figures.export_assets import find_figure_asset_on_disk
+    from app.services.figures.storage.manager import figure_storage
+
+    figure_id, book_id, chapter_index = _parse_figure_ids(attrs)
+    file_path = str(attrs.get("file_path") or "").strip()
+    if file_path:
+        path = Path(file_path)
+        if path.is_file():
+            return [path]
+    if not figure_id or not book_id:
+        return []
+    try:
+        fid = UUID(figure_id)
+        book_uuid = UUID(book_id)
+    except ValueError:
+        return []
+    paths: list[Path] = []
+    if chapter_index is not None:
+        paths.extend(
+            [
+                figure_storage.png_path(book_uuid, chapter_index, fid),
+                figure_storage.svg_path(book_uuid, chapter_index, fid),
+            ]
+        )
+    paths.extend(find_figure_asset_on_disk(book_uuid, fid))
+    return [p for p in paths if p.is_file()]
+
+
+def _resolve_figure_local_path(attrs: dict[str, Any]) -> Path | None:
+    from app.services.figures.storage.manager import figure_storage
+
+    candidates: list[Path] = []
+    seen: set[str] = set()
+
+    def _add(path: Path | None) -> None:
+        if not path or not path.is_file():
+            return
+        key = str(path.resolve())
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(path)
+
+    for key in ("fileUrl", "file_url", "svgUrl", "svg_url", "file_path"):
+        raw = _strip_figure_url(str(attrs.get(key) or ""))
+        if raw:
+            if key == "file_path":
+                _add(Path(raw) if Path(raw).is_file() else None)
+            else:
+                _add(figure_storage.resolve_local_path(raw))
+
+    for path in _canonical_figure_paths(attrs):
+        _add(path)
+
+    if not candidates:
+        return None
+    return min(candidates, key=_figure_path_rank)
+
+
+def _figure_raster_for_export(local: Path) -> Path | None:
+    """DOCX/PDF 仅支持位图；SVG 尝试转 PNG 或使用同目录 figure.png。"""
+    ext = local.suffix.lower()
+    if ext in _RASTER_EXTS:
+        return local if local.is_file() else None
+
+    if ext == ".svg":
+        for png_candidate in (local.with_name("figure.png"), local.with_suffix(".png")):
+            if png_candidate.is_file():
+                return _figure_raster_for_export(png_candidate)
+        from app.services.figures.render.svg.export_png import export_png_from_svg
+
+        canonical_png = local.with_name("figure.png")
+        if export_png_from_svg(local, canonical_png) and canonical_png.is_file():
+            return canonical_png
+        cache_png = local.parent / ".export-cache.png"
+        if export_png_from_svg(local, cache_png) and cache_png.is_file():
+            return cache_png
     return None
 
 
@@ -384,13 +515,19 @@ def docx_figure_image_only(doc: Document, node: dict[str, Any]) -> bool:
     local = _resolve_figure_local_path(attrs)
     if not local:
         return False
+    raster = _figure_raster_for_export(local)
+    if not raster:
+        return False
     pic_p = doc.add_paragraph()
     pic_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    width, height = _docx_figure_size(local)
+    width, height = _docx_figure_size(raster)
     kwargs: dict[str, Any] = {"width": Inches(width)}
     if height is not None:
         kwargs["height"] = Inches(height)
-    pic_p.add_run().add_picture(str(local), **kwargs)
+    try:
+        pic_p.add_run().add_picture(str(raster), **kwargs)
+    except Exception:
+        return False
     return True
 
 
@@ -409,9 +546,12 @@ def _docx_block(doc: Document, node: dict[str, Any]) -> None:
         level = int((node.get("attrs") or {}).get("level") or 1)
         level = max(1, min(6, level))
         try:
-            p = doc.add_paragraph(style=f"Heading {min(level, 3)}")
+            p = doc.add_paragraph(style=f"Heading {level}")
         except Exception:
-            p = doc.add_paragraph()
+            try:
+                p = doc.add_paragraph(style=f"Heading {min(level, 3)}")
+            except Exception:
+                p = doc.add_paragraph()
         _add_inline_to_paragraph(p, node.get("content"), size_pt=HEADING_PT.get(level, 14))
         for run in p.runs:
             run.bold = True
