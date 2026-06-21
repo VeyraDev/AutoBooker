@@ -1,9 +1,13 @@
 """Shared publication style constants (DOCX pt / PDF CSS)."""
 
 BODY_PT = 12
-CHAPTER_TITLE_PT = 16
-SECTION_TITLE_PT = 14
-SUBSECTION_TITLE_PT = 13
+BOOK_TITLE_PT = 22
+CHAPTER_TITLE_PT = 18
+SECTION_TITLE_PT = 16
+SUBSECTION_TITLE_PT = 15
+FOURTH_TITLE_PT = 14
+FIFTH_TITLE_PT = 12
+SIXTH_TITLE_PT = 12
 CAPTION_PT = 10.5
 LINE_SPACING = 1.5
 FIRST_LINE_INDENT_PT = 24  # ~2 Chinese chars at 12pt
@@ -29,12 +33,12 @@ p.body {
 }
 h1.book-title { font-size: 22pt; text-align: center; font-weight: bold; margin: 0 0 24pt 0; color: #000; }
 h1.preface-title { font-size: 18pt; text-align: center; font-weight: bold; margin: 24pt 0 12pt 0; color: #000; }
-h1.chapter-title { font-size: 16pt; text-align: center; font-weight: bold; margin: 24pt 0 12pt 0; color: #000; }
-h2.section-title { font-size: 14pt; text-align: left; font-weight: bold; margin: 16pt 0 8pt 0; color: #000; }
-h3.subsection-title { font-size: 13pt; text-align: left; font-weight: bold; margin: 14pt 0 6pt 0; color: #000; }
-h4.subsection-title { font-size: 12.5pt; text-align: left; font-weight: bold; margin: 12pt 0 6pt 0; color: #000; }
-h5.subsection-title { font-size: 12pt; text-align: left; font-weight: bold; margin: 10pt 0 4pt 0; color: #000; }
-h6.subsection-title { font-size: 12pt; text-align: left; font-weight: bold; margin: 8pt 0 4pt 0; color: #000; }
+h1.chapter-title { font-size: 18pt; text-align: center; font-weight: bold; margin: 24pt 0 12pt 0; color: #000; }
+h2.section-title { font-size: 16pt; text-align: center; font-weight: bold; margin: 16pt 0 8pt 0; color: #000; }
+h3.subsection-title { font-size: 15pt; text-align: left; font-weight: bold; margin: 14pt 0 6pt 0; color: #000; }
+h4.subsection-title { font-size: 14pt; text-align: left; font-weight: bold; margin: 12pt 0 6pt 0; color: #000; }
+h5.subsection-title { font-size: 12pt; text-align: left; font-weight: normal; margin: 10pt 0 4pt 0; color: #000; }
+h6.subsection-title { font-size: 12pt; text-align: left; font-weight: normal; margin: 8pt 0 4pt 0; color: #000; }
 .caption { font-size: 10.5pt; color: #000; text-align: center; margin: 6pt 0 12pt 0; }
 table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
 td, th { border: 1pt solid #333; padding: 4pt 6pt; font-size: 11pt; color: #000; }

@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import re
 
-from app.services.figure_render.renderer_rules import has_numeric_data_signal, style_profile_for_book
+from app.services.figures.render.legacy_svg.renderer_rules import has_numeric_data_signal, style_profile_for_book
 from app.services.figures.quality import initial_quality_report, intent_candidate_report
 from app.services.figures.intent.taxonomy import (
     RENDERER_ILLUSTRATION,
-    RENDERER_NEED_DATA,
     RENDERER_STRUCTURED_CHART,
     RENDERER_UPLOAD,
     SUBTYPE_TO_LEGACY_IMAGE_TYPE,
-    canonical_subtype,
     resolve_renderer_key,
 )
+from app.services.figures.render.image_api.prompt_constraints import IMAGE_API_SUBTYPES
 from app.services.figures.layout.policies import field_constraints_for_subtype, get_layout_policy
 from app.services.figures.schemas.diagram import (
     ClassificationRecord,
@@ -28,134 +27,57 @@ _LONG_PUNCT_RE = re.compile(r"[，,。；;：:、\n]")
 
 _SUBTYPE_STYLE: dict[str, str] = {
     "process_flow": (
-        "clean flowchart; rounded-rect nodes; node background #EEF3FD stroke #3B7DD8; "
-        "LR layout for ≤5 nodes, TB for longer; 60px node gap; node width adapts to label; "
-        "decision nodes use diamond shape with amber fill #FEF3C7 stroke #D97706; "
-        "feedback/retry edges use dashed stroke; start/end nodes use pill shape gray fill"
-    ),
-    "business_workflow": (
-        "process flowchart with swim-lanes; lane headers bold gray; "
-        "step nodes rounded-rect steel-blue; hand-off arrows cross lane boundary; "
-        "decision diamonds amber; terminal nodes pill-shaped"
+        "清晰流程图；步骤节点使用圆角矩形；短流程优先横向，长流程优先纵向或蛇形折返；"
+        "节点间距充足，节点宽度随文字长度调整；判断节点与步骤节点形状区分；"
+        "返回、反馈或重试关系使用较轻线条或虚线；起止节点使用胶囊形"
     ),
     "system_architecture": (
-        "layered architecture diagram; each layer a labeled rounded container band "
-        "(入口层=blue-100, 服务层=teal-50, 基础设施层=slate-50); "
-        "module cards inside layers: white card 1px border rounded-8 drop-shadow-xs; "
-        "gateway/entry modules amber accent border; infra/queue modules slate; "
-        "cross-layer arrows thin 1px; avoid fan-out spaghetti: group related connections"
-    ),
-    "microservice_architecture": (
-        "microservice topology; services as rounded cards grouped by domain; "
-        "message bus/queue shown as horizontal rail between service groups; "
-        "sync calls solid arrow, async calls dashed arrow; "
-        "API gateway prominent at top with distinct amber fill"
+        "分层或分区架构图；每个层级使用带标题的浅色容器；模块使用白底卡片和细边框；"
+        "入口、核心处理、共享基础设施、外部对象视觉层级清楚；"
+        "跨层箭头保持细而明确，相关连接先分组再连接，避免线条缠绕"
     ),
     "decision_tree": (
-        "top-down decision tree; diamond nodes for yes/no decisions amber fill #FEF9C3; "
-        "outcome leaf nodes rounded-rect teal fill #CCFBF1; "
-        "edge labels: short (是/否/Y/N); 80px vertical gap between levels; "
-        "root node larger; consistent node widths per level"
+        "自上而下决策树；判断节点使用菱形或强调形状，结果节点使用圆角矩形；"
+        "分支标签靠近分叉点；层级之间留出足够纵向间距；根节点更醒目，同层节点宽度一致"
     ),
     "comparison_matrix": (
-        "comparison table or 2-column card layout; "
-        "one distinct color ramp per option (blue vs teal, or purple vs coral); "
-        "bold header row with option name; attribute rows alternating white/gray-50; "
-        "highlight winner cells with subtle green-100 background"
-    ),
-    "swot": (
-        "2×2 SWOT quadrant; each quadrant distinct background "
-        "(S=green-50, W=red-50, O=blue-50, T=amber-50); "
-        "quadrant label bold in matching dark ramp color; "
-        "bullet items inside each quadrant 12px; center diamond optional logo placeholder"
+        "稳定行列矩阵或并列卡片；比较对象和比较维度固定在清楚轴线上；"
+        "表头加粗，对应单元格对齐；同一维度的信息结构一致；"
+        "重点结论可用浅色底强调，但不依赖颜色单独表达逻辑"
     ),
     "timeline_roadmap": (
-        "horizontal timeline rail with milestone markers; "
-        "rail line 2px gray-300; milestone circles filled blue-500 with white center dot; "
-        "labels alternate above/below rail to avoid overlap; "
-        "phase bands behind milestones for grouping; quarter/year markers on rail"
+        "水平或纵向时间轴；时间标签锚定在主轴上；事件标题与说明分层显示；"
+        "节点标签可上下交错避免重叠；阶段分组可使用浅色带状背景"
     ),
     "taxonomy_map": (
-        "radial mind-map or indented tree; root node large centered purple fill; "
-        "level-1 branches teal rounded-rect connected by curved paths; "
-        "level-2 nodes smaller gray; leaf nodes smallest, text only; "
-        "use curved bezier connectors not straight lines"
-    ),
-    "org_chart": (
-        "top-down org chart; CEO/root at top center large blue card; "
-        "direct reports row below connected by vertical lines; "
-        "each node: name bold + role subtitle 12px; "
-        "same-level nodes equal width; department groups optionally framed"
-    ),
-    "knowledge_graph": (
-        "entity-relation network; entity nodes circles or rounded-rect by type; "
-        "relation edges labeled with predicate; "
-        "hub nodes larger; use force-directed-style manual spacing; "
-        "color by entity type: person=purple, org=blue, concept=teal, event=amber"
+        "树形、缩进或放射分类图；根节点最大，一级分类次之，成员节点最小；"
+        "同一父节点下成员靠近并对齐；连接线表示归属，不使用流程箭头"
     ),
     "infographic": (
-        "2×N icon-text card grid; each card: icon top-center 32px + title bold 14px + "
-        "1-line summary 12px; consistent card height 100px; "
-        "cards use alternating light color backgrounds from a single ramp; "
-        "section header above grid if multiple groups"
+        "信息卡片或分组网格；每个信息块高度一致；标题、图标、说明对齐；"
+        "多个分组先显示主题或分类，再显示模块；卡片之间保持清楚组织关系"
     ),
     "chart": (
-        "data visualization chart; choose bar/line/pie by data shape; "
-        "bars use single blue ramp with slight opacity variation; "
-        "axis labels 11px gray; grid lines 0.5px gray-100; "
-        "data labels on bars if ≤8 items; legend only if multiple series"
-    ),
-    "transformer": (
-        "transformer architecture cross-section; encoder left, decoder right (or stacked); "
-        "attention heads shown as small colored squares inside attention block; "
-        "residual connections as curved bypass arrows; "
-        "input embedding at bottom, output probabilities at top; "
-        "layer norm and FFN blocks labeled clearly; warm blue palette"
-    ),
-    "rag": (
-        "RAG pipeline or architecture hybrid; "
-        "if pipeline (A→B→C flow): clean LR flowchart with document icon at retriever; "
-        "if architecture (components): layered with vector store prominent bottom; "
-        "retriever teal, LLM blue, vector store slate, user query amber; "
-        "show both query path (solid) and retrieval path (dashed) if both present"
-    ),
-    "agent": (
-        "agent loop diagram; perception-planning-action cycle shown as circular or spiral; "
-        "tool nodes as small cards around agent core; "
-        "memory module as persistent side panel; "
-        "action arrows show feedback loop; warm purple for agent core"
-    ),
-    "attention_matrix": (
-        "attention weight heatmap; tokens on both axes; "
-        "cell fill: warm amber-red for high attention, cool blue-gray for low; "
-        "token labels 11px on axes; causal mask shown as gray triangle if applicable; "
-        "softmax row highlighted with subtle border"
+        "数据图表；根据数据形态选择柱状、折线、饼图或散点；坐标轴、标签和图例清楚；"
+        "网格线轻量，数据标签避免重叠；单系列优先使用同一色系"
     ),
     "concept_diagram": (
-        "concept relationship map; central concept large rounded-rect blue; "
-        "related concepts medium teal nodes; peripheral notes small gray; "
-        "labeled edges 11px describing the relationship; "
-        "radial or hierarchical layout based on concept count"
+        "概念关系图；核心概念更醒目，相关概念按类别或关系分组；"
+        "关系标签靠近连线，同级概念视觉等级一致；布局优先表达语义而非对称"
     ),
     "mechanism_diagram": (
-        "mechanism explainer; input/output nodes at edges; "
-        "internal process steps as sequential boxes; "
-        "data transformation shown by arrow label changes; "
-        "use icons where possible: gear for processing, funnel for filtering, "
-        "lightning for activation; teal-blue palette"
+        "机制原理图；输入、内部对象、中间状态、控制量和输出分区清楚；"
+        "关键对象使用形状、对齐、括号或公式关系表达；不同作用关系使用不同线型或位置"
     ),
     "scene_illustration": (
-        "editorial scene illustration; atmospheric, human-centered; "
-        "avoid diagram conventions (no boxes, no arrows, no labels); "
-        "use storytelling composition: foreground character, background context; "
-        "soft muted palette with one warm accent; photographic style optional"
+        "书籍正文概念插图；默认少字或无字；使用单一主视觉表达核心概念；"
+        "避免流程框、复杂箭头和大量标签；前景与背景层次清楚"
     ),
 }
 
 _DEFAULT_STYLE = (
-    "book interior diagram; unified blue-gray node fills; icon badges for semantic hints; "
-    "generous 60px node spacing; 0.5px clean vector borders; "
-    "title centered top; no decorative backgrounds"
+    "书籍正文图示；浅色背景；统一节点填充、细边框、清楚标题、充足间距；"
+    "不使用装饰背景，优先保证结构、文字和连接关系清晰"
 )
 
 
@@ -192,7 +114,9 @@ def _shorten_title(raw: str, *, fallback: str = "示意图") -> str:
 def _structured_quality(parsed_spec: dict, subtype: str, renderer: str) -> tuple[list[str], list[str], str]:
     warnings: list[str] = []
     flags: list[str] = []
-    st = canonical_subtype(subtype)
+    st = str(subtype or "").strip().lower()
+    if st not in (set(IMAGE_API_SUBTYPES) | {"chart", "screenshot"}):
+        st = "concept_diagram"
     policy = get_layout_policy(st)
     constraints = field_constraints_for_subtype(st)
     layout = str(parsed_spec.get("layout_strategy") or parsed_spec.get("layout") or "").upper()
@@ -291,7 +215,9 @@ def _visual_requirements_for(subtype: str, renderer: str) -> list[str]:
         "节点间距充足，连线不穿过文字或节点",
     ]
     if renderer == RENDERER_ILLUSTRATION:
-        return base + ["场景氛围优先，无文字标注框", "构图有前景/背景层次"]
+        if subtype == "scene_illustration":
+            return ["场景氛围优先", "默认不出现文字标注框", "构图有前景/背景层次"]
+        return base + ["严格使用布局脚本中的可见文字白名单", "文字清晰完整，不翻译、不改写、不裁切"]
     subtype_extras = {
         "process_flow": ["步骤节点等高等宽", "决策菱形与步骤矩形形状明确区分", "反馈边用虚线"],
         "system_architecture": ["层容器背景区分明显", "跨层箭头不交叉", "网关/入口节点用强调色"],
@@ -301,7 +227,6 @@ def _visual_requirements_for(subtype: str, renderer: str) -> list[str]:
         "decision_tree": ["根节点居顶居中", "同层节点等高", "叶节点用不同背景色标记结果"],
         "taxonomy_map": ["根节点最大", "子节点按层递减", "连线用曲线而非折线"],
         "chart": ["坐标轴标注清晰", "数据标签避免重叠", "单系列用单色渐变"],
-        "rag": ["检索路径与生成路径颜色分离", "向量库图标明确", "查询节点置顶"],
     }
     return base + subtype_extras.get(subtype, ["统一配色主题", "节点形状语义化"])
 
@@ -315,7 +240,9 @@ def build_classification_record(
     dsl_json: dict | None = None,
     ir_bundle: dict | None = None,
 ) -> ClassificationRecord:
-    subtype = canonical_subtype(intent.diagram_subtype)
+    subtype = str(intent.diagram_subtype or "").strip().lower()
+    if subtype not in (set(IMAGE_API_SUBTYPES) | {"chart", "screenshot"}):
+        subtype = "concept_diagram"
     if subtype == "data_visualization":
         subtype = "chart"
 
@@ -326,19 +253,12 @@ def build_classification_record(
     renderer = resolve_renderer_key(subtype, has_numeric_data=numeric)
     if subtype == "chart":
         renderer = RENDERER_STRUCTURED_CHART
-    if _image_api_safe_for_structured(parsed.parsed_spec, subtype) and subtype != "chart":
+    elif subtype == "screenshot":
+        renderer = RENDERER_UPLOAD
+    else:
         renderer = RENDERER_ILLUSTRATION
-        parsed.parsed_spec.setdefault("quality_flags", []).append("image_api_structured_visual")
-        parsed.parsed_spec.setdefault("render_warnings", []).append("低文字结构视觉图允许使用 Image API，并保留结构化计划用于审查")
-    # Only real scene illustrations go to Image API. Text-heavy information graphics should stay structured.
-    if intent.diagram_family == "illustration" and subtype in {"scene_illustration", "case_scene", "future_scene", "human_ai_scene"}:
-        renderer = RENDERER_ILLUSTRATION
-    if subtype == "chart":
-        renderer = RENDERER_STRUCTURED_CHART
 
     image_type = SUBTYPE_TO_LEGACY_IMAGE_TYPE.get(subtype, "concept_diagram")
-    if renderer == RENDERER_ILLUSTRATION:
-        image_type = "scene_illustration"
 
     parsed_title = str(parsed.parsed_spec.get("title") or "").strip()
     title_source = intent.title or parsed_title or ctx.chapter_title
@@ -352,7 +272,7 @@ def build_classification_record(
     intent_candidates = intent_candidate_report(ctx, intent)
     must_avoid = ["照片写实", "复杂背景", "营销海报风", "文字堆叠"]
     if renderer == RENDERER_ILLUSTRATION:
-        must_avoid.extend(["可读文字", "复杂标签", "UI 截图伪造"])
+        must_avoid.extend(["伪造截图", "翻译文字", "新增标签", "裁切文字"])
     else:
         must_avoid.extend(["装饰性插画", "伪 3D", "过多颜色"])
 
@@ -388,6 +308,16 @@ def build_classification_record(
         "must_avoid": must_avoid,
         "visual_requirements": _visual_requirements_for(subtype, renderer),
     }
+    for key in (
+        "primary_type",
+        "secondary_type",
+        "do_not_draw_as",
+        "layout_risks",
+        "layout_script",
+        "layout_agent_fallback",
+    ):
+        if key in parsed.parsed_spec:
+            prompt_spec[key] = parsed.parsed_spec.get(key)
     visual_json = None
     if visual_plan:
         visual_json = visual_plan.to_prompt_spec()
@@ -409,7 +339,7 @@ def build_classification_record(
         visual_plan=visual_json,
         prompt_spec=prompt_spec,
         image_type=image_type,
-        subtype=ctx.subtype_hint or subtype,
+        subtype=subtype,
         style_profile=style_profile_for_book(ctx.style_type),
         render_warnings=render_warnings,
         quality_flags=quality_flags,

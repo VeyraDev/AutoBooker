@@ -31,9 +31,6 @@ function attrsFromFigure(
     figureType: fig.figure_type as FigureType,
     rawAnnotation: fig.raw_annotation ?? "",
   };
-  const urlChanged = str(current.fileUrl) !== str(next.fileUrl) || str(current.svgUrl) !== str(next.svgUrl);
-  const statusChanged = str(current.status) !== str(next.status);
-  const idMissing = !str(current.figureId);
   const currentVersion = Number(current.fileVersion ?? 0) || 0;
   const serverVersion = figureFileVersion(fig.updated_at, Date.now());
   next.fileVersion = Math.max(currentVersion, serverVersion);

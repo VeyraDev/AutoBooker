@@ -11,25 +11,26 @@ from app.models.figure import Figure
 from app.services.figures.pipeline.helpers import spec_to_flowchart_description
 from app.services.figures.classification.legacy_adapter import normalize_renderer_key
 from app.services.figures.intent.taxonomy import (
+    RENDERER_GENERIC_COMPOSITOR,
+    RENDERER_INFOGRAPHIC_TEMPLATE,
     RENDERER_ILLUSTRATION,
     RENDERER_NEED_DATA,
     RENDERER_STRUCTURED_ARCHITECTURE,
     RENDERER_STRUCTURED_CHART,
     RENDERER_STRUCTURED_COMPARISON,
+    RENDERER_STRUCTURED_DUAL_STACK,
     RENDERER_STRUCTURED_FLOWCHART,
     RENDERER_STRUCTURED_GENERIC,
     RENDERER_STRUCTURED_INFOGRAPHIC,
     RENDERER_STRUCTURED_MATRIX,
     RENDERER_STRUCTURED_NETWORK,
-    RENDERER_STRUCTURED_RAG,
     RENDERER_STRUCTURED_SWOT,
     RENDERER_STRUCTURED_TAXONOMY,
+    RENDERER_STRUCTURED_THREE_COLUMN,
     RENDERER_STRUCTURED_TIMELINE,
-    RENDERER_STRUCTURED_TRANSFORMER,
     RENDERER_UPLOAD,
 )
 from app.services.figures.render.illustration.provider import generate_figure_image
-from app.services.figures.render.illustration.visual_prompt import visual_plan_to_prompt
 from app.services.figures.render.structured.chart import generate_chart
 from app.services.figures.render.structured.decision_flow import generate_decision_flow_diagram
 from app.services.figures.render.structured.flowchart import generate_flowchart
@@ -47,19 +48,22 @@ from app.services.figures.render.structured.rag import generate_rag_diagram
 from app.services.figures.render.result import FigureRenderResult, coerce_render_result
 from app.services.figures.render.structured.swot import generate_swot_diagram
 from app.services.figures.render.structured.transformer import generate_transformer_architecture
-from app.services.figure_render.figure_structure import has_structured_graph
+from app.services.figures.render.legacy_svg.figure_structure import has_structured_graph
+from app.services.figures.render.html_template import render_infographic_spec
+from app.services.figures.render.compositor import render_composited_diagram
+from app.services.figures.render.image_api.prompt_constraints import IMAGE_API_SUBTYPES
 
 _SVG_FIRST_RENDERERS = frozenset({
     RENDERER_STRUCTURED_GENERIC,
     RENDERER_STRUCTURED_FLOWCHART,
     RENDERER_STRUCTURED_ARCHITECTURE,
     RENDERER_STRUCTURED_NETWORK,
-    RENDERER_STRUCTURED_RAG,
     RENDERER_STRUCTURED_COMPARISON,
     RENDERER_STRUCTURED_TAXONOMY,
     RENDERER_STRUCTURED_TIMELINE,
     RENDERER_STRUCTURED_MATRIX,
-    RENDERER_STRUCTURED_TRANSFORMER,
+    RENDERER_STRUCTURED_DUAL_STACK,
+    RENDERER_STRUCTURED_THREE_COLUMN,
     RENDERER_STRUCTURED_INFOGRAPHIC,
 })
 
@@ -210,10 +214,22 @@ def _normalized(fig: Figure) -> str:
 def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", chart_type: str | None = None) -> FigureRenderResult:
     renderer = normalize_renderer_key(fig.renderer or _clf(fig).get("renderer"))
     spec = _parsed_spec(fig)
-    title = _title(fig)
+    # 图题由正文题注承载，图片画布内部不再渲染置顶大标题。
+    title = ""
     description = _normalized(fig)
     book_type = book.book_type.value if book.book_type else ""
     clf = _clf(fig)
+    declared_subtype = str(fig.subtype or clf.get("diagram_subtype") or fig.image_type or "").strip().lower()
+    if declared_subtype == "chart":
+        renderer = RENDERER_STRUCTURED_CHART
+    elif declared_subtype == "screenshot":
+        renderer = RENDERER_UPLOAD
+    elif renderer != RENDERER_ILLUSTRATION:
+        renderer = RENDERER_ILLUSTRATION
+
+    if spec.get("render_mode") == "needs_clarification":
+        messages = spec.get("compiler_messages") or ["输入缺少可排版结构，需要补充信息"]
+        raise ValueError("；".join(str(x) for x in messages if str(x).strip()))
 
     if renderer == RENDERER_UPLOAD:
         raise ValueError("截图类型请手动上传")
@@ -221,6 +237,41 @@ def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", c
         return _finish(
             generate_chart(description, out_path, model=model, chart_type_hint=chart_type, render_spec=spec),
             out_path,
+        )
+
+    if renderer == RENDERER_STRUCTURED_CHART:
+        return _finish(generate_chart(description, out_path, model=model, chart_type_hint=chart_type, render_spec=spec), out_path)
+
+    if renderer == RENDERER_ILLUSTRATION:
+        sub = declared_subtype if declared_subtype in IMAGE_API_SUBTYPES else "concept_diagram"
+        layout_script = str(
+            clf.get("layout_script")
+            or spec.get("layout_script")
+            or (clf.get("prompt_spec") or {}).get("layout_script")
+            or ""
+        ).strip()
+        source_text = "" if layout_script else (fig.raw_annotation or clf.get("normalized_input") or fig.caption or "").strip()
+        return _finish(
+            generate_figure_image(
+                source_text,
+                out_path,
+                style_type=book.style_type or "",
+                sub_kind=sub,
+                layout_script=layout_script or None,
+            ),
+            out_path,
+        )
+
+    if renderer == RENDERER_INFOGRAPHIC_TEMPLATE:
+        diagram_spec = spec.get("diagram_spec") if isinstance(spec.get("diagram_spec"), dict) else spec
+        return render_infographic_spec(diagram_spec, out_path, subtype=str(fig.subtype or clf.get("diagram_subtype") or ""))
+
+    if renderer == RENDERER_GENERIC_COMPOSITOR or spec.get("render_mode") == "generic_compositor":
+        return render_composited_diagram(
+            spec,
+            out_path,
+            subtype=str(fig.subtype or clf.get("diagram_subtype") or ""),
+            title=title,
         )
 
     if renderer == RENDERER_STRUCTURED_GENERIC:
@@ -275,13 +326,13 @@ def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", c
             fallback=lambda: generate_infographic_diagram(spec, out_path, title=title),
         )
 
-    if renderer == RENDERER_STRUCTURED_TRANSFORMER:
+    if renderer == RENDERER_STRUCTURED_DUAL_STACK:
         return _svg_first_or_fallback(
             spec, out_path, title=title, clf=clf,
             fallback=lambda: generate_transformer_architecture(description, out_path, render_spec=spec, title=title),
         )
 
-    if renderer == RENDERER_STRUCTURED_RAG:
+    if renderer == RENDERER_STRUCTURED_THREE_COLUMN:
         return _svg_first_or_fallback(
             spec, out_path, title=title, clf=clf,
             fallback=lambda: generate_rag_diagram(spec, out_path, title=title),
@@ -304,24 +355,6 @@ def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", c
             )
         image_type = fig.image_type or "process_flow"
         return _finish(generate_flowchart(description, out_path, model=model, book_type=book_type, image_type=image_type), out_path)
-
-    if renderer == RENDERER_STRUCTURED_CHART:
-        return _finish(generate_chart(description, out_path, model=model, chart_type_hint=chart_type, render_spec=spec), out_path)
-
-    if renderer == RENDERER_ILLUSTRATION:
-        visual = clf.get("visual_plan") or clf.get("prompt_spec") or {}
-        from app.services.figures.schemas.diagram import VisualPlan
-
-        plan = VisualPlan(
-            layout=str(visual.get("layout") or ""),
-            style=str(visual.get("style") or ""),
-            visual_description=str(visual.get("visual_description") or visual.get("core_message") or description[:400]),
-            must_include=list(visual.get("must_include") or []),
-            must_avoid=list(visual.get("must_avoid") or []),
-        )
-        prompt = visual_plan_to_prompt(plan, style_type=book.style_type or "")
-        sub = fig.subtype or "concept_diagram"
-        return _finish(generate_figure_image(prompt, out_path, style_type=book.style_type or "", sub_kind=sub), out_path)
 
     if has_structured_graph(spec):
         return _svg_first_or_fallback(

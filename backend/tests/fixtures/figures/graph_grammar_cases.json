@@ -24,10 +24,10 @@
     "render_profile": "svg.radial"
   },
   {
-    "name": "network",
+    "name": "knowledge_graph_alias",
     "subtype": "knowledge_graph",
-    "grammar": "network",
-    "render_profile": "svg.network"
+    "grammar": "radial_concept",
+    "render_profile": "svg.radial"
   },
   {
     "name": "decision",

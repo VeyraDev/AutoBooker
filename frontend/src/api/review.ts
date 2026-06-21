@@ -65,6 +65,15 @@ export async function previewReviewIssue(bookId: string, issueId: string): Promi
   return data;
 }
 
+export async function previewReviewIssueDedupe(bookId: string, issueId: string): Promise<ReviewApplyResult> {
+  const { data } = await client.post<ReviewApplyResult>(
+    `/books/${bookId}/review-issues/${issueId}/dedupe-preview`,
+    {},
+    { timeout: REVIEW_TIMEOUT_MS },
+  );
+  return data;
+}
+
 export async function confirmReviewApplication(
   bookId: string,
   applicationId: string,

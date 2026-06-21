@@ -17,8 +17,8 @@ _PROMPT = """解析时间线/路线图 JSON。只输出 JSON：
 {
   "title": "短标题",
   "events": [
-    {"time":"2017", "label":"Transformer"},
-    {"time":"2018", "label":"BERT"}
+    {"time":"2017", "label":"甲事件"},
+    {"time":"2018", "label":"乙事件"}
   ]
 }
 规则：

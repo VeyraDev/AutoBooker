@@ -4,7 +4,7 @@
 {
   "diagram_type": "flowchart|decision_flow|architecture|dataflow|sequence|hierarchy|taxonomy|comparison|matrix|timeline|illustration",
   "diagram_family": "architecture|decision|workflow|matrix|knowledge|timeline|organization|illustration|data",
-  "diagram_subtype": "process_flow|decision_tree|system_architecture|...",
+  "diagram_subtype": "process_flow|system_architecture|mechanism_diagram|comparison_matrix|concept_diagram|infographic|taxonomy_map|decision_tree|timeline_roadmap|scene_illustration|chart|screenshot",
   "confidence": 0.0,
   "reason": "一句话说明分类依据",
   "fallback_allowed": true,
@@ -14,17 +14,20 @@
 分类规则：
 1. 操作步骤、用户路径、从 A 到 B 的流程 → flowchart / process_flow
 2. 是否/判断/分支/达标/不达标 → decision_flow / decision_tree
-3. 系统模块、层级、服务、数据库、微服务 → architecture / system_architecture
-4. 数据流、ETL、采集清洗存储 → dataflow / process_flow
+3. 系统模块、层级、服务、数据库、服务化架构 → architecture / system_architecture
+4. 数据流、采集清洗存储 → dataflow / process_flow
 5. 调用过程、客户端请求服务端 → sequence / process_flow
 6. 两个或多个对象优劣/差异 → comparison / comparison_matrix
-7. SWOT、四象限、二维矩阵 → matrix / swot
-8. 分类体系、知识图谱、思维导图 → taxonomy / taxonomy_map
-9. 组织架构、上下级 → hierarchy / org_chart
+7. 四象限、二维矩阵 → comparison / comparison_matrix
+8. 分类体系、思维导图、组织架构、上下级 → taxonomy / taxonomy_map
+9. 知识图谱、关系网络、概念之间的语义关系 → taxonomy / concept_diagram
 10. 时间演进、路线图 → timeline / timeline_roadmap
 11. 章节总结、多个信息块 → taxonomy / infographic
 12. 具象场景、人物、氛围 → illustration / scene_illustration
 13. 有真实数值/统计趋势 → data / chart
+14. 截图、界面截图、产品界面但未上传图片 → screenshot / screenshot
+
+不要输出任何额外 subtype；必须归并到上面的 V3 图类。
 
 重要：
 - title 只给短图题，禁止复制版式说明
@@ -33,16 +36,16 @@
 
 语义净化规则（必须严格执行）：
 - 描述中出现"X连接前N个/所有Y""X通过Z通知Y""X包含N个模块"等聚合关系句，这些句子描述的是 edges/connections，不是节点名。不要将整句或其任何片段写进 diagram_subtype 或 title。
-- title 只给语义图题（如"微服务架构""用户注册流程"），禁止包含"共X个""前N个""通过消息队列"等关系描述词。
+- title 只给语义图题（如"系统架构""甲乙流程"），禁止包含"共X个""前N个""通过某组件"等关系描述词。
 - 若描述中明显是"说明如何布局"（如"用方框和箭头展示""左边是A右边是B""用箭头连接以下步骤"），这是版式说明，不影响 diagram_family/subtype 判断，直接忽略。
 
 【diagram_type 与 title 约束】
-- title 是图的"名字"，不是图的"描述"。只写 4-8 字的名词短语（"用户注册流程""微服务架构""RAG 调用链"）。
+- title 是图的"名字"，不是图的"描述"。只写 4-8 字的名词短语（"甲乙流程""系统架构""调用链"）。
 - 禁止在 title 中出现：动词（连接/通过/展示）、计数词（三个/前两个/共五个）、位置词（左侧/右边）。
 - 若描述中同时出现"步骤/流程/阶段"和"模块/服务/架构"，优先判断用户真正想看的是哪一个：
     如果描述以"A→B→C"或"先做X再做Y"为主 → workflow/process_flow
     如果描述以"X包含Y Z，Y调用Z"为主 → architecture/system_architecture
-- "订单服务通过消息队列异步通知支付服务"是一条 relation，不影响 diagram_type 判断，不进 title。
+- "甲模块通过消息中介异步通知乙模块"是一条 relation，不影响 diagram_type 判断，不进 title。
 
 书型：{book_type} / 风格：{style_type}
 章节：{chapter_title}

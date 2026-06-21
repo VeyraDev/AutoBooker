@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -50,6 +51,7 @@ from app.services.memory_service import build_book_memory, extract_chapter_memor
 from app.services.outline_text import serialize_book_outline_markdown
 
 logger = logging.getLogger(__name__)
+_SECRET_RE = re.compile(r"sk-[A-Za-z0-9_-]{8,}")
 
 router = APIRouter(prefix="/books", tags=["chapters"])
 
@@ -86,6 +88,14 @@ def _chapter_payload(ch: Chapter, total_chapters: int) -> dict:
     }
 
 
+def _safe_llm_error_message(exc: Exception, *, model: str) -> str:
+    msg = str(exc).strip() or exc.__class__.__name__
+    msg = _SECRET_RE.sub("sk-***", msg).replace("\r", " ").replace("\n", " ")
+    if len(msg) > 500:
+        msg = msg[:500].rstrip() + "..."
+    return f"叙事宪法生成失败（模型：{model}）：{msg}"
+
+
 def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> None:
     """独立 Session：可在 asyncio.to_thread 中调用，生成并写入 narrative_constitution。"""
     db = SessionLocal()
@@ -102,8 +112,14 @@ def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> Non
             chapter_count=max(int(n), 1),
             model=chat_model,
         )
+        if not text.strip():
+            raise RuntimeError(f"model {chat_model} returned empty narrative constitution")
         book.narrative_constitution = text
         db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("narrative constitution generation failed book=%s model=%s", book_id, chat_model)
+        raise
     finally:
         db.close()
 
@@ -138,13 +154,19 @@ def ensure_narrative_constitution(
     if (book.narrative_constitution or "").strip():
         return NarrativeEnsureOut(ok=True, generated=False)
     chat_model = _constitution_model_for_book(book)
-    _ensure_narrative_constitution_thread(book_id, chat_model)
+    try:
+        _ensure_narrative_constitution_thread(book_id, chat_model)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=_safe_llm_error_message(exc, model=chat_model),
+        ) from exc
     db.expire_all()
     book_fresh = db.get(Book, book_id)
     if not book_fresh or not (book_fresh.narrative_constitution or "").strip():
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            detail="叙事宪法生成失败或结果为空",
+            detail=f"叙事宪法生成失败（模型：{chat_model}）：模型返回空结果",
         )
     return NarrativeEnsureOut(ok=True, generated=True)
 
@@ -388,8 +410,13 @@ async def generate_chapter_stream(
             full_text = ""
             try:
                 await asyncio.to_thread(_ensure_narrative_constitution_thread, book_id, constitution_model)
-            except Exception:
-                logger.exception("narrative constitution generation failed")
+            except Exception as exc:
+                detail = _safe_llm_error_message(exc, model=constitution_model)
+                logger.exception(
+                    "narrative constitution generation failed book=%s model=%s",
+                    book_id,
+                    constitution_model,
+                )
                 row = (
                     db.query(Chapter)
                     .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
@@ -398,7 +425,7 @@ async def generate_chapter_stream(
                 if row:
                     row.status = ChapterStatus.pending
                     db.commit()
-                yield f"data: {json.dumps({'error': 'narrative_failed'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'error': 'narrative_failed', 'detail': detail}, ensure_ascii=False)}\n\n"
                 return
 
             book_live = db.get(Book, book_id)

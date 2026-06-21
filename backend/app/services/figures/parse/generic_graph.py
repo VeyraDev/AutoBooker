@@ -7,7 +7,7 @@ from typing import Any
 
 from app.config import settings
 from app.llm.client import LLMClient
-from app.services.figure_render.figure_structure import infer_structured_spec
+from app.services.figures.render.legacy_svg.figure_structure import infer_structured_spec
 from app.services.figures.parse.fallback import parse_fallback
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
 from app.utils.json_llm import parse_llm_json

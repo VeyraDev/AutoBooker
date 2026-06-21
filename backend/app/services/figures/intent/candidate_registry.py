@@ -5,34 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.figure_render.renderer_rules import has_numeric_data_signal
+from app.services.figures.render.legacy_svg.renderer_rules import has_numeric_data_signal
 from app.services.figures.catalog.type_catalog import (
+    CANONICAL_SUBTYPES,
     CHART_CANDIDATE_TYPES,
+    FIGURE_TYPE_CATALOG,
     SCENE_SUBTYPES,
-    build_candidate_type_map,
-    catalog_family_subtype,
     get_type_spec,
-    resolve_canonical_subtype,
 )
-from app.services.figures.intent.taxonomy import canonical_subtype, subtype_to_diagram_type
+from app.services.figures.intent.taxonomy import subtype_to_diagram_type
 from app.services.figures.schemas.diagram import DiagramIntent
-
-CANDIDATE_TYPE_MAP: dict[str, tuple[str, str]] = build_candidate_type_map()
-
-GOAL_TYPE_MAP: dict[str, tuple[str, str]] = {
-    "show_data": ("data", "chart"),
-    "show_trend": ("data", "chart"),
-    "show_distribution": ("data", "chart"),
-    "show_workflow": ("workflow", "process_flow"),
-    "show_system_architecture": ("architecture", "system_architecture"),
-    "show_comparison": ("matrix", "comparison_matrix"),
-    "show_timeline": ("timeline", "timeline_roadmap"),
-    "show_taxonomy": ("knowledge", "taxonomy_map"),
-    "show_decision": ("decision", "decision_tree"),
-    "show_mechanism": ("knowledge", "mechanism_diagram"),
-    "illustrate_concept": ("knowledge", "concept_diagram"),
-    "illustrate_scene": ("illustration", "scene_illustration"),
-}
 
 MIN_CANDIDATE_SCORE = 0.62
 
@@ -48,7 +30,10 @@ class ResolvedCandidate:
 
 
 def candidate_type_to_intent(candidate_type: str) -> tuple[str, str] | None:
-    return catalog_family_subtype(candidate_type)
+    spec = FIGURE_TYPE_CATALOG.get(str(candidate_type or "").strip().lower())
+    if not spec:
+        return None
+    return spec.family, spec.subtype
 
 
 def has_numeric_data_in_text(text: str) -> bool:
@@ -64,7 +49,7 @@ def _normalize_candidates(candidates: list[dict[str, Any]] | None) -> list[dict[
         ctype = str(raw.get("type") or "").strip().lower()
         if not ctype or ctype in seen:
             continue
-        if not resolve_canonical_subtype(ctype):
+        if ctype not in CANONICAL_SUBTYPES:
             continue
         seen.add(ctype)
         try:
@@ -114,7 +99,6 @@ def resolve_best_candidate(
                     best["reason"],
                     best["type"],
                 )
-        return ResolvedCandidate("data", "chart", 0.85, "numeric_constraint", "正文含可验证数值")
 
     for item in ranked:
         if item["score"] < MIN_CANDIDATE_SCORE:
@@ -126,11 +110,6 @@ def resolve_best_candidate(
         return ResolvedCandidate(
             family, subtype, item["score"], "llm_candidate", item["reason"], item["type"],
         )
-
-    goal_key = str(goal or "").strip().lower()
-    if goal_key in GOAL_TYPE_MAP:
-        family, subtype = GOAL_TYPE_MAP[goal_key]
-        return ResolvedCandidate(family, subtype, 0.72, "goal", goal_key, goal_key)
 
     if ranked:
         best = ranked[0]
@@ -149,7 +128,7 @@ def resolved_to_intent(
     title: str,
     understanding_confidence: float = 0.0,
 ) -> DiagramIntent:
-    subtype = canonical_subtype(resolved.subtype)
+    subtype = resolved.subtype
     conf = max(resolved.confidence, understanding_confidence)
     return DiagramIntent(
         resolved.family,
@@ -164,11 +143,11 @@ def resolved_to_intent(
 
 
 def is_chart_subtype(subtype: str) -> bool:
-    return resolve_canonical_subtype(subtype) == "chart" or canonical_subtype(subtype) == "chart"
+    return str(subtype or "").strip().lower() == "chart"
 
 
 def is_scene_subtype(subtype: str) -> bool:
-    return canonical_subtype(subtype) in SCENE_SUBTYPES
+    return str(subtype or "").strip().lower() in SCENE_SUBTYPES
 
 
 def bypasses_structured_pipeline(intent: DiagramIntent) -> bool:
@@ -177,6 +156,6 @@ def bypasses_structured_pipeline(intent: DiagramIntent) -> bool:
         return spec.pipeline in {"chart", "illustration"}
     if intent.diagram_family == "illustration":
         return True
-    if canonical_subtype(intent.diagram_subtype) == "chart":
+    if str(intent.diagram_subtype or "").strip().lower() == "chart":
         return True
     return False

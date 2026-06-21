@@ -1,8 +1,8 @@
 """Mechanism / principle parser.
 
 Grammar target: inputs, transformations, intermediate representations, outputs,
-feedback/cross links, and optional repeated stacks. Domain terms such as
-Transformer are handled as presets inside this grammar, not as parser families.
+feedback/cross links, and optional repeated stacks. Domain terms are handled as
+semantic clues inside this grammar, not as parser families.
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def _layer_count(text: str) -> int:
 
 def _transformer_spec(ctx: PipelineContext, intent: DiagramIntent) -> dict[str, Any]:
     n = _layer_count(ctx.normalized_input)
-    title = _title(intent, ctx.normalized_input) or "Transformer 编码器-解码器架构"
+    title = _title(intent, ctx.normalized_input) or "双栈机制结构图"
     return {
         "diagram_subtype": "transformer",
         "title": title,

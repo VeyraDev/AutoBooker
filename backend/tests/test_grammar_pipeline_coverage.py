@@ -26,7 +26,7 @@ GRAMMAR_FIXTURES: list[tuple[str, dict, bool]] = [
             ],
             "edges": [{"from": "s0", "to": "s1"}],
         },
-        True,
+        False,
     ),
     (
         "taxonomy_map",
@@ -44,7 +44,7 @@ GRAMMAR_FIXTURES: list[tuple[str, dict, bool]] = [
                 {"from": "c0", "to": "c0_0"},
             ],
         },
-        True,
+        False,
     ),
     (
         "system_architecture",
@@ -57,7 +57,7 @@ GRAMMAR_FIXTURES: list[tuple[str, dict, bool]] = [
             ],
             "edges": [{"from": "l0_m0", "to": "l0_m1"}],
         },
-        True,
+        False,
     ),
     (
         "timeline_roadmap",
@@ -70,7 +70,7 @@ GRAMMAR_FIXTURES: list[tuple[str, dict, bool]] = [
             ],
             "edges": [{"from": "e0", "to": "e1"}],
         },
-        True,
+        False,
     ),
     (
         "infographic",
@@ -83,7 +83,7 @@ GRAMMAR_FIXTURES: list[tuple[str, dict, bool]] = [
             ],
             "edges": [{"from": "summary", "to": "b0"}],
         },
-        True,
+        False,
     ),
     (
         "comparison_matrix",
@@ -97,7 +97,7 @@ GRAMMAR_FIXTURES: list[tuple[str, dict, bool]] = [
             ],
             "edges": [{"from": "matrix", "to": "d0"}],
         },
-        True,
+        False,
     ),
     (
         "swot",
@@ -122,7 +122,7 @@ GRAMMAR_FIXTURES: list[tuple[str, dict, bool]] = [
             "nodes": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
             "edges": [{"from": "a", "to": "b"}],
         },
-        True,
+        False,
     ),
 ]
 

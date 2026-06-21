@@ -10,7 +10,7 @@ _GENERIC_NUMERIC_PAIR = re.compile(
 )
 
 from app.services.figures.parse.llm_helpers import call_llm_json, llm_available
-from app.services.figure_render.renderer_rules import has_numeric_data_signal
+from app.services.figures.render.legacy_svg.renderer_rules import has_numeric_data_signal
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
 from app.utils.json_llm import parse_llm_json
 

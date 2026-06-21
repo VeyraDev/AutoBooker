@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Cpu } from "lucide-react";
 import { useMemo } from "react";
 import { useMatch } from "react-router-dom";
 
@@ -74,17 +73,14 @@ export default function UserModelMenu({ open, onClose }: Props) {
   if (!open) return null;
 
   return (
-    <div
-      role="menu"
-      className="user-model-menu absolute right-0 top-[calc(100%+6px)] z-50 w-72 rounded-xl border border-slate-200 bg-white py-3 shadow-xl"
-    >
-      <p className="border-b border-slate-100 px-3 pb-2 text-xs font-medium text-slate-600">
+    <section className="border-b border-slate-100 px-3 py-3">
+      <p className="text-xs font-medium text-slate-600">
         {book ? "本书模型" : "默认模型"}
       </p>
-      <p className="px-3 pt-2 text-[10px] leading-snug text-slate-400">
+      <p className="pt-1.5 text-[10px] leading-snug text-slate-400">
         {book ? "仅影响当前书稿的大纲、叙事宪法与写作。" : "新建书稿时将作为默认模型。"}
       </p>
-      <div className="mt-2 space-y-2.5 px-3">
+      <div className="mt-2.5 space-y-2.5">
         {SCENES.map(({ key, label }) => (
           <div key={key} className="flex items-center gap-2">
             <span className="w-14 shrink-0 text-[11px] text-slate-500">{label}</span>
@@ -99,29 +95,6 @@ export default function UserModelMenu({ open, onClose }: Props) {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-export function UserModelTrigger({
-  open,
-  onToggle,
-}: {
-  open: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={`user-model-trigger ${open ? "user-model-trigger-active" : ""}`}
-      aria-expanded={open}
-      aria-haspopup="menu"
-      aria-label="模型设置"
-      title="模型设置"
-      onClick={onToggle}
-    >
-      <Cpu className="h-3 w-3 shrink-0" aria-hidden />
-      <span>模型</span>
-    </button>
+    </section>
   );
 }

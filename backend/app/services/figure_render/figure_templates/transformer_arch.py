@@ -1,5 +1,3 @@
-"""兼容 shim → figures.render.structured.transformer。"""
+"""Compatibility wrapper for legacy transformer architecture template."""
 
-from app.services.figures.render.structured.transformer import generate_transformer_architecture
-
-__all__ = ["generate_transformer_architecture"]
+from app.services.figures.render.legacy_svg.figure_templates.transformer_arch import *  # noqa: F401,F403

@@ -12,8 +12,6 @@ import re
 from pathlib import Path
 
 from app.services.figures.pipeline.orchestrator import classify_figure_description
-from app.services.figures.render.svg.comparison import render_comparison_svg
-from app.services.figures.render.svg.graph_grammar import render_graph_grammar_svg
 
 DOC_PATH = Path(__file__).resolve().parents[3] / "docs" / "figure_type_test_prompts.md"
 
@@ -101,61 +99,40 @@ def test_docs_file_structured_cases_are_separate_and_skip_image_or_chart_types()
     assert all("期望" not in c["prompt"] for c in runnable)
 
 
-def test_explicit_file_prompt_directives_survive_to_render_spec():
-    for case_id, expected in EXPECTED_DIRECTIVES.items():
+def test_file_prompt_cases_default_to_image_api_renderer():
+    for case_id, _expected in EXPECTED_DIRECTIVES.items():
         record = _classify(case_id)
         spec = record.get("parsed_spec") or {}
 
-        assert expected <= _directive_ids(record), case_id
-        assert all(f"directive:{did}" in (spec.get("mandatory_semantics") or []) for did in expected), case_id
+        assert record["renderer"] == "illustration.image_api", case_id
+        assert spec["render_mode"] == "image_api", case_id
 
 
-def test_file_prompt_comparison_prefers_matrix_for_color_encoded_dimensions(tmp_path: Path):
+def test_file_prompt_comparison_prefers_matrix_for_color_encoded_dimensions():
     record = _classify("6-A")
     spec = record["parsed_spec"]
 
-    assert spec["render_profile"] == "svg.matrix"
-    assert (spec.get("design_spec") or {}).get("component_variant") == "matrix"
-
-    _, svg_path = render_comparison_svg(spec, tmp_path / "comparison.png", title=spec.get("title") or "")
-    svg = svg_path.read_text(encoding="utf-8")
-
-    assert 'data-visual-directives="' in svg
-    assert "encoding.color_scale" in svg
-    assert "comparison-axis-cell" in svg
-    assert "advantage-color-ramp" in svg
+    assert record["diagram_subtype"] == "comparison_matrix"
+    assert record["renderer"] == "illustration.image_api"
+    assert spec["render_mode"] == "image_api"
 
 
-def test_file_prompt_architecture_two_column_shared_node_svg(tmp_path: Path):
+def test_file_prompt_architecture_two_column_shared_node_routes_to_image_api():
     record = _classify("2-C")
     spec = record["parsed_spec"]
 
-    assert spec["render_profile"] == "svg.architecture"
-    assert "layout.columns" in _directive_ids(record)
-
-    _, svg_path = render_graph_grammar_svg(spec, tmp_path / "rag_architecture.png", title=spec.get("title") or "")
-    svg = svg_path.read_text(encoding="utf-8")
-
-    assert 'data-grammar="architecture"' in svg
-    assert "two-column-shared-node" in svg
-    assert "shared-resource-node" in svg
-    assert "left-column-zone" in svg
-    assert "right-column-zone" in svg
+    assert record["diagram_subtype"] == "system_architecture"
+    assert record["renderer"] == "illustration.image_api"
+    assert spec["render_mode"] == "image_api"
 
 
-def test_file_prompt_mechanism_bidirectional_arrows_svg(tmp_path: Path):
+def test_file_prompt_mechanism_bidirectional_arrows_routes_to_image_api():
     record = _classify("7-C")
     spec = record["parsed_spec"]
 
-    assert spec["render_profile"] == "svg.mechanism"
-    assert "edge.bidirectional" in _directive_ids(record)
-
-    _, svg_path = render_graph_grammar_svg(spec, tmp_path / "backprop.png", title=spec.get("title") or "")
-    svg = svg_path.read_text(encoding="utf-8")
-
-    assert "bidirectional-color-arrows" in svg
-    assert "forward-arrow" in svg
-    assert "reverse-arrow" in svg
+    assert record["diagram_subtype"] == "mechanism_diagram"
+    assert record["renderer"] == "illustration.image_api"
+    assert spec["render_mode"] == "image_api"
 
 
 def test_file_prompt_numeric_flow_guard_does_not_route_to_chart():
@@ -163,15 +140,13 @@ def test_file_prompt_numeric_flow_guard_does_not_route_to_chart():
 
     assert record["diagram_subtype"] == "process_flow"
     assert record["renderer"] != "structured.chart"
-    assert "routing.numeric_attribute" in _directive_ids(record)
+    assert record["renderer"] == "illustration.image_api"
 
 
-def test_file_prompt_infographic_is_runnable_structured_without_image_skip():
+def test_file_prompt_infographic_routes_to_image_api():
     record = _classify("11-A")
     spec = record["parsed_spec"]
 
     assert record["diagram_subtype"] == "infographic"
-    assert record["renderer"] == "structured.infographic"
-    assert spec["render_profile"] == "svg.blocks"
-    assert len(spec.get("blocks") or []) >= 5
-    assert {"layout.card_grid", "encoding.iconic", "encoding.palette"} <= _directive_ids(record)
+    assert record["renderer"] == "illustration.image_api"
+    assert spec["render_mode"] == "image_api"

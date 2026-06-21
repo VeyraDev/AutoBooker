@@ -1,4 +1,4 @@
-"""Transformer 机制图 parser（预设堆叠结构）。"""
+"""旧双栈机制图 parser 兼容层。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _is_transformer_request(ctx: PipelineContext, intent: DiagramIntent) -> bool
 
 def _transformer_spec(ctx: PipelineContext, intent: DiagramIntent) -> dict:
     n = _layer_count(ctx.normalized_input)
-    title = _title(intent, ctx.normalized_input) or "Transformer 编码器-解码器架构"
+    title = _title(intent, ctx.normalized_input) or "双栈机制结构图"
     return {
         "diagram_subtype": "transformer",
         "title": title,

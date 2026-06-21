@@ -78,8 +78,12 @@ def _extract_subjects_from_text(text: str) -> list[str]:
     vs = re.findall(r"([\u4e00-\u9fffA-Za-z0-9+]+)\s*(?:与|和|vs\.?|VS)\s*([\u4e00-\u9fffA-Za-z0-9+]+)", t)
     if vs:
         return [vs[0][0], vs[0][1]]
-    m = re.findall(r"(LoRA|vLLM|TGI|DeepSpeed|全量微调|提示工程|LangChain|Hermes|React|FastAPI)", t, flags=re.I)
-    return list(dict.fromkeys(m))[:6] or ["方案A", "方案B"]
+    quoted = re.findall(r"[《\"]([^《》\"]{2,24})[》\"]", t)
+    tokens = re.findall(r"\b[A-Za-z][A-Za-z0-9+._-]{1,24}\b", t)
+    cn_terms = re.findall(r"[\u4e00-\u9fff]{2,8}", t)
+    m = [*quoted, *tokens, *cn_terms]
+    stop = {"比较", "对比", "方案", "维度", "区别", "差异", "优缺点", "优劣势"}
+    return [x for x in list(dict.fromkeys(m)) if x not in stop][:6] or ["方案A", "方案B"]
 
 
 def _extract_dimensions_from_text(text: str) -> list[str]:
@@ -100,20 +104,8 @@ def _infer_cell_value(subject: str, dimension: str, text: str) -> str:
 def _default_cell_value(subject: str, dimension: str) -> str:
     dim = dimension.lower()
     subj = subject
-    presets: dict[str, dict[str, str]] = {
-        "显存需求": {"LoRA": "低", "全量微调": "高", "vLLM": "中", "TGI": "中", "DeepSpeed": "中"},
-        "训练速度": {"LoRA": "快", "全量微调": "慢", "vLLM": "—", "TGI": "—", "DeepSpeed": "快"},
-        "效果上限": {"LoRA": "中", "全量微调": "高", "vLLM": "—", "TGI": "—", "DeepSpeed": "—"},
-        "适用场景": {"LoRA": "资源受限", "全量微调": "数据充足", "vLLM": "高吞吐推理", "TGI": "HF生态", "DeepSpeed": "训练加速"},
-        "吞吐量": {"vLLM": "高", "TGI": "中", "DeepSpeed": "中"},
-        "延迟": {"vLLM": "低", "TGI": "中", "DeepSpeed": "中"},
-        "易用性": {"vLLM": "中", "TGI": "高", "DeepSpeed": "低"},
-        "社区活跃度": {"vLLM": "高", "TGI": "中", "DeepSpeed": "高"},
-    }
-    if dimension in presets and subj in presets[dimension]:
-        return presets[dimension][subj]
     if "显存" in dim or "内存" in dim:
-        return "较低" if "lora" in subj.lower() else "较高"
+        return "待补充"
     if "速度" in dim or "延迟" in dim:
         return "较快"
     if "效果" in dim or "上限" in dim:

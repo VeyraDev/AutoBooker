@@ -67,7 +67,7 @@ function FigureThumbnail({ fig }: { fig: FigureListItem }) {
     <img
       src={url}
       alt=""
-      className="h-14 w-20 shrink-0 rounded border border-slate-100 object-cover"
+      className="h-14 w-20 shrink-0 rounded border border-slate-100 bg-white object-contain"
       onError={() => {
         if (preferSvg && fig.file_url) {
           setPreferSvg(false);

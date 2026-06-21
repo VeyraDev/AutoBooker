@@ -32,7 +32,8 @@ SWOT_QUADRANT_FIELDS: tuple[str, ...] = ("strengths", "weaknesses", "opportuniti
 NON_GRAPH_GRAMMAR_SUBTYPES: frozenset[str] = frozenset({"swot", "attention_matrix"})
 
 def grammar_uses_graph_layout(subtype: str) -> bool:
-    return canonical_subtype(subtype) not in NON_GRAPH_GRAMMAR_SUBTYPES
+    raw = str(subtype or "").strip().lower()
+    return raw not in NON_GRAPH_GRAMMAR_SUBTYPES and canonical_subtype(raw) not in NON_GRAPH_GRAMMAR_SUBTYPES
 
 
 def _field_satisfied(spec: dict[str, Any], field: str, *, subtype: str) -> bool:
@@ -53,6 +54,11 @@ def grammar_spec_usable(spec: dict[str, Any], intent: DiagramIntent) -> bool:
     """catalog 注册的 grammar parser 产出是否足以进入 grammar 主路径。"""
     if not isinstance(spec, dict) or not spec:
         return False
+
+    if any(spec.get(key) for key in SWOT_QUADRANT_FIELDS):
+        return True
+    if spec.get("size") or spec.get("tokens"):
+        return True
 
     subtype = canonical_subtype(intent.diagram_subtype)
     type_spec = get_type_spec(subtype)

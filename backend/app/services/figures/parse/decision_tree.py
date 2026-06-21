@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from app.services.figures.parse.llm_helpers import call_llm_json, llm_available
-from app.services.figure_render.figure_structure import infer_structured_spec
+from app.services.figures.render.legacy_svg.figure_structure import infer_structured_spec
 from app.services.figures.parse.generic_graph import parse_generic_graph
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
 from app.utils.json_llm import parse_llm_json

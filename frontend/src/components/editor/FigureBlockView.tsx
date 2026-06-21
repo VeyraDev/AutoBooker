@@ -379,13 +379,13 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
           }}
         />
 
-        <div className="relative flex min-h-[140px] items-center justify-center p-4 pt-6">
+        <div className="relative flex min-h-[140px] items-center justify-center overflow-visible p-4 pt-6">
           {showImage ? (
             <img
               key={`${figureId}-${imgEpoch}-${displayUrl}`}
               src={imgSrc}
               alt={diagramDesc || label}
-              className="max-h-[360px] w-full cursor-zoom-in object-contain"
+              className="h-auto max-h-[min(72vh,720px)] w-auto max-w-full cursor-zoom-in object-contain"
               onDoubleClick={() => setFullscreen(true)}
               onError={() => {
                 const canFallbackToPng = Boolean(

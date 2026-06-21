@@ -1,4 +1,4 @@
-"""RAG 架构图渲染。"""
+"""旧三栏架构图渲染兼容层。"""
 
 from __future__ import annotations
 
@@ -18,13 +18,13 @@ from app.services.figures.render.structured.generic_graph import generate_struct
 
 def generate_rag_diagram(spec: dict[str, Any], output_path: Path, *, title: str = "") -> tuple[str, Path]:
     if spec.get("nodes") and spec.get("edges"):
-        return generate_structured_diagram(spec, output_path, title=title or spec.get("title", "RAG 架构"))
+        return generate_structured_diagram(spec, output_path, title=title or spec.get("title", "系统架构"))
 
     fig, ax = plt.subplots(figsize=(9, 4.5), dpi=150)
     ax.set_xlim(0, 9)
     ax.set_ylim(0, 4.5)
     ax.axis("off")
-    ax.set_title(title or spec.get("title") or "RAG 架构", fontsize=13, fontweight="bold")
+    ax.set_title(title or spec.get("title") or "系统架构", fontsize=13, fontweight="bold")
 
     boxes = [
         (1.0, 2.2, "用户查询"),

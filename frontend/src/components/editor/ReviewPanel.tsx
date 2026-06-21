@@ -8,6 +8,7 @@ import {
   getLatestReview,
   getReviewHistory,
   previewReviewIssue,
+  previewReviewIssueDedupe,
   recheckReview,
   resolveReviewIssue,
   reviewChapter,
@@ -46,6 +47,10 @@ const SEVERITY_CLASS: Record<string, string> = {
 };
 
 const STATUS_OPTIONS: Array<ReviewIssueStatus | "all"> = ["open", "resolved", "dismissed", "stale", "failed", "all"];
+
+function isAiSignatureIssue(issue: ReviewIssue): boolean {
+  return issue.dimension === "ai_signature" || Boolean(issue.detector?.startsWith("ai_detect"));
+}
 
 export default function ReviewPanel({
   bookId,
@@ -110,6 +115,13 @@ export default function ReviewPanel({
       return true;
     });
   }, [report, activeDimension, statusFilter, severityFilter]);
+
+  const aiOpenIssueCount = useMemo(() => {
+    return (report?.issues ?? []).filter((issue) => {
+      const status = issue.stale ? "stale" : issue.status ?? "open";
+      return isAiSignatureIssue(issue) && (status === "open" || status === "stale");
+    }).length;
+  }, [report]);
 
   const refreshLatest = useCallback(async () => {
     if (chapterIndex == null) return;
@@ -208,8 +220,13 @@ export default function ReviewPanel({
       <section>
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">降 AI 率</p>
         <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-          对本章已保存正文整体改写AI味风险。生成后先预览，确认后再替换正文。
+          优先处理审校标出的高风险片段；整章降 AI 仅作为最后兜底。生成后先预览，确认后再替换正文。
         </p>
+        {aiOpenIssueCount > 0 ? (
+          <p className="mt-2 rounded border border-teal-100 bg-teal-50 px-2 py-1 text-[11px] leading-relaxed text-teal-800">
+            审校已定位 {aiOpenIssueCount} 个 AI 风险片段，建议在下方逐条使用“局部降 AI”。
+          </p>
+        ) : null}
         <button
           type="button"
           className="btn-primary mt-3 flex h-9 w-full items-center justify-center gap-2 text-xs"
@@ -217,7 +234,7 @@ export default function ReviewPanel({
           onClick={() => void runDedupeChapter()}
         >
           {dedupeBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-          对本章降AI味
+          整章降 AI（兜底）
         </button>
         {dedupePreview ? (
           <div className="mt-3 space-y-2 rounded-lg border border-teal-200 bg-teal-50/60 p-3">
@@ -378,12 +395,13 @@ function IssueCard({
   const sev = issue.severity || "medium";
   const status = issue.stale ? "stale" : issue.status ?? "open";
   const action: ReviewActionType = issue.action ?? issue.action_type ?? "revise";
+  const aiSignature = isAiSignatureIssue(issue);
   const [busy, setBusy] = useState<"preview" | "dismiss" | "resolve" | null>(null);
 
   async function tryPreview() {
     setBusy("preview");
     try {
-      const res = await previewReviewIssue(bookId, issue.id);
+      const res = await (aiSignature ? previewReviewIssueDedupe(bookId, issue.id) : previewReviewIssue(bookId, issue.id));
       const kind = res.preview_kind === "insert" ? "insert" : "replace";
       const suggestion = res.preview_kind === "delete" ? "" : cleanSuggestionText(res.result_text);
       const ok = onAiPreviewReady?.({
@@ -409,10 +427,15 @@ function IssueCard({
         toast.error("未在正文中定位到对应片段，请核对原文或手动选中后重试");
         return;
       }
-      toast.success(res.preview_required ? "已生成预览，确认后应用" : "已定位并生成预览");
-      if (res.warning) toast.error(String(res.warning.message ?? "修改可能导致评分下降"));
+      const report = res.warning?.dedupe_report as { before_ai_risk?: number; after_ai_risk?: number } | undefined;
+      if (aiSignature && report?.before_ai_risk != null && report?.after_ai_risk != null) {
+        toast.success(`已生成局部降 AI 预览：${Math.round(report.before_ai_risk * 100)}% → ${Math.round(report.after_ai_risk * 100)}%`);
+      } else {
+        toast.success(res.preview_required ? "已生成预览，确认后应用" : "已定位并生成预览");
+      }
+      if (res.warning?.message) toast.error(String(res.warning.message));
     } catch {
-      toast.error("生成修改预览失败");
+      toast.error(aiSignature ? "生成局部降 AI 预览失败" : "生成修改预览失败");
     } finally {
       setBusy(null);
     }
@@ -466,8 +489,8 @@ function IssueCard({
       <div className="mt-2 flex flex-wrap items-center gap-3">
         {canPreview ? (
           <button type="button" className="flex items-center gap-1 text-[10px] font-medium text-teal-800 hover:underline disabled:opacity-50" disabled={busy != null} onClick={() => void tryPreview()}>
-            {busy === "preview" ? <Loader2 className="h-3 w-3 animate-spin" /> : <MapPin className="h-3 w-3" />}
-            定位并预览
+            {busy === "preview" ? <Loader2 className="h-3 w-3 animate-spin" /> : aiSignature ? <Wand2 className="h-3 w-3" /> : <MapPin className="h-3 w-3" />}
+            {aiSignature ? "局部降 AI" : "定位并预览"}
           </button>
         ) : null}
         {status === "open" ? (

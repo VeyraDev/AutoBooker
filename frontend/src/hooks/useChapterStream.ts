@@ -86,7 +86,8 @@ export function useChapterStream() {
             errored = true;
             const code = String(obj.error);
             if (code === "narrative_failed") {
-              cb.onError(new Error("全书叙事宪法生成失败，请检查网络或模型配置后重试"));
+              const detail = typeof obj.detail === "string" ? obj.detail.trim() : "";
+              cb.onError(new Error(detail || "全书叙事宪法生成失败，请检查网络或模型配置后重试"));
               return;
             }
             cb.onError(new Error(code));

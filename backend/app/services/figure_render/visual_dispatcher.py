@@ -1,5 +1,3 @@
-"""兼容 shim → figures.render.dispatcher"""
+"""Compatibility wrapper for legacy visual dispatch helpers."""
 
-from app.services.figures.render.dispatcher import render_figure as render_figure_asset
-
-__all__ = ["render_figure_asset"]
+from app.services.figures.render.legacy_svg.visual_dispatcher import *  # noqa: F401,F403

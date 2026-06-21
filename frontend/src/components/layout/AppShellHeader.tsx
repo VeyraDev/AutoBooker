@@ -5,7 +5,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 
 import FeedbackDialog from "@/components/common/FeedbackDialog";
 import NewBookDialog from "@/components/common/NewBookDialog";
-import UserModelMenu, { UserModelTrigger } from "@/components/layout/UserModelMenu";
+import UserModelMenu from "@/components/layout/UserModelMenu";
 import { listNotifications, markNotificationRead } from "@/api/notifications";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -26,9 +26,7 @@ export default function AppShellHeader() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
-  const modelMenuRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
 
   const { data: noticeData } = useQuery({
@@ -57,18 +55,17 @@ export default function AppShellHeader() {
   }, []);
 
   useEffect(() => {
-    if (!userMenuOpen && !modelMenuOpen) return;
+    if (!userMenuOpen) return;
     function onDoc(e: MouseEvent) {
+      const target = e.target as Element | null;
+      if (target instanceof Element && target.closest(".model-selector-menu")) return;
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setUserMenuOpen(false);
-      }
-      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
-        setModelMenuOpen(false);
       }
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [userMenuOpen, modelMenuOpen]);
+  }, [userMenuOpen]);
 
   function onLogout() {
     logout();
@@ -187,19 +184,17 @@ export default function AppShellHeader() {
                   aria-haspopup="menu"
                   aria-label="账户菜单"
                   title={user?.email ?? "账户"}
-                  onClick={() => {
-                    setModelMenuOpen(false);
-                    setUserMenuOpen((v) => !v);
-                  }}
+                  onClick={() => setUserMenuOpen((v) => !v)}
                 >
                   <UserRound className="h-4.5 w-4.5" />
                 </button>
                 {userMenuOpen ? (
                 <div
                   role="menu"
-                  className="absolute right-0 top-[calc(100%+8px)] z-50 w-56 rounded-xl border border-slate-200 bg-white py-3 shadow-xl"
+                  className="absolute right-0 top-[calc(100%+8px)] z-50 w-80 rounded-xl border border-slate-200 bg-white py-3 shadow-xl"
                 >
                   <p className="border-b border-slate-100 px-3 pb-2 text-xs text-slate-500">{user?.email ?? "用户"}</p>
+                  <UserModelMenu open={userMenuOpen} onClose={() => setUserMenuOpen(false)} />
                   <p className="px-3 pb-2 pt-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">主题</p>
                   <div className="flex gap-2 px-3 pb-3">
                     <button
@@ -238,16 +233,6 @@ export default function AppShellHeader() {
                   </button>
                 </div>
                 ) : null}
-              </div>
-              <div className="relative" ref={modelMenuRef}>
-                <UserModelTrigger
-                  open={modelMenuOpen}
-                  onToggle={() => {
-                    setUserMenuOpen(false);
-                    setModelMenuOpen((v) => !v);
-                  }}
-                />
-                <UserModelMenu open={modelMenuOpen} onClose={() => setModelMenuOpen(false)} />
               </div>
             </div>
 

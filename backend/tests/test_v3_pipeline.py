@@ -1,4 +1,4 @@
-"""V3 管线端到端。"""
+"""V3 pipeline coverage."""
 
 from __future__ import annotations
 
@@ -20,12 +20,12 @@ def test_type_router_chart():
 
 
 def test_structured_pipeline_never_empty_nodes():
-    ctx = PipelineContext(description="流程", normalized_input="步骤A然后步骤B", use_llm=False, model="")
-    intent = DiagramIntent("workflow", "process_flow", 0.8, "test", "流程", diagram_type="flowchart")
+    ctx = PipelineContext(description="flow", normalized_input="step A then step B", use_llm=False, model="")
+    intent = DiagramIntent("workflow", "process_flow", 0.8, "test", "flow", diagram_type="flowchart")
     brief = VisualBrief(
-        diagram_type="flow",
-        title="流程",
-        content_brief={"main_flow": [{"label": "步骤A"}, {"label": "步骤B"}]},
+        diagram_type="process_flow",
+        title="flow",
+        content_brief={"main_flow": [{"label": "step A"}, {"label": "step B"}]},
         visual_brief={"style_intent": "academic_clean"},
     )
     with patch("app.services.figures.pipeline.structured_run.extract_visual_brief", return_value=brief):
@@ -35,18 +35,27 @@ def test_structured_pipeline_never_empty_nodes():
         assert "grammar_blocked" not in (parsed.parsed_spec or {})
 
 
-def test_orchestrator_v3_trace():
+def test_orchestrator_v3_trace_uses_layoutscript_image_api():
     brief = VisualBrief(
-        diagram_type="flow", title="流程",
+        diagram_type="process_flow",
+        title="flow",
         content_brief={"main_flow": [{"label": "A"}, {"label": "B"}]},
         visual_brief={},
     )
-    with patch("app.services.figures.brief.visual.extract_visual_brief", return_value=brief), \
+    with patch("app.services.figures.pipeline.structured_run.extract_visual_brief", return_value=brief), \
          patch("app.services.figures.intent.understand._call_intent_understanding_llm", return_value={
-             "route": "structured_diagram",
-             "diagram_candidates": [{"type": "flow", "score": 0.9}],
-         }):
-        out = classify_figure_description("A到B的流程", use_llm=False)
+             "route": "image_api",
+             "diagram_candidates": [{"type": "process_flow", "score": 0.9}],
+         }), \
+         patch(
+             "app.services.figures.pipeline.orchestrator.generate_layout_script",
+             return_value=("layout for process_flow", False),
+         ):
+        out = classify_figure_description("A to B flow", use_llm=True, model="dummy")
         steps = [t.get("step") for t in out.get("pipeline_trace") or []]
         assert "type_router" in steps
-        assert "visual_brief" in steps or "compiler" in steps
+        assert "layout_agent" in steps
+        assert "visual_brief" not in steps
+        assert "compiler" not in steps
+        assert out["renderer"] == "illustration.image_api"
+        assert out["parsed_spec"]["render_mode"] == "image_api"

@@ -8,21 +8,19 @@ import time
 from sqlalchemy.orm import Session
 
 from app.models.figure import Figure, FigureStatus
+from app.services.figures.render.image_api.layoutscript import generate_layout_script
+from app.services.figures.render.image_api.prompt_constraints import IMAGE_API_SUBTYPES
 from app.services.figures.classification.resolver import build_classification_record
-from app.services.figures.schemas.dsl import DiagramDSL
-from app.services.figures.intent.reconcile import reconcile_intent_with_dsl, reconcile_intent_with_text
+from app.services.figures.intent.reconcile import reconcile_intent_with_text
+from app.services.figures.intent.taxonomy import subtype_to_diagram_type
 from app.services.figures.intent.resolve import resolve_intent_unified
 from app.services.figures.pipeline.chart_run import run_chart_pipeline
-from app.services.figures.intent.taxonomy import subtype_to_diagram_type
 from app.services.figures.intent.understand import understand_intent
-from app.services.figures.pipeline.illustration_run import run_illustration_pipeline
 from app.services.figures.pipeline.normalize import normalize_figure_input
-from app.services.figures.pipeline.structured_run import run_structured_pipeline
-from app.services.figures.pipeline.type_router import PipelineRoute, route_from_understanding
+from app.services.figures.pipeline.type_router import PipelineRoute
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext, VisualPlan
 
 logger = logging.getLogger(__name__)
-
 
 def _ensure_diagram_type(intent: DiagramIntent) -> DiagramIntent:
     if not intent.diagram_type:
@@ -48,24 +46,67 @@ def _run_pipeline(
     ctx: PipelineContext,
     intent: DiagramIntent,
     understanding: dict,
-) -> tuple[DiagramIntent, ParsedDiagram, VisualPlan | None, dict, list[str], dict]:
-    route = route_from_understanding(understanding, subtype_hint=ctx.subtype_hint or intent.diagram_subtype)
-    ctx.pipeline_trace.append({"step": "type_router", "route": route.value})
-
-    if route == PipelineRoute.CHART:
+) -> tuple[DiagramIntent, ParsedDiagram, VisualPlan | None, dict | None, list[str], dict]:
+    subtype = str(intent.diagram_subtype or "").strip().lower()
+    if subtype not in (set(IMAGE_API_SUBTYPES) | {"chart", "screenshot"}):
+        subtype = "concept_diagram"
+        intent.diagram_subtype = subtype
+        intent.diagram_family = "knowledge"
+        intent.diagram_type = subtype_to_diagram_type(subtype)
+    if subtype == "chart":
+        ctx.pipeline_trace.append({"step": "type_router", "route": PipelineRoute.CHART.value})
         return run_chart_pipeline(ctx, intent, understanding)
-    if route == PipelineRoute.ILLUSTRATION:
-        return run_illustration_pipeline(ctx, intent, understanding)
-    if route == PipelineRoute.SCREENSHOT:
+    if subtype == "screenshot":
+        ctx.pipeline_trace.append({"step": "type_router", "route": PipelineRoute.SCREENSHOT.value})
         parsed = ParsedDiagram({"title": intent.title, "render_mode": "screenshot_placeholder"}, source="v3_screenshot")
-        return intent, parsed, None, {}, ["screenshot_placeholder"], {"intent_understanding": understanding}
+        return intent, parsed, None, None, ["screenshot_placeholder"], {"intent_understanding": understanding}
+    if subtype in IMAGE_API_SUBTYPES:
+        ctx.pipeline_trace.append({"step": "type_router", "route": "image_api"})
+        t0 = time.perf_counter()
+        secondary_type = str(understanding.get("secondary_type") or "").strip()
+        do_not_draw_as = str(understanding.get("do_not_draw_as") or "").strip()
+        layout_risks = str(understanding.get("layout_risks") or "").strip()
+        layout_script, layout_fallback = generate_layout_script(
+            ctx.normalized_input,
+            subtype,
+            secondary_type=secondary_type,
+            do_not_draw_as=do_not_draw_as,
+            layout_risks=layout_risks,
+            model=ctx.model,
+            use_llm=ctx.use_llm,
+        )
+        ctx.pipeline_trace.append({
+            "step": "layout_agent",
+            "ms": int((time.perf_counter() - t0) * 1000),
+            "fallback": layout_fallback,
+        })
+        parsed = ParsedDiagram(
+            {
+                "title": intent.title,
+                "render_mode": "image_api",
+                "diagram_subtype": subtype,
+                "primary_type": subtype,
+                "secondary_type": secondary_type,
+                "do_not_draw_as": do_not_draw_as,
+                "layout_risks": layout_risks,
+                "layout_script": layout_script,
+                "layout_agent_fallback": layout_fallback,
+            },
+            source="layoutscript_image_api",
+        )
+        flags = ["layout_agent_fallback"] if layout_fallback else []
+        return intent, parsed, None, None, flags, {
+            "intent_understanding": understanding,
+            "pipeline": "layoutscript_image_api",
+            "primary_type": subtype,
+            "secondary_type": secondary_type,
+            "do_not_draw_as": do_not_draw_as,
+            "layout_risks": layout_risks,
+            "layout_script": layout_script,
+            "layout_agent_fallback": layout_fallback,
+        }
 
-    intent, parsed, visual, dsl_json, quality_flags, ir_bundle = run_structured_pipeline(
-        ctx, intent, understanding=understanding,
-    )
-    if dsl_json:
-        intent = reconcile_intent_with_dsl(intent, DiagramDSL.from_dict(dsl_json))
-    return intent, parsed, visual, dsl_json, quality_flags, ir_bundle
+    raise ValueError(f"unsupported figure subtype: {subtype}")
 
 
 def classify_figure_description(

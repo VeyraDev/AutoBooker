@@ -17,7 +17,9 @@ def test_visual_brief_prompt_synced():
 
 def test_intent_prompt_has_route():
     text = load_prompt("intent_understanding")
-    assert "route" in text
+    assert "主图类：" in text
+    assert "布局规划器应重点处理的风险：" in text
+    assert "不要输出 JSON" in text
     assert "{context}" in text
 
 

@@ -169,9 +169,10 @@ def _minimal_content_brief(dtype: str, text: str, title: str) -> dict[str, Any]:
         from app.services.figures.contracts.comparison_fill import fill_comparison_cells, infer_comparison_format
 
         subjects = re.findall(
-            r"(LoRA|vLLM|TGI|DeepSpeed|全量微调|提示工程|LangChain|Hermes|React|FastAPI|PostgreSQL|[\u4e00-\u9fff]{2,8})",
+            r"(?:[《\"]([^《》\"]{2,24})[》\"]|([A-Za-z][A-Za-z0-9+._-]{1,24})|([\u4e00-\u9fff]{2,8}))",
             text,
         )
+        subjects = [next((part for part in match if part), "") for match in subjects]
         subjects = list(dict.fromkeys(subjects))[:6] or ["方案A", "方案B"]
         dims = re.findall(r"(显存需求|训练速度|效果上限|适用场景|吞吐量|延迟|易用性|社区活跃度|成本|速度|复杂度|效果)", text)
         dims = list(dict.fromkeys(dims))[:8] or ["维度1", "维度2"]

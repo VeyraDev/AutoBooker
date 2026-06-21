@@ -18,7 +18,7 @@ def test_intent_from_understanding_maps_flowchart():
         "goal": "show_workflow",
         "domain": "general",
         "confidence": 0.82,
-        "candidate_diagrams": [{"type": "flowchart", "score": 0.86, "reason": "流程"}],
+        "candidate_diagrams": [{"type": "process_flow", "score": 0.86, "reason": "流程"}],
         "missing_info": [],
     }
     intent = intent_from_understanding(understanding, ctx)

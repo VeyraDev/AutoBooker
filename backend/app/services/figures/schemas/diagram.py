@@ -37,15 +37,18 @@ class DiagramIntent:
     fallback_allowed: bool = True
 
     def __post_init__(self) -> None:
-        from app.services.figures.catalog.type_catalog import get_type_spec
-        from app.services.figures.intent.taxonomy import canonical_subtype, subtype_to_diagram_type
+        from app.services.figures.catalog.type_catalog import FIGURE_TYPE_CATALOG
+        from app.services.figures.intent.taxonomy import subtype_to_diagram_type
 
-        spec = get_type_spec(self.diagram_subtype)
+        raw_subtype = str(self.diagram_subtype or "").strip().lower()
+        spec = FIGURE_TYPE_CATALOG.get(raw_subtype)
         if spec:
             self.diagram_subtype = spec.subtype
             self.diagram_family = spec.family
         else:
-            self.diagram_subtype = canonical_subtype(self.diagram_subtype)
+            self.diagram_subtype = "concept_diagram"
+            if not self.diagram_family:
+                self.diagram_family = "knowledge"
         if not self.diagram_type:
             self.diagram_type = subtype_to_diagram_type(self.diagram_subtype)
 
@@ -149,4 +152,19 @@ class ClassificationRecord:
             out["pipeline_trace"] = self.pipeline_trace
         if self.structural_critic:
             out["structural_critic"] = self.structural_critic
+        for key in (
+            "primary_type",
+            "secondary_type",
+            "do_not_draw_as",
+            "layout_risks",
+            "layout_script",
+            "layout_agent_fallback",
+            "diagram_spec",
+            "template_id",
+            "diagram_spec_source",
+            "diagram_spec_compiler_fallback",
+        ):
+            value = self.parsed_spec.get(key) or self.prompt_spec.get(key)
+            if value not in (None, "", [], {}):
+                out[key] = value
         return out

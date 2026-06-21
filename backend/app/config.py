@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8-sig", extra="ignore")
 
     DATABASE_URL: str = "postgresql+psycopg://postgres:dev@localhost:5432/autobooker"
     JWT_SECRET: str = "change-me"
@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     BAIDU_API_KEY: str = ""
     BAIDU_BASE_URL: str = "https://qianfan.baidubce.com/v2"
 
+    # 智灵网关（OpenAI 兼容统一模型接口）
+    ZEELIN_API_KEY: str = ""
+    ZEELIN_BASE_URL: str = "https://getways-jumu.zeelin.cn/v1"
+    ZEELIN_CHAT_MODEL: str = "DeepSeek-V4-Pro"
+    ZEELIN_IMAGE_MODEL: str = "gpt-image-2"
+    ZEELIN_IMAGE_SIZE: str = "auto"
+
     # OpenAI
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
@@ -63,7 +70,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
     FIGURES_DIR: str = ""
     INTENT_MODEL: str = ""
-    """FIGURE 插图管道：openai | wanx | auto（有 OPENAI_API_KEY 时默认 openai）。"""
+    """FIGURE 插图管道：zeelin | openai | wanx | auto（有 ZEELIN_API_KEY 时默认 zeelin）。"""
     FIGURE_IMAGE_PROVIDER: str = "auto"
     OPENAI_IMAGE_MODEL: str = "gpt-image-1"
     OPENAI_IMAGE_SIZE: str = "1024x1024"

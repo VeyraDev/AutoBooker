@@ -12,14 +12,14 @@ from app.services.figures.intent.taxonomy import SUBTYPE_TO_RENDERER
 
 
 def test_canonical_subtype_count_matches_docs():
-    # docs/分类.md 主枚举 + swot / attention_matrix
-    assert len(CANONICAL_SUBTYPES) == 14
+    # V3 文档主枚举 + chart / screenshot
+    assert len(CANONICAL_SUBTYPES) == 12
 
 
 def test_every_canonical_has_renderer_and_pipeline():
     for subtype, spec in FIGURE_TYPE_CATALOG.items():
         assert spec.renderer
-        assert spec.pipeline in {"structured", "chart", "illustration"}
+        assert spec.pipeline in {"structured", "chart", "illustration", "upload"}
         assert spec.family
         if spec.pipeline == "structured":
             assert spec.parser, f"{subtype} 缺少 parser"
@@ -28,6 +28,8 @@ def test_every_canonical_has_renderer_and_pipeline():
             assert spec.renderer.endswith("chart")
         if spec.pipeline == "illustration":
             assert spec.renderer == "illustration.image_api"
+        if spec.pipeline == "upload":
+            assert spec.renderer == "upload"
 
 
 def test_aliases_map_to_canonical_not_new_types():

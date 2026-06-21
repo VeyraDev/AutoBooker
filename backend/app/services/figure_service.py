@@ -386,12 +386,14 @@ def is_chapter_body_empty(content: dict[str, Any] | None) -> bool:
     """正文是否实质为空（仅剩空白或段落 id 占位）。"""
     if not content or not isinstance(content, dict):
         return True
-    text = _strip_pid_comments(str(content.get("text") or ""))
+    text = _strip_pid_comments(str(content.get("text") or "")).strip()
     if len(text) > 40:
         return False
     tj = content.get("tiptap_json")
     if not isinstance(tj, dict) or tj.get("type") != "doc":
         return len(text) == 0
+    if text and not (tj.get("content") or []):
+        return False
     from app.services.tiptap_convert import tiptap_json_to_markdown
 
     md = _strip_pid_comments(tiptap_json_to_markdown(tj))

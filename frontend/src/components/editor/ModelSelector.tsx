@@ -2,7 +2,13 @@ import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
-import { formatAiModelLabel, isKnownAiModel, normalizeAiModelValue, type LlmModelsResponse } from "@/api/config";
+import {
+  aiModelOptionValue,
+  formatAiModelLabel,
+  isKnownAiModel,
+  normalizeAiModelValue,
+  type LlmModelsResponse,
+} from "@/api/config";
 
 const DEFAULT_TRIGGER =
   "input flex h-9 min-w-[9rem] max-w-[11rem] cursor-pointer items-center justify-between gap-1 py-1 pl-2 pr-2 text-xs";
@@ -144,7 +150,7 @@ export default function ModelSelector({
                     {provider.region === "cn" ? `国内 · ${provider.label}` : `国外 · ${provider.label}`}
                   </div>
                   {provider.models.map((model) => {
-                    const optionValue = `${provider.id}:${model.id}`;
+                    const optionValue = aiModelOptionValue(provider, model);
                     const selected = optionValue === value;
                     return (
                       <button

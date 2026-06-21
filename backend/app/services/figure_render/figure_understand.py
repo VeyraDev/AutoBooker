@@ -1,5 +1,3 @@
-"""已废弃：请使用 app.services.figures.pipeline.orchestrator。"""
+"""Compatibility wrapper for legacy figure understanding helpers."""
 
-from app.services.figures.pipeline.orchestrator import classify_figure_description as understand_figure
-
-__all__ = ["understand_figure"]
+from app.services.figures.render.legacy_svg.figure_understand import *  # noqa: F401,F403

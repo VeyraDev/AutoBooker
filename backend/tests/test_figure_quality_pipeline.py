@@ -31,7 +31,7 @@ from app.services.figures.render.structured.grammar import (
     generate_timeline_diagram,
 )
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
-from app.services.figure_render.figure_templates.structured_diagram import generate_structured_diagram
+from app.services.figures.render.legacy_svg.figure_templates.structured_diagram import generate_structured_diagram
 from app.services.tiptap_convert import _docx_figure_size
 
 
@@ -253,9 +253,9 @@ def test_registry_routes_subtypes_to_grammar_parsers():
     samples = [
         (DiagramIntent("workflow", "process_flow", title="流程"), "stages"),
         (DiagramIntent("knowledge", "mechanism_diagram", title="机制"), "steps"),
-        (DiagramIntent("knowledge", "knowledge_graph", title="关系"), "concepts"),
+        (DiagramIntent("knowledge", "concept_diagram", title="关系"), "nodes"),
         (DiagramIntent("knowledge", "infographic", title="信息图"), "blocks"),
-        (DiagramIntent("architecture", "rag", title="RAG 架构"), "layers"),
+        (DiagramIntent("architecture", "system_architecture", title="RAG 架构"), "layers"),
     ]
     for intent, expected_key in samples:
         spec = parse_diagram(PipelineContext(description="", normalized_input="输入→处理→输出", use_llm=False), intent).parsed_spec
@@ -280,15 +280,26 @@ def test_comparison_attention_and_infographic_do_not_fall_back_to_generic_relati
     assert "center" not in i_spec
 
 
-def test_renderer_keys_route_subtypes_to_grammar_renderers():
-    assert resolve_renderer_key("timeline_roadmap") == "structured.timeline"
-    assert resolve_renderer_key("taxonomy_map") == "structured.taxonomy"
-    assert resolve_renderer_key("comparison_matrix") == "structured.comparison"
-    assert resolve_renderer_key("system_architecture") == "structured.architecture"
-    assert resolve_renderer_key("knowledge_graph") == "structured.network"
-    assert resolve_renderer_key("infographic") == "structured.infographic"
-    assert resolve_renderer_key("rag") == "structured.architecture"
-    assert resolve_renderer_key("transformer") == "structured.transformer"
+def test_renderer_keys_route_non_chart_subtypes_to_image_api():
+    assert resolve_renderer_key("chart", has_numeric_data=True) == "structured.chart"
+    assert resolve_renderer_key("chart") == "need_data"
+    assert resolve_renderer_key("screenshot") == "upload"
+    for subtype in [
+        "timeline_roadmap",
+        "taxonomy_map",
+        "comparison_matrix",
+        "system_architecture",
+        "infographic",
+        "process_flow",
+        "mechanism_diagram",
+        "concept_diagram",
+        "decision_tree",
+        "scene_illustration",
+    ]:
+        assert resolve_renderer_key(subtype) == "illustration.image_api"
+
+    for old_alias in ["knowledge_graph", "rag", "transformer", "swot", "attention_matrix"]:
+        assert resolve_renderer_key(old_alias) == "illustration.image_api"
 
 
 def test_grammar_renderers_create_png_outputs(tmp_path: Path):
@@ -372,7 +383,7 @@ def test_grammar_renderers_create_png_outputs(tmp_path: Path):
         assert height >= 300
 
 
-def test_classification_record_adds_quality_diagnostics_for_missing_flow_edges():
+def test_classification_record_uses_image_api_renderer_for_v3_non_chart_types():
     ctx = PipelineContext(
         description="",
         normalized_input="RAG pipeline：用户提问→向量化→检索→生成",
@@ -394,8 +405,10 @@ def test_classification_record_adds_quality_diagnostics_for_missing_flow_edges()
     record = build_classification_record(ctx, intent, parsed).to_json()
 
     assert record["prompt_spec"]["title"] == "RAG检索增强生成pipeline"
-    assert "edge_gap" in record["quality_flags"]
-    assert record["layout_strategy"] == "TB"
+    assert record["renderer"] == "illustration.image_api"
+    assert record["prompt_spec"]["output_format"] == "png"
+    assert "edge_gap" not in record["quality_flags"]
+    assert record["layout_strategy"]
 
 
 def test_low_text_structured_visual_can_route_to_image_api():
@@ -417,7 +430,7 @@ def test_low_text_structured_visual_can_route_to_image_api():
     record = build_classification_record(ctx, intent, parsed).to_json()
 
     assert record["renderer"] == "illustration.image_api"
-    assert "image_api_structured_visual" in record["quality_flags"]
+    assert "image_api_structured_visual" not in record["quality_flags"]
     assert record["prompt_spec"]["visual_description"] == "低文字流程视觉化"
 
 

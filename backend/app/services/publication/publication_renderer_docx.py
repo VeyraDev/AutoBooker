@@ -12,14 +12,20 @@ from docx.shared import Pt, RGBColor
 from app.services.publication.book_ast import AstBlock, BookAst
 from app.services.publication.publication_styles import (
     BODY_PT,
+    BOOK_TITLE_PT,
     CAPTION_PT,
     CHAPTER_TITLE_PT,
     DOC_BODY_FONT,
+    FIFTH_TITLE_PT,
     FIRST_LINE_INDENT_PT,
+    FOURTH_TITLE_PT,
     SECTION_TITLE_PT,
+    SIXTH_TITLE_PT,
+    SUBSECTION_TITLE_PT,
 )
 from app.services.tiptap_convert import (
     _add_code_paragraph,
+    _add_inline_to_paragraph,
     append_tiptap_to_document,
     docx_block,
     docx_figure_image_only,
@@ -78,6 +84,47 @@ def _add_body(doc: Document, text: str) -> None:
     _style_docx_run(run, size_pt=BODY_PT)
 
 
+_HEADING_STYLE = {
+    1: (CHAPTER_TITLE_PT, True, WD_ALIGN_PARAGRAPH.CENTER, 12, 8),
+    2: (SECTION_TITLE_PT, True, WD_ALIGN_PARAGRAPH.CENTER, 10, 6),
+    3: (SUBSECTION_TITLE_PT, True, WD_ALIGN_PARAGRAPH.LEFT, 8, 5),
+    4: (FOURTH_TITLE_PT, True, WD_ALIGN_PARAGRAPH.LEFT, 8, 5),
+    5: (FIFTH_TITLE_PT, False, WD_ALIGN_PARAGRAPH.LEFT, 6, 4),
+    6: (SIXTH_TITLE_PT, False, WD_ALIGN_PARAGRAPH.LEFT, 6, 4),
+}
+
+
+def _heading_level(block: AstBlock, fallback: int) -> int:
+    node = block.attrs.get("tiptap_node")
+    if isinstance(node, dict):
+        raw = (node.get("attrs") or {}).get("level")
+        try:
+            return max(1, min(6, int(raw)))
+        except Exception:
+            pass
+    return max(1, min(6, block.level or fallback))
+
+
+def _add_publication_heading(
+    doc: Document,
+    text: str,
+    *,
+    level: int,
+    node: dict | None = None,
+) -> None:
+    size_pt, bold, align, space_before, space_after = _HEADING_STYLE.get(level, _HEADING_STYLE[3])
+    p = doc.add_paragraph()
+    p.alignment = align
+    p.paragraph_format.space_before = Pt(space_before)
+    p.paragraph_format.space_after = Pt(space_after)
+    if isinstance(node, dict) and node.get("content"):
+        _add_inline_to_paragraph(p, node.get("content"), size_pt=size_pt)
+    else:
+        p.add_run(text)
+    for r in p.runs:
+        _style_docx_run(r, size_pt=size_pt, bold=bold)
+
+
 def render_ast_to_docx(ast: BookAst) -> bytes:
     doc = Document()
     _init_docx_publication_fonts(doc)
@@ -87,30 +134,19 @@ def render_ast_to_docx(ast: BookAst) -> bytes:
             p = doc.add_paragraph(block.text)
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             for r in p.runs:
-                _style_docx_run(r, size_pt=22, bold=True)
+                _style_docx_run(r, size_pt=BOOK_TITLE_PT, bold=True)
         elif role == "preface_title":
-            p = doc.add_paragraph(block.text)
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            for r in p.runs:
-                _style_docx_run(r, size_pt=18, bold=True)
+            _add_publication_heading(doc, block.text, level=1)
         elif role == "chapter_title":
-            p = doc.add_paragraph(block.text)
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            for r in p.runs:
-                _style_docx_run(r, size_pt=CHAPTER_TITLE_PT, bold=True)
+            _add_publication_heading(doc, block.text, level=1)
         elif role in ("section_title", "subsection_title"):
             node = block.attrs.get("tiptap_node")
-            if isinstance(node, dict):
-                docx_block(doc, node)
-            else:
-                p = doc.add_paragraph(block.text)
-                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                for r in p.runs:
-                    _style_docx_run(
-                        r,
-                        size_pt=SECTION_TITLE_PT if role == "section_title" else 13,
-                        bold=True,
-                    )
+            _add_publication_heading(
+                doc,
+                block.text,
+                level=_heading_level(block, 2 if role == "section_title" else 3),
+                node=node if isinstance(node, dict) else None,
+            )
         elif role == "body":
             node = block.attrs.get("tiptap_node")
             if isinstance(node, dict):

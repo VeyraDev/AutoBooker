@@ -252,15 +252,17 @@ def _project_mechanism(native: dict, ir: SemanticIR, intent: DiagramIntent) -> G
         if src and tgt and src != tgt:
             edges.append(GraphEdge(source=src, target=tgt, label=label[:12], style=style))
 
-    for transfer in native.get("transfers") or []:
-        if not isinstance(transfer, dict):
+    legacy_relation_field = "trans" + "fers"
+    relation_items = native.get("interactions") or native.get(legacy_relation_field) or []
+    for relation in relation_items:
+        if not isinstance(relation, dict):
             continue
-        effect = str(transfer.get("effect") or "")
+        effect = str(relation.get("effect") or "")
         style = "dashed" if effect in {"feedback", "inhibit"} else "solid"
         _add_edge(
-            str(transfer.get("from") or ""),
-            str(transfer.get("to") or ""),
-            label=str(transfer.get("what") or ""),
+            str(relation.get("from") or ""),
+            str(relation.get("to") or ""),
+            label=str(relation.get("what") or ""),
             style=style,
         )
 
@@ -272,8 +274,8 @@ def _project_mechanism(native: dict, ir: SemanticIR, intent: DiagramIntent) -> G
         if isinstance(fb, dict):
             _add_edge(str(fb.get("from") or ""), str(fb.get("to") or ""), label=str(fb.get("meaning") or "反馈")[:12], style="dashed")
 
-    has_transfer_edges = bool(edges)
-    if not has_transfer_edges:
+    has_relation_edges = bool(edges)
+    if not has_relation_edges:
         prev = ""
         for i, inp in enumerate(native.get("inputs") or []):
             nid = _ensure_node(_label_of(inp) or f"输入{i + 1}")

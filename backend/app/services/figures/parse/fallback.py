@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from app.services.figure_render.figure_structure import infer_structured_spec
+from app.services.figures.render.legacy_svg.figure_structure import infer_structured_spec
 from app.services.figures.schemas.diagram import DiagramIntent, ParsedDiagram, PipelineContext
 
 _STOP_CN = {"一个", "一种", "可以", "通过", "进行", "使用", "需要", "包括", "以及", "之间", "关系", "示意图", "核心"}

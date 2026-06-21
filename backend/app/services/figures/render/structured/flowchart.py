@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.services.figure_render.flowchart import generate_flowchart as _generate_flowchart
+from app.services.figures.render.legacy_svg.flowchart import generate_flowchart as _generate_flowchart
 from app.services.figures.render.svg_export import try_export_graphviz_svg
 
 

@@ -1,7 +1,7 @@
 """Compatibility shim for legacy imports.
 
-RAG is not a parser family. It is parsed as architecture/pipeline grammar and
-may still render through the RAG renderer when the subtype requests it.
+Specific domains are parsed as architecture or pipeline grammar, not as parser
+families.
 """
 
 from __future__ import annotations

@@ -325,12 +325,12 @@ content_brief 格式：
 {
 "actors": [],
 "states": [],
-"transfers": [
+"作用关系": [
 {
-"from": "",
-"to": "",
-"what": "",
-"effect": "activate | inhibit | transform | aggregate | attend | feedback | update"
+"来源": "",
+"目标": "",
+"传递内容": "",
+"作用": "激活 | 抑制 | 转化 | 聚合 | 关注 | 反馈 | 更新"
 }
 ],
 "feedbacks": [
@@ -418,5 +418,5 @@ content_brief 格式：
 不要输出 SVG。
 不要用统一 objects/relations 替代不同图类型结构。
 不要编造用户没有给出的事实数据。
-不要针对具体场景硬编码，例如 RAG、Transformer、LoRA。
+不要针对具体场景硬编码。
 要抽象为通用模式：shared_resource、loop_back、parallel_merge、comparison_matrix、timeline_axis、balanced_tree。

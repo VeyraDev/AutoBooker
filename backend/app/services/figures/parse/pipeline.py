@@ -1,7 +1,7 @@
 """Pipeline / workflow parser.
 
 This is a grammar parser: it extracts ordered stages, branches, and feedback
-links without caring whether the domain is registration, training, RAG, or ops.
+links without caring about the domain topic.
 """
 
 from __future__ import annotations

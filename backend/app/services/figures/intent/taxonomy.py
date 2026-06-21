@@ -1,15 +1,16 @@
 """Diagram family / subtype 与 renderer 映射。
 
-原则：分类只表达“画什么”，renderer 只表达“怎么画”。
-书稿内页中，含结构/文字的图尽量走结构化渲染；只有真正的场景氛围图走 Image API。
+分类只表达“画什么”。默认生成出口按 V3 文档收敛：
+chart 继续走 Matplotlib/结构化数据图，其余可生成图类走 Image API。
+旧结构化 renderer 常量保留给旧管线和显式回退使用。
 """
 
 from __future__ import annotations
 
 # Renderer 键（单一真相）
 RENDERER_STRUCTURED_GENERIC = "structured.generic_graph"
-RENDERER_STRUCTURED_TRANSFORMER = "structured.transformer"
-RENDERER_STRUCTURED_RAG = "structured.rag"
+RENDERER_STRUCTURED_DUAL_STACK = "structured.dual_stack"
+RENDERER_STRUCTURED_THREE_COLUMN = "structured.three_column"
 RENDERER_STRUCTURED_SWOT = "structured.swot"
 RENDERER_STRUCTURED_MATRIX = "structured.matrix"
 RENDERER_STRUCTURED_FLOWCHART = "structured.flowchart"
@@ -20,14 +21,16 @@ RENDERER_STRUCTURED_COMPARISON = "structured.comparison"
 RENDERER_STRUCTURED_ARCHITECTURE = "structured.architecture"
 RENDERER_STRUCTURED_NETWORK = "structured.network"
 RENDERER_STRUCTURED_INFOGRAPHIC = "structured.infographic"
+RENDERER_INFOGRAPHIC_TEMPLATE = "infographic.template"
+RENDERER_GENERIC_COMPOSITOR = "generic.compositor"
 RENDERER_ILLUSTRATION = "illustration.image_api"
 RENDERER_NEED_DATA = "need_data"
 RENDERER_UPLOAD = "upload"
 
 STRUCTURED_RENDERERS = frozenset({
     RENDERER_STRUCTURED_GENERIC,
-    RENDERER_STRUCTURED_TRANSFORMER,
-    RENDERER_STRUCTURED_RAG,
+    RENDERER_STRUCTURED_DUAL_STACK,
+    RENDERER_STRUCTURED_THREE_COLUMN,
     RENDERER_STRUCTURED_SWOT,
     RENDERER_STRUCTURED_MATRIX,
     RENDERER_STRUCTURED_FLOWCHART,
@@ -38,9 +41,10 @@ STRUCTURED_RENDERERS = frozenset({
     RENDERER_STRUCTURED_ARCHITECTURE,
     RENDERER_STRUCTURED_NETWORK,
     RENDERER_STRUCTURED_INFOGRAPHIC,
+    RENDERER_GENERIC_COMPOSITOR,
 })
 
-# V2 recommended subtype set. Keep old aliases below for compatibility.
+# V3 canonical structured diagram subtype set. Keep old aliases below for compatibility.
 STRUCTURAL_SUBTYPES = frozenset({
     "concept_diagram",
     "mechanism_diagram",
@@ -51,48 +55,21 @@ STRUCTURAL_SUBTYPES = frozenset({
     "timeline_roadmap",
     "decision_tree",
     "infographic",
-    "mindmap",
-    "knowledge_graph",
-    "org_chart",
-    "hierarchy_chart",
 })
 
 SUBTYPE_TO_RENDERER: dict[str, str] = {
-    # generic structured book diagrams
-    "concept_diagram": RENDERER_STRUCTURED_GENERIC,
-    "mechanism_diagram": RENDERER_STRUCTURED_GENERIC,
-    "process_flow": RENDERER_STRUCTURED_GENERIC,
-    "business_workflow": RENDERER_STRUCTURED_GENERIC,
-    "system_architecture": RENDERER_STRUCTURED_ARCHITECTURE,
-    "microservice_architecture": RENDERER_STRUCTURED_ARCHITECTURE,
-    "comparison_matrix": RENDERER_STRUCTURED_COMPARISON,
-    "quadrant_matrix": RENDERER_STRUCTURED_SWOT,
-    "taxonomy_map": RENDERER_STRUCTURED_TAXONOMY,
-    "mindmap": RENDERER_STRUCTURED_TAXONOMY,
-    "knowledge_graph": RENDERER_STRUCTURED_NETWORK,
-    "timeline_roadmap": RENDERER_STRUCTURED_TIMELINE,
-    "timeline": RENDERER_STRUCTURED_TIMELINE,
-    "roadmap": RENDERER_STRUCTURED_TIMELINE,
-    "org_chart": RENDERER_STRUCTURED_TAXONOMY,
-    "hierarchy_chart": RENDERER_STRUCTURED_TAXONOMY,
-    "decision_tree": RENDERER_STRUCTURED_GENERIC,
-    "decision_flow": RENDERER_STRUCTURED_GENERIC,
-    "infographic": RENDERER_STRUCTURED_INFOGRAPHIC,
-    "chapter_summary": RENDERER_STRUCTURED_INFOGRAPHIC,
-    # specialized structured diagrams
-    "transformer": RENDERER_STRUCTURED_TRANSFORMER,
-    "rag": RENDERER_STRUCTURED_ARCHITECTURE,
-    "agent": RENDERER_STRUCTURED_ARCHITECTURE,
-    "swot": RENDERER_STRUCTURED_SWOT,
-    "attention_matrix": RENDERER_STRUCTURED_MATRIX,
-    "chart": RENDERER_STRUCTURED_CHART,
-    # illustration only when the purpose is atmosphere / concrete scene
+    "concept_diagram": RENDERER_ILLUSTRATION,
+    "mechanism_diagram": RENDERER_ILLUSTRATION,
+    "process_flow": RENDERER_ILLUSTRATION,
+    "system_architecture": RENDERER_ILLUSTRATION,
+    "comparison_matrix": RENDERER_ILLUSTRATION,
+    "taxonomy_map": RENDERER_ILLUSTRATION,
+    "timeline_roadmap": RENDERER_ILLUSTRATION,
+    "decision_tree": RENDERER_ILLUSTRATION,
+    "infographic": RENDERER_ILLUSTRATION,
     "scene_illustration": RENDERER_ILLUSTRATION,
-    "case_scene": RENDERER_ILLUSTRATION,
-    "future_scene": RENDERER_ILLUSTRATION,
-    "human_ai_scene": RENDERER_ILLUSTRATION,
-    # legacy alias: do not send concept to image API anymore
-    "concept_illustration": RENDERER_STRUCTURED_GENERIC,
+    "chart": RENDERER_STRUCTURED_CHART,
+    "screenshot": RENDERER_UPLOAD,
 }
 
 FAMILY_DEFAULT_SUBTYPE: dict[str, str] = {
@@ -102,7 +79,7 @@ FAMILY_DEFAULT_SUBTYPE: dict[str, str] = {
     "matrix": "comparison_matrix",
     "knowledge": "concept_diagram",
     "timeline": "timeline_roadmap",
-    "organization": "org_chart",
+    "organization": "taxonomy_map",
     "illustration": "scene_illustration",
     "data": "chart",
 }
@@ -113,23 +90,24 @@ SUBTYPE_TO_LEGACY_IMAGE_TYPE: dict[str, str] = {
     "concept_illustration": "concept_diagram",
     "mechanism_diagram": "mechanism_diagram",
     "transformer": "mechanism_diagram",
+    "attention_matrix": "mechanism_diagram",
     "rag": "system_architecture",
     "agent": "system_architecture",
     "system_architecture": "system_architecture",
+    "microservice_architecture": "system_architecture",
     "process_flow": "process_flow",
     "business_workflow": "process_flow",
     "decision_tree": "decision_tree",
     "swot": "comparison_matrix",
     "comparison_matrix": "comparison_matrix",
     "quadrant_matrix": "comparison_matrix",
-    "attention_matrix": "matrix_diagram",
     "taxonomy_map": "taxonomy_map",
     "mindmap": "taxonomy_map",
-    "knowledge_graph": "taxonomy_map",
+    "knowledge_graph": "concept_diagram",
     "timeline": "timeline_roadmap",
     "roadmap": "timeline_roadmap",
     "timeline_roadmap": "timeline_roadmap",
-    "chart": "data_visualization",
+    "chart": "chart",
     "scene_illustration": "scene_illustration",
     "case_scene": "scene_illustration",
     "future_scene": "scene_illustration",
@@ -138,6 +116,8 @@ SUBTYPE_TO_LEGACY_IMAGE_TYPE: dict[str, str] = {
     "chapter_summary": "infographic",
     "org_chart": "taxonomy_map",
     "hierarchy_chart": "taxonomy_map",
+    "classification_diagram": "taxonomy_map",
+    "screenshot": "screenshot",
 }
 
 
@@ -148,14 +128,16 @@ DIAGRAM_TYPE_TO_SUBTYPE: dict[str, str] = {
     "architecture": "system_architecture",
     "dataflow": "process_flow",
     "sequence": "process_flow",
-    "hierarchy": "org_chart",
+    "hierarchy": "taxonomy_map",
     "taxonomy": "taxonomy_map",
+    "classification": "taxonomy_map",
     "comparison": "comparison_matrix",
-    "matrix": "swot",
+    "matrix": "comparison_matrix",
     "timeline": "timeline_roadmap",
     "illustration": "scene_illustration",
     "chart": "chart",
     "data": "chart",
+    "screenshot": "screenshot",
 }
 
 SUBTYPE_TO_DIAGRAM_TYPE: dict[str, str] = {
@@ -167,16 +149,16 @@ SUBTYPE_TO_DIAGRAM_TYPE: dict[str, str] = {
     "microservice_architecture": "architecture",
     "rag": "architecture",
     "agent": "architecture",
-    "transformer": "architecture",
+    "transformer": "flowchart",
     "taxonomy_map": "taxonomy",
     "mindmap": "taxonomy",
     "knowledge_graph": "taxonomy",
     "org_chart": "hierarchy",
     "hierarchy_chart": "hierarchy",
     "comparison_matrix": "comparison",
-    "swot": "matrix",
-    "quadrant_matrix": "matrix",
-    "attention_matrix": "matrix",
+    "swot": "comparison",
+    "quadrant_matrix": "comparison",
+    "attention_matrix": "flowchart",
     "timeline_roadmap": "timeline",
     "timeline": "timeline",
     "roadmap": "timeline",
@@ -188,6 +170,7 @@ SUBTYPE_TO_DIAGRAM_TYPE: dict[str, str] = {
     "case_scene": "illustration",
     "future_scene": "illustration",
     "human_ai_scene": "illustration",
+    "screenshot": "screenshot",
 }
 
 
@@ -214,6 +197,8 @@ def canonical_subtype(diagram_subtype: str) -> str:
         "sequence": "process_flow",
         "pipeline": "process_flow",
         "taxonomy": "taxonomy_map",
+        "classification": "taxonomy_map",
+        "classification_diagram": "taxonomy_map",
         "mindmap": "taxonomy_map",
         "mind_map": "taxonomy_map",
         "org_chart": "taxonomy_map",
@@ -231,18 +216,25 @@ def canonical_subtype(diagram_subtype: str) -> str:
         "chapter_summary": "infographic",
         "decision_flow": "decision_tree",
         "comparison": "comparison_matrix",
-        "quadrant_matrix": "swot",
+        "quadrant_matrix": "comparison_matrix",
+        "swot": "comparison_matrix",
         "data_visualization": "chart",
+        "screenshot_placeholder": "screenshot",
         # 领域词归并（非独立类型）
         "rag": "system_architecture",
         "agent": "system_architecture",
         "microservice_architecture": "system_architecture",
         "transformer": "mechanism_diagram",
+        "attention": "mechanism_diagram",
+        "attention_matrix": "mechanism_diagram",
+        "knowledge_graph": "concept_diagram",
+        "relationship_map": "concept_diagram",
+        "network": "concept_diagram",
     }
     if st in aliases:
         return aliases[st]
     if st == "matrix":
-        return "swot"
+        return "comparison_matrix"
     return st or "concept_diagram"
 
 
@@ -252,10 +244,7 @@ def resolve_renderer_key(diagram_subtype: str, *, has_numeric_data: bool = False
         return RENDERER_NEED_DATA
     if raw in SUBTYPE_TO_RENDERER:
         return SUBTYPE_TO_RENDERER[raw]
-    st = canonical_subtype(diagram_subtype)
-    if st == "chart" and not has_numeric_data:
-        return RENDERER_NEED_DATA
-    return SUBTYPE_TO_RENDERER.get(st, RENDERER_STRUCTURED_GENERIC)
+    return RENDERER_ILLUSTRATION
 
 
 def is_structured_renderer(renderer: str) -> bool:

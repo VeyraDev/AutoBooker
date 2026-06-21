@@ -15,7 +15,7 @@ from app.services.figure_service import (
     renumber_chapter_figures_from_tiptap,
 )
 from app.services.markdown_to_tiptap import _parse_inline_bold
-from app.services.table_caption_ai import suggest_table_caption
+from app.services.table_caption_ai import suggest_figure_caption, suggest_table_caption
 from app.services.tiptap_convert import _inline_to_markdown, tiptap_json_to_markdown
 
 TABLE_CAPTION_RE = re.compile(r"^表\s*(\d+)\s*[-–—]\s*(\d+)\s*[:：]\s*(.+)$")
@@ -41,30 +41,59 @@ def _short_title(text: str, *, max_len: int = 48, fallback: str = "示意图") -
     return base
 
 
-def _table_title_from_node(table: dict[str, Any]) -> str:
-    rows = [
-        r
-        for r in (table.get("content") or [])
-        if isinstance(r, dict) and r.get("type") == "tableRow"
-    ]
-    if not rows:
-        return "附表"
-    first = rows[0]
-    cells = [
-        c
-        for c in (first.get("content") or [])
-        if isinstance(c, dict) and c.get("type") in ("tableCell", "tableHeader")
-    ]
-    headers: list[str] = []
-    for cell in cells:
-        for sub in cell.get("content") or []:
-            if isinstance(sub, dict) and sub.get("type") == "paragraph":
-                t = _inline_to_markdown(sub.get("content")).strip()
-                if t:
-                    headers.append(t)
-    if headers:
-        return "、".join(headers[:3])[:48]
-    return "附表"
+_PROMPT_LIKE_RE = re.compile(
+    r"\[(?:DIAGRAM|FIGURE|FLOWCHART|CHART|SCREENSHOT)\s*:|请.{0,12}(生成|绘制|画)|布局脚本|可见文字白名单|图类确认|用户原始输入|不要输出",
+    re.I,
+)
+_GENERIC_TITLE_RE = re.compile(
+    r"^(?:本章|章节|内容|整体|综合|核心|总体)?(?:总结|概览|概述|示意|结构|流程|关系|信息|要点)?[图表]$"
+)
+
+
+def _usable_caption_title(title: str, *, kind: str) -> str:
+    t = (title or "").strip()
+    if not t or len(t) > 32 or "\n" in t or _PROMPT_LIKE_RE.search(t):
+        return ""
+    t = re.sub(r"^(?:图|表)\s*\d+\s*[-–—－]\s*\d+\s*[:：]\s*", "", t).strip()
+    if _GENERIC_TITLE_RE.match(t):
+        return ""
+    suffix = "表" if kind == "table" else "图"
+    if not t.endswith(suffix):
+        t = t.rstrip("表图") + suffix
+    if len(t) > 32:
+        t = t[:31].rstrip("表图") + suffix
+    return t
+
+
+def _caption_from_source(text: str, *, kind: str) -> str:
+    source = (text or "").strip()
+    if not source or _PROMPT_LIKE_RE.search(source[:120]):
+        source = re.sub(r"^\[(?:DIAGRAM|FIGURE|FLOWCHART|CHART|SCREENSHOT)\s*:\s*", "", source, flags=re.I)
+        source = re.sub(r"\]\s*$", "", source).strip()
+    if not source or _GENERIC_TITLE_RE.match(source):
+        return ""
+    first = re.split(r"[。！？\n]", source, maxsplit=1)[0].strip()
+    first = re.split(r"[，,；;：:]", first, maxsplit=1)[0].strip() or first
+    return _usable_caption_title(_short_title(first, max_len=24, fallback=""), kind=kind)
+
+
+def _first_specific_text(*values: str | None) -> str:
+    for value in values:
+        text = (value or "").strip()
+        if text and not _GENERIC_TITLE_RE.match(text):
+            return text
+    return ""
+
+
+def _figure_caption_fallback(attrs: dict[str, Any]) -> str:
+    ftype = str(attrs.get("figureType") or "").lower()
+    if ftype == "flowchart":
+        return "流程示意图"
+    if ftype == "chart":
+        return "数据图"
+    if ftype == "screenshot":
+        return "界面截图"
+    return "本章示意图"
 
 
 def _make_para(text: str, *, center: bool = False) -> dict[str, Any]:
@@ -134,6 +163,35 @@ def _context_before_table(
     for j in range(table_index - 1, -1, -1):
         if j < 0:
             break
+        n = nodes[j]
+        if not isinstance(n, dict):
+            continue
+        t = n.get("type")
+        if t == "heading":
+            text = _inline_to_markdown(n.get("content")).strip()
+            if text:
+                parts.insert(0, f"[标题] {text}")
+        elif t == "paragraph":
+            text = _para_text(n)
+            if text and not _is_table_caption_para(n) and not _is_figure_caption_para(n):
+                parts.insert(0, text)
+        joined = "\n".join(parts)
+        if len(joined) >= max_chars:
+            break
+    return "\n".join(parts)[-max_chars:]
+
+
+def _context_before_figure(
+    nodes: list[dict[str, Any]],
+    figure_index: int,
+    *,
+    book: Book | None = None,
+    max_chars: int = 1200,
+) -> str:
+    parts: list[str] = []
+    if book and book.title:
+        parts.append(f"书名：{book.title}")
+    for j in range(figure_index - 1, -1, -1):
         n = nodes[j]
         if not isinstance(n, dict):
             continue
@@ -227,16 +285,36 @@ def normalize_chapter_figures_tables(
             num = f"{chapter_index}-{fig_seq}"
             attrs = dict(node.get("attrs") or {})
             fig_id = str(attrs.get("figureId") or "")
-            raw_ann = str(attrs.get("rawAnnotation") or attrs.get("caption") or "").strip()
+            fig_row = figures_by_id.get(fig_id)
+            db_raw = str(fig_row.raw_annotation if fig_row else "").strip()
+            db_caption = str(fig_row.caption if fig_row else "").strip()
+            attr_caption = str(attrs.get("caption") or "").strip()
+            raw_ann = str(attrs.get("rawAnnotation") or db_raw or "").strip()
 
             next_node = nodes[i + 1] if i + 1 < len(nodes) else None
             cap_title = ""
             if _is_figure_caption_para(next_node):
                 m = FIGURE_CAPTION_RE.match(_para_text(next_node))
-                cap_title = (m.group(3).strip() if m else "") or _short_title(raw_ann)
+                cap_title = _usable_caption_title(m.group(3).strip() if m else "", kind="figure")
                 skip_until = i + 1
             else:
-                cap_title = _short_title(str(attrs.get("caption") or raw_ann))
+                cap_title = _usable_caption_title(attr_caption, kind="figure")
+            if not cap_title:
+                for candidate in (raw_ann, db_raw, db_caption, attr_caption):
+                    cap_title = _caption_from_source(candidate, kind="figure")
+                    if cap_title:
+                        break
+            if not cap_title and book:
+                source = _first_specific_text(raw_ann, db_raw, db_caption, attr_caption)
+                if source:
+                    cap_title = suggest_figure_caption(
+                        source,
+                        book=book,
+                        context=_context_before_figure(nodes, i, book=book),
+                        fallback=_figure_caption_fallback(attrs),
+                    )
+            if not cap_title:
+                cap_title = _figure_caption_fallback(attrs)
 
             has_ref = False
             if out and out[-1].get("type") == "paragraph":
@@ -286,7 +364,7 @@ def normalize_chapter_figures_tables(
 
             if out and _is_table_caption_para(out[-1]):
                 m = TABLE_CAPTION_RE.match(_para_text(out[-1]))
-                cap_title = (m.group(3).strip() if m else "") or ""
+                cap_title = _usable_caption_title(m.group(3).strip() if m else "", kind="table")
                 if not cap_title and book:
                     cap_title = suggest_table_caption(
                         node,
@@ -294,7 +372,7 @@ def normalize_chapter_figures_tables(
                         context=_context_before_table(nodes, i, book=book),
                     )
                 elif not cap_title:
-                    cap_title = "附表"
+                    cap_title = "本章数据表"
                 out[-1] = _make_para(f"表{num}：{cap_title}", center=True)
                 has_caption = True
                 ref_idx = len(out) - 2
@@ -323,7 +401,7 @@ def normalize_chapter_figures_tables(
                         context=_context_before_table(nodes, i, book=book),
                     )
                 else:
-                    cap_title = "附表"
+                    cap_title = "本章数据表"
                 out.append(_make_para(f"表{num}：{cap_title}", center=True))
                 has_caption = True
 

@@ -179,7 +179,7 @@ def test_swot_selects_matrix_visual_grammar():
     assert {"four_quadrants", "strengths", "weaknesses", "opportunities", "threats"}.issubset(set(spec["mandatory_semantics"]))
 
 
-def test_attention_matrix_selects_heatmap_visual_grammar():
+def test_attention_matrix_alias_selects_mechanism_visual_grammar():
     brief = VisualBrief(
         diagram_type="attention_matrix",
         title="Attention",
@@ -192,10 +192,9 @@ def test_attention_matrix_selects_heatmap_visual_grammar():
     design = plan_design(native, layout, brief)
     spec = assemble_render_spec(native=native, geometry=geo, layout=layout, design=design, subtype="attention_matrix")
 
-    assert spec["render_profile"] == "svg.matrix"
-    assert spec["matrix_visual_grammar"] == "attention_heatmap"
-    assert {"row_tokens", "column_tokens", "cell_weights", "heat_scale"}.issubset(set(spec["mandatory_semantics"]))
-    assert spec["subjects"] == ["Q", "K", "V"]
+    assert spec["render_profile"] == "svg.mechanism"
+    assert spec["graph_visual_grammar"] == "mechanism"
+    assert {"stage_bands", "input_operation_output_roles", "transformation_arrows"}.issubset(set(spec["mandatory_semantics"]))
 
 
 def test_swimlane_keeps_lanes_through_render_spec():

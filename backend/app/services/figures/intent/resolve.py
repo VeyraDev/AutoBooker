@@ -4,19 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.figures.catalog.type_catalog import get_type_spec, resolve_canonical_subtype
+from app.services.figures.catalog.type_catalog import CANONICAL_SUBTYPES, get_type_spec
 from app.services.figures.intent.candidate_registry import (
     CHART_CANDIDATE_TYPES,
-    GOAL_TYPE_MAP,
     merge_candidate_lists,
     resolve_best_candidate,
     resolved_to_intent,
 )
-from app.services.figures.intent.taxonomy import (
-    FAMILY_DEFAULT_SUBTYPE,
-    canonical_subtype,
-    subtype_to_diagram_type,
-)
+from app.services.figures.intent.taxonomy import subtype_to_diagram_type
 from app.services.figures.schemas.diagram import DiagramIntent, PipelineContext
 
 _CONFIDENCE_FALLBACK_THRESHOLD = 0.55
@@ -56,8 +51,9 @@ def intent_from_subtype_hint(subtype_hint: str | None) -> DiagramIntent | None:
     raw = (subtype_hint or "").strip().lower()
     if not raw:
         return None
-    canonical = resolve_canonical_subtype(raw) or canonical_subtype(raw)
-    spec = get_type_spec(canonical)
+    if raw not in CANONICAL_SUBTYPES:
+        return None
+    spec = get_type_spec(raw)
     if not spec:
         return None
     return DiagramIntent(
@@ -96,20 +92,6 @@ def intent_from_understanding(
     if not resolved:
         if confidence < _CONFIDENCE_FALLBACK_THRESHOLD:
             return None
-        goal_key = goal.strip().lower()
-        if goal_key in GOAL_TYPE_MAP:
-            family, subtype = GOAL_TYPE_MAP[goal_key]
-            resolved_subtype = canonical_subtype(subtype)
-            return DiagramIntent(
-                family,
-                resolved_subtype,
-                max(0.55, confidence),
-                "goal_fallback",
-                title,
-                diagram_type=subtype_to_diagram_type(resolved_subtype),
-                reason=goal_key,
-                fallback_allowed=True,
-            )
         return None
 
     if confidence < _CONFIDENCE_FALLBACK_THRESHOLD and resolved.confidence < 0.75:
@@ -122,10 +104,14 @@ def intent_from_understanding(
 
 
 def resolve_intent_unified(ctx: PipelineContext, understanding: dict[str, Any]) -> DiagramIntent:
-    """统一意图入口：legacy_tag → subtype_hint → LLM understanding → goal 默认。"""
+    """统一意图入口：legacy_tag → LLM understanding → subtype_hint → goal 默认。"""
     legacy = intent_from_legacy_tag(ctx.legacy_tag, ctx)
     if legacy:
         return legacy
+
+    from_llm = intent_from_understanding(understanding, ctx)
+    if from_llm:
+        return from_llm
 
     hint_intent = intent_from_subtype_hint(ctx.subtype_hint)
     if hint_intent:
@@ -134,33 +120,13 @@ def resolve_intent_unified(ctx: PipelineContext, understanding: dict[str, Any]) 
         hint_intent.title = hint_intent.title or ctx.normalized_input[:80]
         return hint_intent
 
-    from_llm = intent_from_understanding(understanding, ctx)
-    if from_llm:
-        return from_llm
-
-    goal_key = str(understanding.get("goal") or "").strip().lower()
-    if goal_key in GOAL_TYPE_MAP:
-        family, subtype = GOAL_TYPE_MAP[goal_key]
-        subtype = canonical_subtype(subtype)
-        return DiagramIntent(
-            family,
-            subtype,
-            0.5,
-            "goal_default",
-            ctx.normalized_input[:80],
-            diagram_type=subtype_to_diagram_type(subtype),
-            reason=goal_key,
-            fallback_allowed=True,
-        )
-
-    default_subtype = FAMILY_DEFAULT_SUBTYPE.get("knowledge", "concept_diagram")
     return DiagramIntent(
         "knowledge",
-        canonical_subtype(default_subtype),
+        "concept_diagram",
         0.45,
         "default",
         ctx.normalized_input[:80],
-        diagram_type=subtype_to_diagram_type(default_subtype),
-        reason="无 LLM 候选，默认概念图",
+        diagram_type=subtype_to_diagram_type("concept_diagram"),
+        reason="no_llm_valid_v3_candidate",
         fallback_allowed=True,
     )

@@ -46,6 +46,7 @@ export interface ReviewIssue {
   char_end?: number | null;
   anchor_hash?: string | null;
   issue_fingerprint?: string | null;
+  quality_evidence?: Record<string, unknown> | null;
   detector?: string;
   confidence?: number;
   stale?: boolean;

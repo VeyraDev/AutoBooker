@@ -67,8 +67,8 @@ async def assistant(
             )
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
-                "OpenAI 图像服务连接超时。可配置代理、增大 OPENAI_IMAGE_TIMEOUT_SEC，"
-                "或设置 FIGURE_IMAGE_PROVIDER=wanx / 确保 FIGURE_IMAGE_FALLBACK_WANX=true。",
+                "图像服务连接超时。可配置代理、增大 OPENAI_IMAGE_TIMEOUT_SEC，"
+                "或设置 FIGURE_IMAGE_PROVIDER=zeelin/wanx 并确认对应 API Key 已配置。",
             ) from e
         logger.exception(
             "assistant 500 book=%s ch=%s intent=%s",

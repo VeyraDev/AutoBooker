@@ -1,4 +1,4 @@
-"""Transformer 编码器-解码器架构：书稿友好的折叠式结构图。"""
+"""旧双栈机制结构图渲染兼容层。"""
 
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ def generate_transformer_architecture(
 ) -> tuple[str, Path]:
     spec = render_spec or {}
     n_enc, n_dec = _parse_n_blocks(description, spec)
-    chart_title = title or str(spec.get("title") or "Transformer 编码器-解码器架构")
+    chart_title = title or str(spec.get("title") or "双栈机制结构图")
     enc_layers = _layer_sequence(
         spec,
         "encoder",

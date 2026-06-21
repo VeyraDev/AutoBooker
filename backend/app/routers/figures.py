@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import logging
 from pathlib import Path
 from uuid import UUID
 
@@ -47,6 +48,8 @@ from app.services.figure_service import (
     repair_figure_file,
     sync_figures_to_tiptap,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/books", tags=["figures"])
 
@@ -121,6 +124,12 @@ def generate_figure(
         )
     except FigureGenerationError as e:
         repair_figure_file(fig, db)
+        logger.warning(
+            "figure generate 422 book=%s figure=%s: %s",
+            book_id,
+            figure_id,
+            e,
+        )
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={

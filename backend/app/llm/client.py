@@ -126,19 +126,24 @@ class LLMClient:
         return out
 
     @staticmethod
-    def _openai_uses_max_completion_tokens(model_name: str) -> bool:
+    def _openai_uses_max_completion_tokens(provider_id: str, model_name: str) -> bool:
+        if provider_id != "openai":
+            return False
         m = model_name.lower()
         return m.startswith(("gpt-5", "o1", "o3", "o4"))
 
     @staticmethod
-    def _openai_omit_temperature(model_name: str) -> bool:
-        """gpt-5 / o 系列仅支持默认 temperature=1，传 0 会 400。"""
+    def _openai_omit_temperature(provider_id: str, model_name: str) -> bool:
+        if provider_id != "openai":
+            return False
+        # Native OpenAI gpt-5 / o-series models reject non-default temperature values.
         m = model_name.lower()
         return m.startswith(("gpt-5", "o1", "o3", "o4"))
 
     def _chat_openai(
         self,
         client: OpenAI,
+        provider_id: str,
         model_name: str,
         messages: list[dict[str, Any]],
         *,
@@ -149,9 +154,9 @@ class LLMClient:
             "model": model_name,
             "messages": messages,
         }
-        if not self._openai_omit_temperature(model_name):
+        if not self._openai_omit_temperature(provider_id, model_name):
             kwargs["temperature"] = temperature
-        if self._openai_uses_max_completion_tokens(model_name):
+        if self._openai_uses_max_completion_tokens(provider_id, model_name):
             kwargs["max_completion_tokens"] = max_tokens
         else:
             kwargs["max_tokens"] = max_tokens
@@ -208,6 +213,7 @@ class LLMClient:
                     client = self._get_openai(provider_id)
                     return self._chat_openai(
                         client,
+                        provider_id,
                         model_name,
                         messages,
                         max_tokens=max_tokens,
@@ -263,6 +269,7 @@ class AsyncLLMClient:
     async def _stream_openai(
         self,
         client: AsyncOpenAI,
+        provider_id: str,
         model_name: str,
         messages: list[dict[str, Any]],
         *,
@@ -274,9 +281,9 @@ class AsyncLLMClient:
             "messages": messages,
             "stream": True,
         }
-        if not LLMClient._openai_omit_temperature(model_name):
+        if not LLMClient._openai_omit_temperature(provider_id, model_name):
             kwargs["temperature"] = temperature
-        if LLMClient._openai_uses_max_completion_tokens(model_name):
+        if LLMClient._openai_uses_max_completion_tokens(provider_id, model_name):
             kwargs["max_completion_tokens"] = max_tokens
         else:
             kwargs["max_tokens"] = max_tokens
@@ -340,6 +347,7 @@ class AsyncLLMClient:
                         client = self._get_openai(provider_id)
                         async for token in self._stream_openai(
                             client,
+                            provider_id,
                             model_name,
                             messages,
                             max_tokens=max_tokens,

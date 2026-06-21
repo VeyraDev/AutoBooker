@@ -15,6 +15,6 @@ def empty_mechanism_ir() -> dict[str, Any]:
         "causal_links": [],
         "positive_feedbacks": [],
         "negative_feedbacks": [],
-        "transfers": [],
+        "interactions": [],
         "notations": [],
     }

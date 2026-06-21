@@ -92,6 +92,20 @@ class NarrativeAgent:
             max_tokens=max_tokens,
             temperature=0.55,
         )
-        if not out.strip():
+        text = out.strip()
+        if not text and max_tokens < 24000:
+            retry_tokens = min(max(max_tokens * 2, max_tokens + 4096), 24000)
+            logger.warning(
+                "narrative constitution empty for book %s; retrying with max_tokens=%s",
+                book.id,
+                retry_tokens,
+            )
+            text = self._client.chat_completion(
+                messages,
+                model=model,
+                max_tokens=retry_tokens,
+                temperature=0.55,
+            ).strip()
+        if not text:
             logger.warning("narrative constitution empty for book %s", book.id)
-        return out.strip()
+        return text

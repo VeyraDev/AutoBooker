@@ -13,7 +13,7 @@ from app.services.figures.plan.render_planner import (
     _validate_render_plan,
 )
 from app.services.figures.schemas.diagram import DiagramIntent, PipelineContext
-from app.services.figure_render.figure_templates.structured_diagram import (
+from app.services.figures.render.legacy_svg.figure_templates.structured_diagram import (
     _pick_connection_points,
     render_structured_diagram,
 )

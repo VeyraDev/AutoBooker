@@ -38,9 +38,6 @@ def render_timeline_svg(
         f'<rect width="100%" height="100%" fill="{tokens.background}"/>',
         f'<g class="timeline-directives {" ".join(directives)}"/>',
     ]
-    if title or spec.get("title"):
-        parts.append(multiline_text(fig_w / 2, 28, title or str(spec.get("title")), fill=tokens.text, max_width=fig_w - 80, font_size=16, max_lines=2))
-
     left, right = pad, fig_w - pad
     parts.append(
         f'<line x1="{left:.1f}" y1="{axis_y:.1f}" x2="{right:.1f}" y2="{axis_y:.1f}" '

@@ -40,6 +40,7 @@ from app.services import book_service
 from app.services.ai_detect import get_ai_detect_provider
 from app.services.citation_lint import lint_chapter_citation_detector
 from app.services.citation_service import list_citations_sorted
+from app.services.dedupe_service import DedupeService
 from app.services.figure_lint import lint_figures
 from app.services.review_anchor import canonical_markdown, enrich_issue_anchor, snapshot_hash
 from app.services.review_apply import apply_review_issue_text, preview_issue_application
@@ -235,6 +236,78 @@ def preview_review_issue(
         preview_required=preview["preview_required"],
         stale=preview["stale"],
         affected_dimensions=affected,
+        paragraph_id=preview["paragraph_id"],
+        paragraph_index=preview["paragraph_index"],
+        char_start=preview["char_start"],
+        char_end=preview["char_end"],
+    )
+
+
+@router.post("/{book_id}/review-issues/{issue_id}/dedupe-preview", response_model=ReviewIssuePreviewOut)
+def preview_review_issue_dedupe(
+    book_id: UUID,
+    issue_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """针对审校发现的 AI 味风险片段生成局部降重预览。"""
+    book = book_service.get_book_or_404(book_id, user, db)
+    issue = _issue_or_404(db, issue_id)
+    if not _is_ai_signature_issue(issue):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "只有 AI 味风险 issue 支持局部降 AI")
+    review = _review_or_404(db, issue.review_id)
+    ch = db.get(Chapter, issue.chapter_id)
+    if not ch:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chapter not found")
+    current_md = _chapter_markdown(ch)
+    try:
+        source_text, replacement, report = _dedupe_replacement_for_issue(book, issue, current_md)
+        preview = preview_issue_application(
+            current_markdown=current_md,
+            issue_snapshot_hash=issue.snapshot_hash,
+            quote=source_text,
+            action_type="revise",
+            replacement_text=replacement,
+            paragraph_id=issue.paragraph_id,
+            paragraph_index=issue.paragraph_index,
+            char_start=issue.char_start,
+            char_end=issue.char_end,
+        )
+    except ValueError as e:
+        issue.status = "failed"
+        db.commit()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+    affected = ["ai_signature", "style_consistency"]
+    compact_report = _compact_dedupe_report(report)
+    app = review_repository.create_application(
+        db,
+        issue=issue,
+        review=review,
+        chapter_id=ch.id,
+        before_hash=preview["before_hash"],
+        after_hash=preview["after_hash"],
+        apply_type="dedupe",
+        locator_strategy=preview["locator_strategy"],
+        locator_confidence=preview["locator_confidence"],
+        diff=preview["diff"],
+        affected_dimensions=affected,
+        score_before={"total_score": review.total_score, "dimensions": review.dimensions},
+        warning={"dedupe_report": compact_report},
+    )
+    return ReviewIssuePreviewOut(
+        issue_id=str(issue.id),
+        application_id=str(app.id),
+        quote=preview["quote"] or source_text,
+        result_text=preview["result_text"],
+        result_markdown=preview["result_markdown"],
+        preview_kind="replace",
+        diff=preview["diff"],
+        locator_strategy=preview["locator_strategy"],
+        locator_confidence=preview["locator_confidence"],
+        preview_required=preview["preview_required"],
+        stale=preview["stale"],
+        affected_dimensions=affected,
+        warning={"dedupe_report": compact_report},
         paragraph_id=preview["paragraph_id"],
         paragraph_index=preview["paragraph_index"],
         char_start=preview["char_start"],
@@ -778,6 +851,68 @@ def _replacement_for_issue(book, issue: ChapterReviewIssue, current_md: str) -> 
         context=current_md[:12000],
     )
     return result_text, preview_kind
+
+
+def _is_ai_signature_issue(issue: ChapterReviewIssue) -> bool:
+    detector = str(issue.detector or "")
+    return issue.dimension == "ai_signature" or detector.startswith("ai_detect")
+
+
+def _issue_source_text(issue: ChapterReviewIssue, current_md: str) -> str:
+    if issue.char_start is not None and issue.char_end is not None:
+        start = max(0, int(issue.char_start))
+        end = max(start, int(issue.char_end))
+        if end <= len(current_md):
+            sliced = current_md[start:end].strip()
+            if sliced:
+                return sliced
+    quote = (issue.quote or "").strip()
+    if quote:
+        return quote
+    raise ValueError("无法定位 AI 风险片段，请重新审校后再试")
+
+
+def _dedupe_context(current_md: str, source_text: str, *, radius: int = 1800) -> str:
+    pos = current_md.find(source_text)
+    if pos < 0:
+        return current_md[:4000]
+    before = current_md[max(0, pos - radius) : pos].strip()
+    after = current_md[pos + len(source_text) : pos + len(source_text) + radius].strip()
+    return f"上文：\n{before}\n\n下文：\n{after}".strip()
+
+
+def _dedupe_replacement_for_issue(
+    book,
+    issue: ChapterReviewIssue,
+    current_md: str,
+) -> tuple[str, str, dict[str, Any]]:
+    source_text = _issue_source_text(issue, current_md)
+    result = DedupeService().dedupe_text(
+        source_text,
+        client=LLMClient(),
+        chat_model=_chat_model_for_book(book),
+        context=_dedupe_context(current_md, source_text),
+    )
+    replacement = (result.text or "").strip()
+    if not replacement:
+        raise ValueError("局部降 AI 结果为空")
+    return source_text, replacement, result.report
+
+
+def _compact_dedupe_report(report: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "status",
+        "before_ai_risk",
+        "after_ai_risk",
+        "risk_delta",
+        "similarity_score",
+        "meaning_preserved",
+        "structure_preserved",
+        "warnings",
+        "facts_missing",
+        "protected_tokens_changed",
+    )
+    return {k: report.get(k) for k in keys if k in report}
 
 
 def _review_or_404(db: Session, review_id: UUID) -> ChapterReview:
