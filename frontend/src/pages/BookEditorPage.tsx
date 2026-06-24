@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { EXPORT_EXT, exportBook, getBook, updateBook, type ExportFormat } from "@/api/books";
+import { EXPORT_EXT, exportBook, getBook, updateBook, duplicateBook, type ExportFormat } from "@/api/books";
 import {
   cancelChapterGeneration,
   createChapter,
@@ -34,7 +34,6 @@ import OutlineNavBody from "@/components/editor/OutlineNavBody";
 import type { OutlineSelection } from "@/components/editor/OutlineNavBody";
 import PlanningWizard from "@/components/editor/PlanningWizard";
 import RightPanel, { AuxPanelFab, type RightPanelTab } from "@/components/editor/RightPanel";
-import { topicKey } from "@/components/editor/SetupView";
 import { getChapterGenMode, setChapterGenMode, type ChapterGenMode } from "@/lib/chapterGenMode";
 import { chapterStreamPrimaryIntent } from "@/lib/chapterStreamPrimaryIntent";
 import { useAutoSave } from "@/hooks/useAutoSave";
@@ -841,7 +840,7 @@ export default function BookEditorPage() {
                 endStreamPreviewUi();
                 setStreamingIndex(null);
                 if (payload?.truncated) {
-                  toast.warning(`第 ${ch.index} 章可能未写完，建议重新生成`);
+                  toast("第 ${ch.index} 章可能未写完，建议重新生成", { icon: "⚠️" });
                 }
                 resolve();
               },
@@ -1015,7 +1014,7 @@ export default function BookEditorPage() {
           endStreamPreviewUi();
           setStreamingIndex(null);
           if (payload?.truncated) {
-            toast.warning("本章可能未写完，建议重新生成");
+            toast("本章可能未写完，建议重新生成", { icon: "⚠️" });
           } else {
             toast.success(mode === "regenerate" ? "本章已重新生成" : "本章生成完成");
           }
@@ -1040,7 +1039,7 @@ export default function BookEditorPage() {
                     endStreamPreviewUi();
                     setStreamingIndex(null);
                     if (payload?.truncated) {
-                      toast.warning("本章可能未写完，建议重新生成");
+                      toast("本章可能未写完，建议重新生成", { icon: "⚠️" });
                     } else {
                       toast.success(mode === "regenerate" ? "本章已重新生成" : "本章生成完成");
                     }
@@ -1740,6 +1739,32 @@ export default function BookEditorPage() {
             asideStorageKey={`review_outline_aside_${bookId}`}
             leftAside={
               <>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          "将复制书稿设定与用户资料，不复制大纲和正文，原书不会改变。是否继续？",
+                        )
+                      ) {
+                        return;
+                      }
+                      void (async () => {
+                        try {
+                          const { book: newBook, message } = await duplicateBook(bookId);
+                          toast.success(message);
+                          navigate(`/app/books/${newBook.id}`);
+                        } catch {
+                          toast.error("创建副本失败");
+                        }
+                      })();
+                    }}
+                  >
+                    基于本书新建
+                  </button>
+                </div>
                 <h3 className="font-semibold text-ink">书稿设定摘要</h3>
                 <dl className="mt-3 space-y-2 text-slate-600">
                   <div>
@@ -1748,7 +1773,11 @@ export default function BookEditorPage() {
                   </div>
                   <div>
                     <dt className="text-xs text-slate-400">学科</dt>
-                    <dd>{book.discipline?.trim() || "—"}</dd>
+                    <dd>
+                      {book.disciplines?.length
+                        ? book.disciplines.join("、")
+                        : book.discipline?.trim() || "—"}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-slate-400">目标字数</dt>
@@ -1757,7 +1786,7 @@ export default function BookEditorPage() {
                   <div>
                     <dt className="text-xs text-slate-400">主题要点</dt>
                     <dd className="whitespace-pre-wrap text-xs leading-relaxed">
-                      {typeof window !== "undefined" ? window.localStorage.getItem(topicKey(bookId))?.trim() || "—" : "—"}
+                      {book.topic_brief?.trim() || "—"}
                     </dd>
                   </div>
                 </dl>

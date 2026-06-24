@@ -18,6 +18,9 @@ class ReferenceFileOut(BaseModel):
     filename: str
     file_type: str
     ingest_kind: str = "reference"
+    file_purposes: list[str] | None = None
+    outline_usage: str | None = None
+    user_note: str | None = None
     parse_status: ParseStatusOut
     error_message: str | None
     parsed_at: datetime | None

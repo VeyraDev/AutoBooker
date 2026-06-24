@@ -67,7 +67,7 @@ def build_book_memory(book_id: uuid.UUID, chapter_index: int, db: Session) -> di
     )
     if not topic_tags_line.strip():
         topic_tags_line = "（未选标签）"
-    user_material = (book.user_material or "").strip() or "（无）"
+    user_material = "（无）"
 
     narrative_constitution = (book.narrative_constitution or "").strip()
 

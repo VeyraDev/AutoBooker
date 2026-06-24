@@ -2,7 +2,8 @@ import { ChevronLeft, ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import OutlineReviewPanel from "@/components/editor/OutlineReviewPanel";
-import SetupView, { audienceKey, topicKey, type SetupViewActions } from "@/components/editor/SetupView";
+import SetupView, { type SetupViewActions } from "@/components/editor/SetupView";
+import { consumePendingAutoGenerate } from "@/components/common/NewBookDialog";
 import { setChapterGenMode, type ChapterGenMode } from "@/lib/chapterGenMode";
 import type { Book } from "@/types/book";
 import type { OutlineBookResponse } from "@/types/outline";
@@ -67,7 +68,12 @@ export default function PlanningWizard({
   /** 从 Step2「返回书稿设定」回到 Step1 时，右下角 FAB 仅为「保存设定」 */
   const [step1SaveOnlyFab, setStep1SaveOnlyFab] = useState(false);
   const [startMenuOpen, setStartMenuOpen] = useState(false);
+  const [pendingAuto, setPendingAuto] = useState(false);
   const setupActionsRef = useRef<SetupViewActions | null>(null);
+
+  useEffect(() => {
+    setPendingAuto(consumePendingAutoGenerate(bookId));
+  }, [bookId]);
 
   useEffect(() => {
     if (outline && outline.chapters.length > 0 && book.status === "outline_ready") {
@@ -81,8 +87,8 @@ export default function PlanningWizard({
     } catch {
       return;
     }
-    const target_audience = window.localStorage.getItem(audienceKey(bookId))?.trim() || book.target_audience?.trim() || null;
-    const topic_brief = window.localStorage.getItem(topicKey(bookId))?.trim() || null;
+    const target_audience = book.target_audience?.trim() || null;
+    const topic_brief = book.topic_brief?.trim() || null;
     const ok = await onGenerateOutline({ topic_override: null, target_audience, topic_brief });
     if (ok) {
       setStep1SaveOnlyFab(false);
@@ -124,7 +130,12 @@ export default function PlanningWizard({
 
         {wizardStep === 1 && (
           <>
-            <SetupView book={book} onBookPatched={onPatchBook} onRegisterActions={(a) => (setupActionsRef.current = a)} />
+            <SetupView
+              book={book}
+              onBookPatched={onPatchBook}
+              onRegisterActions={(a) => (setupActionsRef.current = a)}
+              pendingAutoGenerate={pendingAuto}
+            />
             <div className="mt-12 flex justify-end border-t border-slate-100/90 pt-10">
               <button
                 type="button"
@@ -157,9 +168,9 @@ export default function PlanningWizard({
             outlineGeneratingUi={outlineGeneratingUi}
             onGenerateOutline={async () => {
               await onGenerateOutline({
-                topic_override: window.localStorage.getItem(topicKey(bookId))?.trim() || null,
+                topic_override: null,
                 target_audience: book.target_audience?.trim() || null,
-                topic_brief: window.localStorage.getItem(topicKey(bookId))?.trim() || null,
+                topic_brief: book.topic_brief?.trim() || null,
               });
             }}
             onOutlinePatched={onOutlinePatched}
@@ -178,7 +189,11 @@ export default function PlanningWizard({
                   </div>
                   <div>
                     <dt className="text-xs text-slate-400">学科</dt>
-                    <dd>{book.discipline?.trim() || "—"}</dd>
+                    <dd>
+                      {book.disciplines?.length
+                        ? book.disciplines.join("、")
+                        : book.discipline?.trim() || "—"}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-slate-400">目标字数</dt>
@@ -187,7 +202,7 @@ export default function PlanningWizard({
                   <div>
                     <dt className="text-xs text-slate-400">主题要点</dt>
                     <dd className="whitespace-pre-wrap text-xs leading-relaxed">
-                      {window.localStorage.getItem(topicKey(bookId))?.trim() || "—"}
+                      {book.topic_brief?.trim() || "—"}
                     </dd>
                   </div>
                 </dl>

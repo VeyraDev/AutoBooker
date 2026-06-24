@@ -43,6 +43,16 @@ STYLE_PROMPT_BASENAME: dict[StyleType, str] = {
     StyleType.ai_review_commentary: "outline_prompt_评估评论",
 }
 
+STYLE_TYPE_LABELS: dict[str, str] = {
+    StyleType.popular_science.value: "入门科普",
+    StyleType.practical_guide.value: "实战操作",
+    StyleType.reference_tool.value: "工具手册",
+    StyleType.insight_opinion.value: "观念洞察",
+    StyleType.textbook.value: "教科书",
+    StyleType.technical_deep_dive.value: "技术深度分析",
+    StyleType.ai_review_commentary.value: "评估评论",
+}
+
 DEFAULT_TARGET_WORDS: dict[str, int] = {
     "nonfiction": 80_000,
     "academic": 200_000,

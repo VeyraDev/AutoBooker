@@ -1,5 +1,10 @@
 import { client } from "@/api/client";
-import type { ReferenceFile, ReferenceSearchHit, ReferenceSearchPayload } from "@/types/reference";
+import type {
+  ReferenceFile,
+  ReferenceSearchHit,
+  ReferenceSearchPayload,
+  UploadReferenceOptions,
+} from "@/types/reference";
 
 export async function listReferences(bookId: string): Promise<ReferenceFile[]> {
   const { data } = await client.get<ReferenceFile[]>(`/books/${bookId}/references`);
@@ -11,17 +16,31 @@ export type UploadIngestHint = "auto" | "material" | "reference";
 export async function uploadReference(
   bookId: string,
   file: File,
-  ingestHint: UploadIngestHint = "auto",
-  shareToLibrary = false,
+  options: UploadReferenceOptions | UploadIngestHint = "auto",
+  shareToLibraryLegacy = false,
 ): Promise<{ id: string }> {
   const form = new FormData();
   form.append("file", file);
-  if (ingestHint !== "auto") {
-    form.append("ingest_hint", ingestHint);
+
+  const opts: UploadReferenceOptions =
+    typeof options === "string" ? { ingestHint: options, shareToLibrary: shareToLibraryLegacy } : options;
+
+  if (opts.ingestHint && opts.ingestHint !== "auto") {
+    form.append("ingest_hint", opts.ingestHint);
   }
-  if (shareToLibrary) {
+  if (opts.filePurposes?.length) {
+    form.append("file_purposes", JSON.stringify(opts.filePurposes));
+  }
+  if (opts.outlineUsage) {
+    form.append("outline_usage", opts.outlineUsage);
+  }
+  if (opts.userNote?.trim()) {
+    form.append("user_note", opts.userNote.trim());
+  }
+  if (opts.shareToLibrary) {
     form.append("share_to_library", "true");
   }
+
   const { data } = await client.post<{ id: string; filename: string; parse_status: string }>(
     `/books/${bookId}/references/upload`,
     form,

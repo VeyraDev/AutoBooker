@@ -80,3 +80,42 @@ def get_book_job(
         progress_pct=job.progress_pct,
         error_message=job.error_message,
     )
+
+
+@router.post("/{book_id}/start", response_model=BookJobOut, status_code=status.HTTP_201_CREATED)
+def start_auto_generate_for_book(
+    book_id: UUID,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """对已有书稿启动一键生成（设定页保存后调用）。"""
+    book = book_service.get_book_or_404(book_id, user, db)
+    existing = (
+        db.query(BookJob)
+        .filter(BookJob.book_id == book_id, BookJob.status.in_((BookJobStatus.pending, BookJobStatus.running)))
+        .first()
+    )
+    if existing:
+        return BookJobOut(
+            id=str(existing.id),
+            book_id=str(existing.book_id),
+            status=existing.status.value,
+            current_step=existing.current_step.value if existing.current_step else None,
+            progress_pct=existing.progress_pct,
+            error_message=existing.error_message,
+        )
+    job = BookJob(book_id=book.id, user_id=user.id, status=BookJobStatus.pending, progress_pct=0)
+    db.add(job)
+    book.status = BookStatus.auto_generating
+    db.commit()
+    db.refresh(job)
+    background_tasks.add_task(run_auto_book_job, job.id)
+    return BookJobOut(
+        id=str(job.id),
+        book_id=str(book.id),
+        status=job.status.value,
+        current_step=job.current_step.value if job.current_step else None,
+        progress_pct=job.progress_pct,
+        error_message=job.error_message,
+    )

@@ -19,6 +19,12 @@ export async function startAutoGenerate(payload: {
   return data;
 }
 
+/** 对已有书稿（设定页保存后）启动一键生成 Job */
+export async function startAutoGenerateForBook(bookId: string): Promise<BookJob> {
+  const { data } = await client.post<BookJob>(`/book-jobs/${bookId}/start`);
+  return data;
+}
+
 export async function fetchBookJob(bookId: string): Promise<BookJob> {
   const { data } = await client.get<BookJob>(`/book-jobs/${bookId}`);
   return data;

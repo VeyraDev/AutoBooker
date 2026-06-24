@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import { client } from "@/api/client";
-import type { Book, BookCreatePayload, BookUpdatePayload } from "@/types/book";
+import type { Book, BookCreatePayload, BookUpdatePayload, SetupRecommendResult } from "@/types/book";
 
 export async function listBooks(): Promise<Book[]> {
   const { data } = await client.get<Book[]>("/books");
@@ -20,6 +20,21 @@ export async function createBook(payload: BookCreatePayload): Promise<Book> {
 
 export async function updateBook(id: string, payload: BookUpdatePayload): Promise<Book> {
   const { data } = await client.put<Book>(`/books/${id}`, payload);
+  return data;
+}
+
+export async function setupRecommend(
+  id: string,
+  options?: { force?: boolean },
+): Promise<SetupRecommendResult> {
+  const { data } = await client.post<SetupRecommendResult>(`/books/${id}/setup-recommend`, {
+    force: options?.force ?? false,
+  });
+  return data;
+}
+
+export async function duplicateBook(id: string): Promise<{ book: Book; message: string }> {
+  const { data } = await client.post<{ book: Book; message: string }>(`/books/${id}/duplicate`);
   return data;
 }
 

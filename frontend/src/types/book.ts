@@ -28,9 +28,12 @@ export interface Book {
   id: string;
   user_id: string;
   title: string;
+  original_title?: string | null;
+  allow_title_optimization?: boolean;
   cover_url?: string | null;
   book_type: BookType;
   discipline: string | null;
+  disciplines?: string[] | null;
   target_audience?: string | null;
   citation_style: CitationStyle | null;
   target_words: number | null;
@@ -41,7 +44,9 @@ export interface Book {
   writing_ai_model?: string | null;
   style_type: StyleType | null;
   topic_tags: string[] | null;
+  topic_brief?: string | null;
   user_material?: string | null;
+  constitution_stale?: boolean;
   created_at: string;
   updated_at: string | null;
 }
@@ -64,6 +69,7 @@ export interface BookCreatePayload {
 export interface BookUpdatePayload {
   title?: string;
   discipline?: string | null;
+  disciplines?: string[] | null;
   target_audience?: string | null;
   citation_style?: CitationStyle | null;
   target_words?: number | null;
@@ -74,5 +80,16 @@ export interface BookUpdatePayload {
   writing_ai_model?: string | null;
   style_type?: StyleType | null;
   topic_tags?: string[] | null;
+  topic_brief?: string | null;
+  allow_title_optimization?: boolean;
   user_material?: string | null;
+}
+
+export interface SetupRecommendResult {
+  from_cache: boolean;
+  cache_key: string;
+  recommended_tags: string[];
+  target_audience: string;
+  disciplines: string[];
+  topic_brief: string;
 }

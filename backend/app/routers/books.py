@@ -2,15 +2,23 @@ import re
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User
 from app.routers.auth import get_current_user
-from app.schemas.book import BookCreate, BookOut, BookUpdate
+from app.schemas.book import (
+    BookCreate,
+    BookDuplicateOut,
+    BookOut,
+    BookUpdate,
+    SetupRecommendIn,
+    SetupRecommendOut,
+)
 from app.services import book_service, export_service
+from app.services.setup_recommend_service import recommend_book_setup
 
 router = APIRouter(prefix="/books", tags=["books"])
 
@@ -43,6 +51,36 @@ def update_book(
 ):
     book = book_service.get_book_or_404(book_id, user, db)
     return book_service.update_book(book, body.model_dump(exclude_unset=True, mode="json"), db)
+
+
+@router.post("/{book_id}/setup-recommend", response_model=SetupRecommendOut)
+def setup_recommend(
+    book_id: UUID,
+    body: SetupRecommendIn | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book = book_service.get_book_or_404(book_id, user, db)
+    force = bool(body.force) if body else False
+    try:
+        result = recommend_book_setup(book, db, force=force)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"书稿设定推荐失败：{exc}",
+        ) from exc
+    return SetupRecommendOut(**result)
+
+
+@router.post("/{book_id}/duplicate", response_model=BookDuplicateOut, status_code=status.HTTP_201_CREATED)
+def duplicate_book(
+    book_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    source = book_service.get_book_or_404(book_id, user, db)
+    new_book = book_service.duplicate_book(source, user, db)
+    return BookDuplicateOut(book=BookOut.model_validate(new_book))
 
 
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)

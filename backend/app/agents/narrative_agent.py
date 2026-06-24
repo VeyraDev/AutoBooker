@@ -62,6 +62,23 @@ class NarrativeAgent:
         ]
         if kind != "C":
             parts.append(f"- 书型：{label}")
+        aud = (book.target_audience or "").strip()
+        if aud:
+            parts.append(f"- 目标读者：{aud}")
+        brief = (book.topic_brief or "").strip()
+        if brief:
+            parts.append(f"- 主题说明要点：\n{brief[:3000]}")
+        from app.services.material_parse_service import get_book_level_writing_rules
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            rules = get_book_level_writing_rules(db, book.id)
+        finally:
+            db.close()
+        if rules:
+            parts.append("- 全书级写作要求（须写入「全书内容边界与强制要求」章节）：")
+            parts.extend(f"  · {r}" for r in rules[:20])
         parts.append("")
         parts.append("- 完整大纲：")
         parts.append(outline_markdown.strip() or "（空）")

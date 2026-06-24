@@ -3,7 +3,7 @@ import uuid
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -14,6 +14,11 @@ class ParseStatus(str, enum.Enum):
     processing = "processing"
     done = "done"
     failed = "failed"
+
+
+class OutlineUsage(str, enum.Enum):
+    primary = "primary"
+    reference = "reference"
 
 
 class ReferenceFile(Base):
@@ -33,6 +38,14 @@ class ReferenceFile(Base):
     error_message = Column(Text)
     parsed_at = Column(DateTime(timezone=True))
     share_to_library = Column(String(20), nullable=False, default="private")  # private | pending | shared
+    file_purposes = Column(JSONB, nullable=True)  # outline | writing_requirements | reference
+    outline_usage = Column(
+        Enum(OutlineUsage, name="outline_usage"),
+        nullable=True,
+    )
+    user_note = Column(Text, nullable=True)
+    parse_version = Column(Integer, nullable=False, default=0, server_default="0")
+    parse_artifacts = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     chunks = relationship("ReferenceChunk", back_populates="file", cascade="all, delete-orphan")

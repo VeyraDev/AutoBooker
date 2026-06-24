@@ -144,11 +144,57 @@ class DocumentParserAgent:
 
         ref.parse_status = ParseStatus.processing
         ref.error_message = None
-        ref.ingest_kind = "reference"
+        ref.parse_version = int(ref.parse_version or 0) + 1
         self.db.commit()
 
         try:
             text = self.extract_text(file_path, file_type)
+            purposes = ref.file_purposes if isinstance(ref.file_purposes, list) else None
+
+            if purposes:
+                from app.services.material_parse_service import (
+                    detect_primary_outline_conflicts,
+                    parse_file_artifacts,
+                )
+
+                artifacts = parse_file_artifacts(
+                    text,
+                    ref.filename or "",
+                    [str(p) for p in purposes],
+                    user_note=(ref.user_note or "").strip(),
+                )
+                artifacts["status"] = "confirmed"
+                ref.parse_artifacts = artifacts
+
+                if "reference" in purposes or not purposes:
+                    chunks = self.chunk_text(text)
+                    if chunks:
+                        ref.ingest_kind = "reference"
+                        self._embed_and_store_chunks(file_id, chunks)
+                    else:
+                        ref.ingest_kind = "reference"
+                else:
+                    ref.ingest_kind = "material"
+
+                from datetime import datetime, timezone
+
+                ref.parse_status = ParseStatus.done
+                ref.parsed_at = datetime.now(timezone.utc)
+                self.db.commit()
+
+                book = self.db.get(Book, self.book_id)
+                if book:
+                    conflicts = detect_primary_outline_conflicts(self.db, self.book_id)
+                    book.material_conflicts = conflicts if conflicts else book.material_conflicts
+                    self.db.commit()
+
+                if "reference" in purposes:
+                    self._try_extract_bibliography_citations(text, file_id)
+                return
+
+            ref.ingest_kind = "reference"
+            self.db.commit()
+
             if forced_class in ("material", "reference"):
                 file_class = forced_class
             else:

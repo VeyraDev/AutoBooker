@@ -98,10 +98,20 @@ def _safe_llm_error_message(exc: Exception, *, model: str) -> str:
 
 def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> None:
     """独立 Session：可在 asyncio.to_thread 中调用，生成并写入 narrative_constitution。"""
+    from app.services.outline_hash import compute_book_outline_hash
+
     db = SessionLocal()
     try:
         book = db.get(Book, book_id)
-        if not book or (book.narrative_constitution or "").strip():
+        if not book:
+            return
+        current_hash = compute_book_outline_hash(book_id, db)
+        has_constitution = bool((book.narrative_constitution or "").strip())
+        if (
+            has_constitution
+            and not book.constitution_stale
+            and book.narrative_constitution_outline_hash == current_hash
+        ):
             return
         n = db.query(func.count(Chapter.id)).filter(Chapter.book_id == book_id).scalar() or 0
         outline_md = serialize_book_outline_markdown(book_id, db)
@@ -115,6 +125,8 @@ def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> Non
         if not text.strip():
             raise RuntimeError(f"model {chat_model} returned empty narrative constitution")
         book.narrative_constitution = text
+        book.narrative_constitution_outline_hash = current_hash
+        book.constitution_stale = False
         db.commit()
     except Exception:
         db.rollback()
@@ -149,9 +161,17 @@ def ensure_narrative_constitution(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """进入写作前同步生成叙事宪法（若尚未生成）。耗时可能较长。"""
+    """进入写作前同步生成叙事宪法（若尚未生成或大纲已变更）。"""
+    from app.services.outline_hash import compute_book_outline_hash
+
     book = book_service.get_book_or_404(book_id, user, db)
-    if (book.narrative_constitution or "").strip():
+    current_hash = compute_book_outline_hash(book_id, db)
+    needs = (
+        not (book.narrative_constitution or "").strip()
+        or book.constitution_stale
+        or book.narrative_constitution_outline_hash != current_hash
+    )
+    if not needs:
         return NarrativeEnsureOut(ok=True, generated=False)
     chat_model = _constitution_model_for_book(book)
     try:

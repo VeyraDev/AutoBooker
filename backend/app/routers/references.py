@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -12,7 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, get_db
-from app.models.reference import ParseStatus, ReferenceChunk, ReferenceFile
+from app.models.reference import OutlineUsage, ParseStatus, ReferenceChunk, ReferenceFile
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.reference import (
@@ -64,6 +65,9 @@ async def upload_reference(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     ingest_hint: str | None = Form(default=None),
+    file_purposes: str | None = Form(default=None),
+    outline_usage: str | None = Form(default=None),
+    user_note: str | None = Form(default=None),
     share_to_library: bool = Form(default=False),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -81,6 +85,20 @@ async def upload_reference(
     hint = (ingest_hint or "auto").strip().lower()
     if hint not in ("auto", "material", "reference"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ingest_hint must be auto, material, or reference")
+
+    parsed_purposes: list[str] | None = None
+    if file_purposes:
+        try:
+            raw = json.loads(file_purposes)
+            if isinstance(raw, list):
+                parsed_purposes = [str(p) for p in raw if str(p) in ("outline", "writing_requirements", "reference")]
+        except json.JSONDecodeError:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "file_purposes must be JSON array")
+
+    ou = None
+    if outline_usage in ("primary", "reference"):
+        ou = OutlineUsage(outline_usage)
+
     if suffix == ".pdf":
         file_type = "pdf"
     elif suffix == ".docx":
@@ -105,6 +123,9 @@ async def upload_reference(
         file_type=file_type,
         parse_status=ParseStatus.pending,
         share_to_library="pending" if share_to_library else "private",
+        file_purposes=parsed_purposes,
+        outline_usage=ou,
+        user_note=(user_note or "").strip() or None,
     )
     db.add(ref)
     db.commit()
@@ -167,7 +188,12 @@ def delete_reference(
     if not ref:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Reference not found")
 
-    if ref.ingest_kind == "material" and (book.user_material or "").strip():
+    if ref.parse_artifacts and isinstance(ref.parse_artifacts, dict):
+        art = dict(ref.parse_artifacts)
+        art["status"] = "disabled"
+        ref.parse_artifacts = art
+
+    if ref.ingest_kind == "material" and (book.user_material or "").strip() and not ref.file_purposes:
         try:
             agent = DocumentParserAgent(db, book_id)
             snippet = agent.extract_text(ref.storage_path, ref.file_type)[:5000].strip()

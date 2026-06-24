@@ -28,6 +28,7 @@ from app.schemas.outline import (
 from app.llm.providers import resolve_book_outline_model
 from app.services import book_service
 from app.services.heading_formatter import normalize_outline_sections
+from app.services.material_parse_service import get_book_level_writing_rules, get_primary_outline_for_book
 
 logger = logging.getLogger(__name__)
 
@@ -140,8 +141,9 @@ def generate_outline(
             "citation_style": book.citation_style.value if book.citation_style else "无需引用",
             "discipline": book.discipline,
             "topic_tags": list(book.topic_tags or []),
-            "user_material": (book.user_material or "").strip(),
-            "topic_brief": (body.topic_brief or "").strip() or None,
+            "topic_brief": (body.topic_brief or book.topic_brief or "").strip() or None,
+            "primary_outline": get_primary_outline_for_book(db, book.id),
+            "writing_rules": get_book_level_writing_rules(db, book.id),
         }
 
         agent = OutlineAgent()
@@ -174,7 +176,11 @@ def generate_outline(
                 )
             )
 
-        book.title = outline.get("title", book.title)
+        if book.allow_title_optimization:
+            new_title = (outline.get("title") or "").strip()
+            if new_title:
+                book.title = new_title[:500]
+        book.constitution_stale = True
         from app.services.preface_service import get_preface, set_preface
 
         preface_brief = (outline.get("preface_brief") or "").strip()
@@ -251,6 +257,8 @@ def update_outline(
 
     if body.confirm_start_writing:
         book.status = BookStatus.writing
+    else:
+        book.constitution_stale = True
 
     db.commit()
     db.refresh(book)

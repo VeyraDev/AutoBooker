@@ -67,7 +67,7 @@ def _notify(db, user_id: UUID, title: str, body: str, payload: dict | None = Non
 def _infer_book_settings(book: Book, model: str) -> None:
     client = LLMClient()
     prompt = f"""根据书名与体裁推断书稿基础设定，输出 JSON：
-{{"target_audience":"...", "topic_tags":["..."], "citation_style":"apa|gb_t7714|none", "user_material":"100字选题简报"}}
+{{"target_audience":"...", "topic_tags":["..."], "citation_style":"apa|gb_t7714|none", "topic_brief":"选题要点，非用户资料"}}
 书名：{book.title}
 类型：{book.book_type.value}
 体裁：{book.style_type or ''}
@@ -79,19 +79,38 @@ def _infer_book_settings(book: Book, model: str) -> None:
         temperature=0.3,
     )
     data = parse_llm_json(out)
-    book.target_audience = str(data.get("target_audience") or "对相关主题感兴趣的读者")[:500]
-    tags = data.get("topic_tags") or []
-    book.topic_tags = [str(t)[:50] for t in tags][:8] if isinstance(tags, list) else []
-    cs = str(data.get("citation_style") or "apa").lower()
-    if cs in ("none", "无", "无需"):
-        book.citation_style = None
-    elif cs == "gb_t7714":
-        book.citation_style = CitationStyle.gb_t7714
-    else:
-        book.citation_style = CitationStyle.apa
-    um = str(data.get("user_material") or "").strip()
-    if um:
-        book.user_material = um[:3000]
+    if not book.target_audience:
+        book.target_audience = str(data.get("target_audience") or "对相关主题感兴趣的读者")[:500]
+    if not book.topic_tags:
+        tags = data.get("topic_tags") or []
+        book.topic_tags = [str(t)[:50] for t in tags][:8] if isinstance(tags, list) else []
+    if not book.citation_style:
+        cs = str(data.get("citation_style") or "apa").lower()
+        if cs in ("none", "无", "无需"):
+            book.citation_style = None
+        elif cs == "gb_t7714":
+            book.citation_style = CitationStyle.gb_t7714
+        else:
+            book.citation_style = CitationStyle.apa
+    brief = str(data.get("topic_brief") or "").strip()
+    if brief and not (book.topic_brief or "").strip():
+        book.topic_brief = brief[:3000]
+    from datetime import datetime, timezone
+    import hashlib
+
+    book.ai_inferred_settings = {
+        "topic_brief": brief[:3000],
+        "inferred_at": datetime.now(timezone.utc).isoformat(),
+        "input_hash": hashlib.sha256(f"{book.title}|{book.book_type}|{book.style_type}".encode()).hexdigest(),
+    }
+
+
+def _maybe_apply_outline_title(book: Book, outline: dict) -> None:
+    if not book.allow_title_optimization:
+        return
+    new_title = (outline.get("title") or "").strip()
+    if new_title:
+        book.title = new_title[:500]
 
 
 async def _write_chapter_sync(book_id: UUID, chapter_index: int, chat_model: str) -> None:
@@ -106,9 +125,11 @@ async def _write_chapter_sync(book_id: UUID, chapter_index: int, chat_model: str
         db.commit()
 
         memory = build_book_memory(book_id, chapter_index, db)
-        parser = DocumentParserAgent(db, book_id)
+        from app.services.material_context import MaterialContextBuilder
+
+        ctx = MaterialContextBuilder(db, book_id)
         summary_q = (ch.summary or "") + " " + ch.title
-        rag_snippets = parser.retrieve(summary_q.strip() or book.title, top_k=4)
+        rag_snippets = ctx.retrieve_for_chapter(summary_q.strip() or book.title, top_k=4)
         cite_blocks, rag_trimmed = merge_grounding_for_writer(db, book, rag_snippets, chapter_context=summary_q)
         memory["citation_policy"] = build_citation_policy_block(bool(cite_blocks), bool(rag_trimmed))
         st = (book.style_type or "").strip()
@@ -186,12 +207,7 @@ def run_auto_book_job(job_id: UUID) -> None:
         _infer_book_settings(book, writing_model)
         db.commit()
 
-        _update_job(db, job, step=BookJobStep.narrative, pct=15)
-        _ensure_narrative_constitution_thread(book.id, constitution_model)
-        db.expire_all()
-        book = db.get(Book, job.book_id)
-
-        _update_job(db, job, step=BookJobStep.literature, pct=25)
+        _update_job(db, job, step=BookJobStep.literature, pct=20)
         refined = refine_literature_query(db, book, raw_query=book.title)
         queries = refined.get("refined_queries") or [book.title]
         agent = LiteratureAgent()
@@ -209,6 +225,8 @@ def run_auto_book_job(job_id: UUID) -> None:
         db.commit()
         parser = DocumentParserAgent(db, book.id)
         snippets = parser.retrieve(book.title, top_k=5)
+        from app.services.material_parse_service import get_book_level_writing_rules, get_primary_outline_for_book
+
         cfg = {
             "book_type": book.book_type.value,
             "style_type": book.style_type,
@@ -218,7 +236,9 @@ def run_auto_book_job(job_id: UUID) -> None:
             "citation_style": book.citation_style.value if book.citation_style else "无需引用",
             "discipline": book.discipline,
             "topic_tags": list(book.topic_tags or []),
-            "user_material": (book.user_material or "").strip(),
+            "topic_brief": (book.topic_brief or "").strip() or None,
+            "primary_outline": get_primary_outline_for_book(db, book.id),
+            "writing_rules": get_book_level_writing_rules(db, book.id),
         }
         outline = OutlineAgent().generate(cfg, snippets, model=outline_model)
         db.query(Chapter).filter(Chapter.book_id == book.id).delete()
@@ -239,7 +259,7 @@ def run_auto_book_job(job_id: UUID) -> None:
                     status=ChapterStatus.pending,
                 )
             )
-        book.title = outline.get("title", book.title)
+        _maybe_apply_outline_title(book, outline)
         pf = get_preface(book)
         preface_brief = (outline.get("preface_brief") or "").strip()
         if preface_brief:
@@ -249,7 +269,12 @@ def run_auto_book_job(job_id: UUID) -> None:
         book.status = BookStatus.outline_ready
         db.commit()
 
-        _update_job(db, job, step=BookJobStep.preface, pct=40)
+        _update_job(db, job, step=BookJobStep.narrative, pct=50)
+        _ensure_narrative_constitution_thread(book.id, constitution_model)
+        db.expire_all()
+        book = db.get(Book, job.book_id)
+
+        _update_job(db, job, step=BookJobStep.preface, pct=55)
 
         chapters = db.query(Chapter).filter(Chapter.book_id == book.id).order_by(Chapter.index.asc()).all()
         n = len(chapters)
