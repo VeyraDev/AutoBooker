@@ -106,6 +106,8 @@ export async function getFigure(bookId: string, figureId: string) {
 
 /** 图像/流程图生成含 LLM 与外部 API，耗时可能超过默认 15s */
 const FIGURE_GENERATE_TIMEOUT_MS = 300_000;
+/** 一键排序会对每张图/表串行调用 LLM 生成题注 */
+const FIGURE_NORMALIZE_SORT_TIMEOUT_MS = 300_000;
 
 export async function generateFigure(
   bookId: string,
@@ -191,7 +193,7 @@ export async function normalizeChapterFiguresTables(
     overview: FigureTableOverviewItem[];
   }>(`/books/${bookId}/chapters/${chapterIndex}/figures/normalize-sort`, {
     tiptap_json: tiptapJson,
-  });
+  }, { timeout: FIGURE_NORMALIZE_SORT_TIMEOUT_MS });
   return data;
 }
 

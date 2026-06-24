@@ -262,6 +262,17 @@ def is_provider_configured(provider_id: str) -> bool:
     return bool(provider_api_key(provider_id))
 
 
+def embed_provider_id() -> str:
+    """向量嵌入固定走千问 DashScope（独立通道，与智灵网关对话/图像分离）。"""
+    if is_provider_configured("qwen"):
+        return "qwen"
+    raise RuntimeError("DASHSCOPE_API_KEY 未配置，无法生成向量嵌入")
+
+
+def embed_model_name(_provider_id: str) -> str:
+    return (settings.EMBEDDING_MODEL or "text-embedding-v4").strip()
+
+
 def configured_providers() -> list[ProviderSpec]:
     return [p for p in PROVIDER_SPECS if is_provider_configured(p.id)]
 
@@ -323,10 +334,13 @@ def resolve_book_ai_model(book) -> str:
 
 
 def _resolve_scene_model(book, field_name: str) -> str:
-    """按场景字段解析模型，空则回退 ai_model。"""
+    """按场景字段解析模型，空则回退 writing_ai_model / ai_model。"""
     raw = (getattr(book, field_name, None) or "").strip()
     if raw:
         return normalize_ai_model(raw)
+    writing = (getattr(book, "writing_ai_model", None) or "").strip()
+    if writing and field_name in ("outline_ai_model", "constitution_ai_model"):
+        return normalize_ai_model(writing)
     return resolve_book_ai_model(book)
 
 

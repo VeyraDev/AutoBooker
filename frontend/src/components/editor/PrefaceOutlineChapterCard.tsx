@@ -280,22 +280,6 @@ export default function PrefaceOutlineChapterCard({ bookId }: Props) {
 
           )}
 
-          {pf.summary ? (
-
-            <div className="outline-sections-plain">
-
-              <span className="outline-inline-label">已生成摘要</span>
-
-              <p className="outline-sections-merged-summary whitespace-pre-wrap text-xs leading-relaxed text-slate-600">
-
-                {pf.summary}
-
-              </p>
-
-            </div>
-
-          ) : null}
-
         </div>
 
       )}

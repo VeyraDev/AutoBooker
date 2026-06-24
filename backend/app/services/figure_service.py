@@ -138,6 +138,134 @@ def classify_chapter_figures(book_id: UUID, chapter_index: int, db: Session) -> 
     return
 
 
+def _figure_type_from_attrs(attrs: dict[str, Any]) -> FigureType:
+    key = str(attrs.get("figureType") or "figure").lower()
+    if key == "flowchart":
+        return FigureType.flowchart
+    if key == "chart":
+        return FigureType.chart
+    if key == "screenshot":
+        return FigureType.screenshot
+    return FigureType.figure
+
+
+def _iter_tiptap_figure_block_nodes(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = []
+
+    def walk(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "figureBlock":
+            nodes.append(node)
+            return
+        for child in node.get("content") or []:
+            walk(child)
+
+    if doc:
+        walk(doc)
+    return nodes
+
+
+def resolve_figure_for_block(
+    book_id: UUID,
+    chapter_index: int,
+    attrs: dict[str, Any],
+    *,
+    db: Session,
+    figures_by_id: dict[str, Figure],
+    existing: list[Figure],
+    used: set[UUID],
+) -> tuple[Figure, dict[str, Any]]:
+    """为 figureBlock attrs 解析或创建 figures 表记录，并回写 figureId。"""
+    attrs = dict(attrs or {})
+    fid = str(attrs.get("figureId") or "").strip()
+    raw = str(attrs.get("rawAnnotation") or attrs.get("caption") or "").strip()
+    ftype = _figure_type_from_attrs(attrs)
+
+    fig: Figure | None = None
+    if fid:
+        fig = figures_by_id.get(fid)
+        if fig is None:
+            try:
+                fig = (
+                    db.query(Figure)
+                    .filter(Figure.id == UUID(fid), Figure.book_id == book_id)
+                    .first()
+                )
+            except ValueError:
+                fig = None
+            if fig is not None:
+                figures_by_id[str(fig.id)] = fig
+
+    if fig is None and raw:
+        for candidate in existing:
+            if candidate.id in used:
+                continue
+            if candidate.figure_type == ftype and (candidate.raw_annotation or "").strip() == raw:
+                fig = candidate
+                break
+
+    if fig is None:
+        fig = Figure(
+            book_id=book_id,
+            chapter_index=chapter_index,
+            figure_type=ftype,
+            status=FigureStatus.pending,
+            raw_annotation=raw or None,
+            figure_source=FigureSource.writing,
+        )
+        db.add(fig)
+        db.flush()
+        existing.append(fig)
+        figures_by_id[str(fig.id)] = fig
+
+    used.add(fig.id)
+    if raw and not (fig.raw_annotation or "").strip():
+        fig.raw_annotation = raw
+
+    new_id = str(fig.id)
+    if fid != new_id:
+        attrs["figureId"] = new_id
+
+    return fig, attrs
+
+
+def ensure_figure_blocks_persisted(
+    book_id: UUID,
+    chapter_index: int,
+    tiptap_json: dict[str, Any] | None,
+    db: Session,
+) -> dict[str, Any] | None:
+    """确保 TipTap 中每个 figureBlock 在 figures 表中有对应记录，并回写 figureId。"""
+    if not isinstance(tiptap_json, dict) or tiptap_json.get("type") != "doc":
+        return tiptap_json
+
+    existing = get_chapter_figures(book_id, chapter_index, db)
+    figures_by_id = {str(f.id): f for f in existing}
+    used: set[UUID] = set()
+    changed = False
+
+    for node in _iter_tiptap_figure_block_nodes(tiptap_json):
+        before_id = str((node.get("attrs") or {}).get("figureId") or "")
+        _fig, attrs = resolve_figure_for_block(
+            book_id,
+            chapter_index,
+            node.get("attrs") or {},
+            db=db,
+            figures_by_id=figures_by_id,
+            existing=existing,
+            used=used,
+        )
+        if str(attrs.get("figureId") or "") != before_id:
+            changed = True
+        node["attrs"] = attrs
+
+    if changed or used:
+        db.commit()
+        renumber_chapter_figures_from_tiptap(book_id, chapter_index, tiptap_json, db)
+    return tiptap_json
+
+
 def _walk_tiptap_figure_blocks(doc: dict[str, Any] | None, visit) -> None:
     def walk(node: Any) -> None:
         if not isinstance(node, dict):
@@ -304,6 +432,8 @@ def refresh_chapter_figures(
         )
 
     prune_orphan_chapter_figures(book_id, chapter_index, tiptap_json, db)
+    if isinstance(tiptap_json, dict):
+        ensure_figure_blocks_persisted(book_id, chapter_index, tiptap_json, db)
     renumber_chapter_figures_from_tiptap(book_id, chapter_index, tiptap_json, db)
     figures = get_chapter_figures(book_id, chapter_index, db)
     for fig in figures:

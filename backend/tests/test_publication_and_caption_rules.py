@@ -6,6 +6,8 @@ from uuid import uuid4
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.oxml.ns import qn
 
 from app.services import chapter_figure_table_normalize as normalizer
 from app.services.figures.render.image_api.prompt_constraints import (
@@ -26,11 +28,22 @@ def _heading_node(text: str, level: int) -> dict:
     }
 
 
+def _paragraph_outline_level(paragraph) -> str | None:
+    ppr = paragraph._element.pPr
+    if ppr is None:
+        return None
+    outline = ppr.find(qn("w:outlineLvl"))
+    if outline is None:
+        return None
+    return outline.get(qn("w:val"))
+
+
 def test_docx_export_heading_styles_follow_publication_hierarchy():
     ast = BookAst(
         title="书稿题名",
         blocks=[
             AstBlock(role="book_title", text="书稿题名"),
+            AstBlock(role="preface_title", text="前言"),
             AstBlock(role="chapter_title", text="第一章 总论"),
             AstBlock(role="section_title", text="第一节", level=2, attrs={"tiptap_node": _heading_node("第一节", 2)}),
             AstBlock(role="subsection_title", text="一、", level=3, attrs={"tiptap_node": _heading_node("一、", 3)}),
@@ -44,12 +57,32 @@ def test_docx_export_heading_styles_follow_publication_hierarchy():
     rows = [(p.text, p.alignment, p.runs[0].font.size.pt, p.runs[0].bold) for p in doc.paragraphs if p.text]
 
     assert rows[0] == ("书稿题名", WD_ALIGN_PARAGRAPH.CENTER, 22.0, True)
-    assert rows[1] == ("第一章 总论", WD_ALIGN_PARAGRAPH.CENTER, 18.0, True)
-    assert rows[2] == ("第一节", WD_ALIGN_PARAGRAPH.CENTER, 16.0, True)
-    assert rows[3] == ("一、", WD_ALIGN_PARAGRAPH.LEFT, 15.0, True)
-    assert rows[4] == ("（一）", WD_ALIGN_PARAGRAPH.LEFT, 14.0, True)
-    assert rows[5] == ("1．", WD_ALIGN_PARAGRAPH.LEFT, 12.0, False)
-    assert rows[6] == ("（1）", WD_ALIGN_PARAGRAPH.LEFT, 12.0, False)
+    assert rows[1] == ("前言", WD_ALIGN_PARAGRAPH.CENTER, 18.0, True)
+    assert rows[2] == ("第一章 总论", WD_ALIGN_PARAGRAPH.CENTER, 18.0, True)
+    assert rows[3] == ("第一节", WD_ALIGN_PARAGRAPH.CENTER, 16.0, True)
+    assert rows[4] == ("一、", WD_ALIGN_PARAGRAPH.LEFT, 15.0, True)
+    assert rows[5] == ("（一）", WD_ALIGN_PARAGRAPH.LEFT, 14.0, True)
+    assert rows[6] == ("1．", WD_ALIGN_PARAGRAPH.LEFT, 12.0, False)
+    assert rows[7] == ("（1）", WD_ALIGN_PARAGRAPH.LEFT, 12.0, False)
+
+    book_title_p = doc.paragraphs[0]
+    assert book_title_p.style.name == "Normal"
+    assert _paragraph_outline_level(book_title_p) is None
+
+    heading_expectations = [
+        ("前言", "Heading 1", "0"),
+        ("第一章 总论", "Heading 1", "0"),
+        ("第一节", "Heading 2", "1"),
+        ("一、", "Heading 3", "2"),
+        ("（一）", "Heading 4", "3"),
+        ("1．", "Heading 5", "4"),
+        ("（1）", "Heading 6", "5"),
+    ]
+    by_text = {p.text: p for p in doc.paragraphs}
+    for text, style_name, outline in heading_expectations:
+        p = by_text[text]
+        assert p.style.name == style_name
+        assert _paragraph_outline_level(p) == outline
 
 
 def test_pdf_export_css_matches_heading_hierarchy():

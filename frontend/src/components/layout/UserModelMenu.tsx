@@ -78,7 +78,7 @@ export default function UserModelMenu({ open, onClose }: Props) {
         {book ? "本书模型" : "默认模型"}
       </p>
       <p className="pt-1.5 text-[10px] leading-snug text-slate-400">
-        {book ? "仅影响当前书稿的大纲、叙事宪法与写作。" : "新建书稿时将作为默认模型。"}
+        {book ? "分别作用于大纲、叙事宪法与写作。" : "新建书稿时将作为各场景默认模型。"}
       </p>
       <div className="mt-2.5 space-y-2.5">
         {SCENES.map(({ key, label }) => (

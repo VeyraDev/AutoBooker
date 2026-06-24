@@ -13,12 +13,13 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     CORS_ORIGINS: str = "http://localhost:5173"
 
-    # 千问 DashScope（OpenAI 兼容；向量嵌入始终走此通道）
+    # 千问 DashScope（OpenAI 兼容对话；万相等原生 API）
     DASHSCOPE_API_KEY: str = ""
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     """万相/图像等原生 API 根路径（非 OpenAI 兼容模式）。"""
     DASHSCOPE_NATIVE_API_BASE: str = "https://dashscope.aliyuncs.com/api/v1"
-    EMBEDDING_MODEL: str = "text-embedding-v3"
+    # 向量嵌入（独立通道：千问 DashScope，不走智灵网关）
+    EMBEDDING_MODEL: str = "text-embedding-v4"
     EMBEDDING_DIMENSIONS: int = 1024
     EMBEDDING_BATCH_SIZE: int = 25
     CHAT_MODEL: str = "qwen-max"

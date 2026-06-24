@@ -10,9 +10,12 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models.book import Book
+from app.models.figure import Figure
 from app.services.figure_service import (
+    ensure_figure_blocks_persisted,
     get_chapter_figures,
     renumber_chapter_figures_from_tiptap,
+    resolve_figure_for_block,
 )
 from app.services.markdown_to_tiptap import _parse_inline_bold
 from app.services.table_caption_ai import suggest_figure_caption, suggest_table_caption
@@ -269,7 +272,9 @@ def normalize_chapter_figures_tables(
     tbl_seq = 0
     skip_until = -1
 
-    figures_by_id = {str(f.id): f for f in get_chapter_figures(book_id, chapter_index, db)}
+    chapter_figures = get_chapter_figures(book_id, chapter_index, db)
+    figures_by_id: dict[str, Figure] = {str(f.id): f for f in chapter_figures}
+    used_figure_ids: set[UUID] = set()
 
     for i, node in enumerate(nodes):
         if i <= skip_until:
@@ -284,8 +289,16 @@ def normalize_chapter_figures_tables(
             fig_seq += 1
             num = f"{chapter_index}-{fig_seq}"
             attrs = dict(node.get("attrs") or {})
+            fig_row, attrs = resolve_figure_for_block(
+                book_id,
+                chapter_index,
+                attrs,
+                db=db,
+                figures_by_id=figures_by_id,
+                existing=chapter_figures,
+                used=used_figure_ids,
+            )
             fig_id = str(attrs.get("figureId") or "")
-            fig_row = figures_by_id.get(fig_id)
             db_raw = str(fig_row.raw_annotation if fig_row else "").strip()
             db_caption = str(fig_row.caption if fig_row else "").strip()
             attr_caption = str(attrs.get("caption") or "").strip()
@@ -334,11 +347,9 @@ def normalize_chapter_figures_tables(
             cap_line = f"图{num}：{cap_title}"
             out.append(_make_para(cap_line, center=True))
 
-            fig_row = figures_by_id.get(fig_id)
-            if fig_row:
-                fig_row.figure_number = num
-                fig_row.caption = cap_title
-                fig_row.sort_order = fig_seq * 1000
+            fig_row.figure_number = num
+            fig_row.caption = cap_title
+            fig_row.sort_order = fig_seq * 1000
 
             overview.append(
                 {
@@ -434,6 +445,33 @@ def normalize_chapter_figures_tables(
 
     doc = {"type": "doc", "content": out}
     db.commit()
+    ensure_figure_blocks_persisted(book_id, chapter_index, doc, db)
     renumber_chapter_figures_from_tiptap(book_id, chapter_index, doc, db)
+    for item in overview:
+        if item.get("kind") != "figure":
+            continue
+        num = str(item.get("number") or "")
+        for block in _iter_figure_blocks(doc):
+            attrs = block.get("attrs") or {}
+            if str(attrs.get("figureNumber") or "") == num:
+                item["figure_id"] = str(attrs.get("figureId") or "") or None
+                item["status"] = str(attrs.get("status") or item.get("status") or "")
+                break
     text = tiptap_json_to_markdown(doc).strip()
     return {"tiptap_json": doc, "text": text, "overview": overview}
+
+
+def _iter_figure_blocks(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+
+    def walk(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "figureBlock":
+            blocks.append(node)
+            return
+        for child in node.get("content") or []:
+            walk(child)
+
+    walk(doc)
+    return blocks

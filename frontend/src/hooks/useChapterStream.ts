@@ -2,6 +2,29 @@ import { useCallback, useEffect, useRef } from "react";
 
 import { useAuthStore } from "@/stores/authStore";
 
+export function isCitationInsufficientError(err: Error): boolean {
+  return err.message.includes("引用库不足");
+}
+
+function parseGenerateError(status: number, body: string): Error {
+  const trimmed = body.trim();
+  if (!trimmed) return new Error(`HTTP ${status}`);
+  try {
+    const parsed = JSON.parse(trimmed) as { detail?: unknown };
+    const detail = parsed.detail;
+    if (typeof detail === "string" && detail.trim()) return new Error(detail.trim());
+    if (Array.isArray(detail)) {
+      const msg = detail
+        .map((x) => (typeof x === "object" && x && "msg" in x ? String((x as { msg: unknown }).msg) : String(x)))
+        .join("；");
+      if (msg.trim()) return new Error(msg.trim());
+    }
+  } catch {
+    /* not JSON */
+  }
+  return new Error(trimmed.length > 500 ? `${trimmed.slice(0, 500)}…` : trimmed);
+}
+
 async function parseSSEStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   onEvent: (obj: Record<string, unknown>) => void,
@@ -37,10 +60,12 @@ async function openGenerateStream(
   bookId: string,
   chapterIndex: number,
   signal: AbortSignal,
+  forceGenerate = false,
 ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
   const token = useAuthStore.getState().accessToken;
   const base = import.meta.env.VITE_API_BASE ?? "";
-  const res = await fetch(`${base}/books/${bookId}/chapters/${chapterIndex}/generate`, {
+  const qs = forceGenerate ? "?force_generate=true" : "";
+  const res = await fetch(`${base}/books/${bookId}/chapters/${chapterIndex}/generate${qs}`, {
     method: "POST",
     headers: {
       Authorization: token ? `Bearer ${token}` : "",
@@ -50,7 +75,7 @@ async function openGenerateStream(
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `HTTP ${res.status}`);
+    throw parseGenerateError(res.status, text);
   }
   const reader = res.body?.getReader();
   if (!reader) throw new Error("响应无正文流");
@@ -59,10 +84,15 @@ async function openGenerateStream(
 
 export type ChapterStreamCallbacks = {
   onToken: (token: string) => void;
-  onDone: (payload?: { markdown?: string }) => void;
+  onDone: (payload?: { markdown?: string; truncated?: boolean }) => void;
   onError: (err: Error) => void;
   /** 请求被中止（例如切换章节） */
   onAbort?: () => void;
+};
+
+export type ChapterStreamStartOptions = {
+  /** 跳过引用库数量校验（后端 force_generate） */
+  forceGenerate?: boolean;
 };
 
 export function useChapterStream() {
@@ -74,12 +104,22 @@ export function useChapterStream() {
   }, []);
 
   const start = useCallback(
-    async (bookId: string, chapterIndex: number, cb: ChapterStreamCallbacks) => {
+    async (
+      bookId: string,
+      chapterIndex: number,
+      cb: ChapterStreamCallbacks,
+      opts?: ChapterStreamStartOptions,
+    ) => {
       abort();
       const ac = new AbortController();
       abortRef.current = ac;
       try {
-        const reader = await openGenerateStream(bookId, chapterIndex, ac.signal);
+        const reader = await openGenerateStream(
+          bookId,
+          chapterIndex,
+          ac.signal,
+          Boolean(opts?.forceGenerate),
+        );
         let errored = false;
         const sawDone = await parseSSEStream(reader, (obj) => {
           if ("error" in obj && obj.error != null) {
@@ -96,7 +136,12 @@ export function useChapterStream() {
           if (typeof obj.token === "string") cb.onToken(obj.token);
           if (obj.done === true) {
             const markdown = typeof obj.markdown === "string" ? obj.markdown : undefined;
-            cb.onDone(markdown !== undefined ? { markdown } : undefined);
+            const truncated = obj.truncated === true;
+            cb.onDone(
+              markdown !== undefined || truncated
+                ? { ...(markdown !== undefined ? { markdown } : {}), ...(truncated ? { truncated } : {}) }
+                : undefined,
+            );
           }
         });
         if (!errored && !sawDone && !ac.signal.aborted) {

@@ -91,6 +91,7 @@ class NarrativeAgent:
             model=model,
             max_tokens=max_tokens,
             temperature=0.55,
+            disable_thinking=True,
         )
         text = out.strip()
         if not text and max_tokens < 24000:
@@ -105,6 +106,26 @@ class NarrativeAgent:
                 model=model,
                 max_tokens=retry_tokens,
                 temperature=0.55,
+                disable_thinking=True,
+            ).strip()
+        if not text:
+            logger.warning(
+                "narrative constitution empty for book %s; retrying with direct-output instruction",
+                book.id,
+            )
+            retry_messages = [
+                *messages,
+                {
+                    "role": "user",
+                    "content": "上次未返回正文。请直接输出叙事/体例宪法全文，不要输出思考过程，必须以 --- 或 # 开头。",
+                },
+            ]
+            text = self._client.chat_completion(
+                retry_messages,
+                model=model,
+                max_tokens=24000,
+                temperature=0.55,
+                disable_thinking=True,
             ).strip()
         if not text:
             logger.warning("narrative constitution empty for book %s", book.id)

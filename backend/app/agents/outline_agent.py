@@ -72,7 +72,7 @@ class OutlineAgent:
             ]
             raw = self._client.chat_completion(
                 messages,
-                max_tokens=4096,
+                max_tokens=12288,
                 temperature=0.6,
                 model=model,
             )

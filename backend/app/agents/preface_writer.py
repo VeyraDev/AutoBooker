@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
-from app.llm.client import AsyncLLMClient
+from app.llm.client import AsyncLLMClient, LLMClient
 from app.prompts.preface_writer import PREFACE_WRITER_SYSTEM
 
 
@@ -40,7 +40,7 @@ class PrefaceWriterAgent:
         async for token in self._client.stream_chat(
             messages,
             model=model,
-            max_tokens=8192,
+            max_tokens=LLMClient.completion_budget_for_chinese_words(target_words, model),
             temperature=temperature,
         ):
             yield token

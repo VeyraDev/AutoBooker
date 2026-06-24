@@ -18,6 +18,7 @@ import { ANNOTATION_TEST_RE } from "@/lib/annotationPatterns";
 import {
   refreshChapterFigures,
   syncChapterFigures,
+  type FigureOut,
   type FigureStatus,
   type FigureType,
 } from "@/api/figures";
@@ -374,8 +375,8 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     [editor, figureDocRevision],
   );
 
-  const syncFigureNumbersFromEditor = useCallback((): Promise<void> => {
-    if (!editor || !bookId || !chapterIndex) return Promise.resolve();
+  const syncFigureNumbersFromEditor = useCallback((): Promise<FigureOut[]> => {
+    if (!editor || !bookId || !chapterIndex) return Promise.resolve([]);
     return new Promise((resolve) => {
       if (figureRefreshTimerRef.current) clearTimeout(figureRefreshTimerRef.current);
       figureRefreshTimerRef.current = setTimeout(() => {
@@ -395,9 +396,10 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
               }
             }
             setFigureDocRevision((r) => r + 1);
+            return items;
           })
-          .catch(() => {})
-          .finally(() => resolve());
+          .catch(() => [] as FigureOut[])
+          .then((items) => resolve(items));
       }, 400);
     });
   }, [editor, bookId, chapterIndex]);
@@ -435,7 +437,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     figureRefreshDoneRef.current = null;
     figureRefreshInFlightRef.current = false;
     formatRecoveredChapterRef.current = null;
-  }, [chapter.id]);
+  }, [chapter.id, chapter.content]);
 
   /** 服务端正文更新且编辑区仍为空时，重新载入（如从图表恢复后） */
   useEffect(() => {

@@ -226,59 +226,105 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
     };
   }, [blobSrc]);
 
-  async function handleGenerate() {
-    if (!bookId || !figureId) {
-      toast.error("缺少图表 ID");
-      return;
+  async function applyGeneratedFigure(fig: Awaited<ReturnType<typeof generateFigure>>, loadingToast: string) {
+    const serverVersion = fig.updated_at ? Date.parse(fig.updated_at) || 0 : 0;
+    const nextVersion = Math.max(Date.now(), serverVersion);
+    loadedPreviewKeyRef.current = "";
+    setImgEpoch(nextVersion);
+    setImgFailed(false);
+    setSvgFailed(false);
+    setBlobSrc((prev) => {
+      if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return null;
+    });
+    const previewUrl = fig.svg_url || fig.file_url || "";
+    const freshUrl = resolveFigureUrl(previewUrl, nextVersion);
+    applyPatch({
+      status: fig.status,
+      fileUrl: fig.file_url ?? "",
+      svgUrl: fig.svg_url || "",
+      figureNumber: fig.figure_number ?? figureNumber,
+      caption: fig.caption ?? caption,
+      fileVersion: nextVersion,
+    });
+    if (freshUrl) {
+      let previewLoaded = false;
+      try {
+        previewLoaded = await loadFreshImageBlob(freshUrl, nextVersion);
+      } catch {
+        const pngUrl =
+          fig.file_url && fig.file_url !== fig.svg_url && /\.png(\?|$)/i.test(fig.file_url)
+            ? resolveFigureUrl(fig.file_url, nextVersion)
+            : "";
+        if (pngUrl) {
+          setSvgFailed(true);
+          try {
+            previewLoaded = await loadFreshImageBlob(pngUrl, nextVersion);
+          } catch {
+            previewLoaded = false;
+          }
+        }
+      }
+      if (!previewLoaded) {
+        toast("图表已生成，预览加载较慢，可点击重新生成刷新", { icon: "ℹ️" });
+      }
     }
+    toast.success(figureGenerationToast(fig.quality_report).message, { id: loadingToast });
+    void refreshFigureNumbers();
+  }
+
+  async function resolveTargetFigureId(): Promise<string | null> {
+    if (figureId) return figureId;
+    const items = await refreshFigureNumbers();
+    const match =
+      items.find((f) => (f.raw_annotation || "").trim() === diagramDesc.trim()) ?? items[0];
+    if (!match?.id) return null;
+    applyPatch({
+      figureId: match.id,
+      figureNumber: match.figure_number ?? figureNumber,
+      status: match.status,
+      rawAnnotation: match.raw_annotation ?? rawAnnotation,
+    });
+    return match.id;
+  }
+
+  async function handleGenerate() {
+    if (!bookId) return;
     setBusy(true);
     const loadingToast = toast.loading("正在生成图表，可能需要 1–3 分钟…");
     try {
-      const fig = await generateFigure(bookId, figureId);
-      const serverVersion = fig.updated_at ? Date.parse(fig.updated_at) || 0 : 0;
-      const nextVersion = Math.max(Date.now(), serverVersion);
-      loadedPreviewKeyRef.current = "";
-      setImgEpoch(nextVersion);
-      setImgFailed(false);
-      setSvgFailed(false);
-      setBlobSrc((prev) => {
-        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
-        return null;
-      });
-      const previewUrl = fig.svg_url || fig.file_url || "";
-      const freshUrl = resolveFigureUrl(previewUrl, nextVersion);
-      applyPatch({
-        status: fig.status,
-        fileUrl: fig.file_url ?? "",
-        svgUrl: fig.svg_url || "",
-        figureNumber: fig.figure_number ?? figureNumber,
-        caption: fig.caption ?? caption,
-        fileVersion: nextVersion,
-      });
-      if (freshUrl) {
-        let previewLoaded = false;
-        try {
-          previewLoaded = await loadFreshImageBlob(freshUrl, nextVersion);
-        } catch {
-          const pngUrl =
-            fig.file_url && fig.file_url !== fig.svg_url && /\.png(\?|$)/i.test(fig.file_url)
-              ? resolveFigureUrl(fig.file_url, nextVersion)
-              : "";
-          if (pngUrl) {
-            setSvgFailed(true);
-            try {
-              previewLoaded = await loadFreshImageBlob(pngUrl, nextVersion);
-            } catch {
-              previewLoaded = false;
-            }
+      let targetId = await resolveTargetFigureId();
+      if (!targetId) {
+        toast.error("无法绑定图表记录，请先使用右侧「一键排序」整理本章图表", { id: loadingToast });
+        return;
+      }
+      try {
+        const fig = await generateFigure(bookId, targetId);
+        await applyGeneratedFigure(fig, loadingToast);
+      } catch (e) {
+        if (axios.isAxiosError(e) && e.response?.status === 404) {
+          const items = await refreshFigureNumbers();
+          const match =
+            items.find((f) => (f.raw_annotation || "").trim() === diagramDesc.trim()) ??
+            items.find((f) => f.id === targetId) ??
+            items[0];
+          if (match?.id && match.id !== targetId) {
+            applyPatch({
+              figureId: match.id,
+              figureNumber: match.figure_number ?? figureNumber,
+              status: match.status,
+              rawAnnotation: match.raw_annotation ?? rawAnnotation,
+            });
+            targetId = match.id;
+          }
+          if (targetId) {
+            const fig = await generateFigure(bookId, targetId);
+            await applyGeneratedFigure(fig, loadingToast);
+            return;
           }
         }
-        if (!previewLoaded) {
-          toast("图表已生成，预览加载较慢，可点击重新生成刷新", { icon: "ℹ️" });
-        }
+        throw e;
       }
-      toast.success(figureGenerationToast(fig.quality_report).message, { id: loadingToast });
-      void refreshFigureNumbers();
     } catch (e) {
       toast.error(figureApiErrorMessage(e, "生成失败"), { id: loadingToast });
     } finally {

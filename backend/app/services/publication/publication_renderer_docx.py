@@ -6,11 +6,13 @@ import io
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
 from app.services.publication.book_ast import AstBlock, BookAst
 from app.services.publication.publication_styles import (
+    AST_WORD_HEADING_LEVEL,
     BODY_PT,
     BOOK_TITLE_PT,
     CAPTION_PT,
@@ -22,6 +24,7 @@ from app.services.publication.publication_styles import (
     SECTION_TITLE_PT,
     SIXTH_TITLE_PT,
     SUBSECTION_TITLE_PT,
+    subsection_word_heading_level,
 )
 from app.services.tiptap_convert import (
     _add_code_paragraph,
@@ -40,8 +43,6 @@ def _set_run_font(run, *, name: str = DOC_BODY_FONT, size_pt: float | None = Non
     rpr = run._element.get_or_add_rPr()
     rfonts = rpr.rFonts
     if rfonts is None:
-        from docx.oxml import OxmlElement
-
         rfonts = OxmlElement("w:rFonts")
         rpr.append(rfonts)
     rfonts.set(qn("w:ascii"), name)
@@ -65,13 +66,67 @@ def _init_docx_publication_fonts(doc: Document) -> None:
     rpr = normal._element.get_or_add_rPr()
     rfonts = rpr.rFonts
     if rfonts is None:
-        from docx.oxml import OxmlElement
-
         rfonts = OxmlElement("w:rFonts")
         rpr.append(rfonts)
     rfonts.set(qn("w:ascii"), DOC_BODY_FONT)
     rfonts.set(qn("w:hAnsi"), DOC_BODY_FONT)
     rfonts.set(qn("w:eastAsia"), DOC_BODY_FONT)
+    _configure_builtin_heading_styles(doc)
+
+
+def _configure_builtin_heading_styles(doc: Document) -> None:
+    """为内置 Heading 1–6 套用出版字体，并写入 outlineLvl（WPS/Word 目录依赖）。"""
+    heading_specs = {
+        1: (CHAPTER_TITLE_PT, True),
+        2: (SECTION_TITLE_PT, True),
+        3: (SUBSECTION_TITLE_PT, True),
+        4: (FOURTH_TITLE_PT, True),
+        5: (FIFTH_TITLE_PT, False),
+        6: (SIXTH_TITLE_PT, False),
+    }
+    for word_level, (size_pt, bold) in heading_specs.items():
+        style_name = f"Heading {word_level}"
+        try:
+            style = doc.styles[style_name]
+        except KeyError:
+            continue
+        style.font.name = DOC_BODY_FONT
+        style.font.size = Pt(size_pt)
+        style.font.bold = bold
+        style.font.color.rgb = BLACK
+        rpr = style._element.get_or_add_rPr()
+        rfonts = rpr.rFonts
+        if rfonts is None:
+            rfonts = OxmlElement("w:rFonts")
+            rpr.append(rfonts)
+        rfonts.set(qn("w:ascii"), DOC_BODY_FONT)
+        rfonts.set(qn("w:hAnsi"), DOC_BODY_FONT)
+        rfonts.set(qn("w:eastAsia"), DOC_BODY_FONT)
+        _set_style_outline_level(style, word_level - 1)
+
+
+def _set_style_outline_level(style, outline_level: int) -> None:
+    ppr = style._element.get_or_add_pPr()
+    outline = ppr.find(qn("w:outlineLvl"))
+    if outline is None:
+        outline = OxmlElement("w:outlineLvl")
+        ppr.append(outline)
+    outline.set(qn("w:val"), str(outline_level))
+
+
+def _set_paragraph_outline_level(paragraph, outline_level: int) -> None:
+    ppr = paragraph._element.get_or_add_pPr()
+    outline = ppr.find(qn("w:outlineLvl"))
+    if outline is None:
+        outline = OxmlElement("w:outlineLvl")
+        ppr.append(outline)
+    outline.set(qn("w:val"), str(outline_level))
+
+
+def _apply_word_heading_style(doc: Document, paragraph, word_level: int) -> None:
+    style_name = f"Heading {word_level}"
+    paragraph.style = doc.styles[style_name]
+    _set_paragraph_outline_level(paragraph, word_level - 1)
 
 
 def _add_body(doc: Document, text: str) -> None:
@@ -84,7 +139,7 @@ def _add_body(doc: Document, text: str) -> None:
     _style_docx_run(run, size_pt=BODY_PT)
 
 
-_HEADING_STYLE = {
+_HEADING_VISUAL = {
     1: (CHAPTER_TITLE_PT, True, WD_ALIGN_PARAGRAPH.CENTER, 12, 8),
     2: (SECTION_TITLE_PT, True, WD_ALIGN_PARAGRAPH.CENTER, 10, 6),
     3: (SUBSECTION_TITLE_PT, True, WD_ALIGN_PARAGRAPH.LEFT, 8, 5),
@@ -105,22 +160,34 @@ def _heading_level(block: AstBlock, fallback: int) -> int:
     return max(1, min(6, block.level or fallback))
 
 
+def _word_heading_level_for_block(block: AstBlock) -> int:
+    mapped = AST_WORD_HEADING_LEVEL.get(block.role)
+    if mapped is not None:
+        return mapped
+    if block.role == "subsection_title":
+        return subsection_word_heading_level(_heading_level(block, 3))
+    return subsection_word_heading_level(_heading_level(block, 2))
+
+
 def _add_publication_heading(
     doc: Document,
     text: str,
     *,
-    level: int,
+    word_level: int,
     node: dict | None = None,
 ) -> None:
-    size_pt, bold, align, space_before, space_after = _HEADING_STYLE.get(level, _HEADING_STYLE[3])
-    p = doc.add_paragraph()
+    word_level = max(1, min(6, word_level))
+    size_pt, bold, align, space_before, space_after = _HEADING_VISUAL.get(word_level, _HEADING_VISUAL[3])
+    if isinstance(node, dict) and node.get("content"):
+        p = doc.add_paragraph()
+        _apply_word_heading_style(doc, p, word_level)
+        _add_inline_to_paragraph(p, node.get("content"), size_pt=size_pt)
+    else:
+        p = doc.add_heading(text, level=word_level)
+        _set_paragraph_outline_level(p, word_level - 1)
     p.alignment = align
     p.paragraph_format.space_before = Pt(space_before)
     p.paragraph_format.space_after = Pt(space_after)
-    if isinstance(node, dict) and node.get("content"):
-        _add_inline_to_paragraph(p, node.get("content"), size_pt=size_pt)
-    else:
-        p.add_run(text)
     for r in p.runs:
         _style_docx_run(r, size_pt=size_pt, bold=bold)
 
@@ -135,16 +202,12 @@ def render_ast_to_docx(ast: BookAst) -> bytes:
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             for r in p.runs:
                 _style_docx_run(r, size_pt=BOOK_TITLE_PT, bold=True)
-        elif role == "preface_title":
-            _add_publication_heading(doc, block.text, level=1)
-        elif role == "chapter_title":
-            _add_publication_heading(doc, block.text, level=1)
-        elif role in ("section_title", "subsection_title"):
+        elif role in ("preface_title", "chapter_title", "section_title", "subsection_title"):
             node = block.attrs.get("tiptap_node")
             _add_publication_heading(
                 doc,
                 block.text,
-                level=_heading_level(block, 2 if role == "section_title" else 3),
+                word_level=_word_heading_level_for_block(block),
                 node=node if isinstance(node, dict) else None,
             )
         elif role == "body":

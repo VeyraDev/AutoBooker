@@ -14,6 +14,8 @@ from openai import APIError, AsyncOpenAI, OpenAI, RateLimitError
 
 from app.config import settings
 from app.llm.providers import (
+    embed_model_name,
+    embed_provider_id,
     is_provider_configured,
     parse_ai_model,
     provider_api_key,
@@ -21,6 +23,10 @@ from app.llm.providers import (
 )
 
 logger = logging.getLogger(__name__)
+
+_OPENAI_REASONING_MIN_COMPLETION_TOKENS = 8192
+_OPENAI_REASONING_MAX_COMPLETION_TOKENS = 32768
+_LONG_FORM_COMPLETION_MAX_TOKENS = 65536
 
 
 def _backoff_sleep(attempt: int) -> None:
@@ -67,7 +73,7 @@ def _split_messages_for_anthropic(
 
 
 class LLMClient:
-    """同步：嵌入走千问 DashScope；对话按 provider:model 路由。"""
+    """同步：向量嵌入走千问 DashScope 独立通道；对话按 provider:model 路由。"""
 
     def __init__(self) -> None:
         self._openai_clients: dict[str, OpenAI] = {}
@@ -89,17 +95,14 @@ class LLMClient:
             )
         return self._anthropic
 
-    def _dashscope_embed_client(self) -> OpenAI:
-        return self._get_openai("qwen")
-
     def embed(self, texts: list[str]) -> list[list[float]]:
-        """DashScope 向量嵌入（与检索一致，始终走千问）。"""
+        """千问 DashScope 向量嵌入（OpenAI 兼容端点，独立通道）。"""
         if not texts:
             return []
-        if not is_provider_configured("qwen"):
-            raise RuntimeError("DASHSCOPE_API_KEY is required for embeddings")
+        provider_id = embed_provider_id()
+        model_name = embed_model_name(provider_id)
         batch_size = min(settings.EMBEDDING_BATCH_SIZE, 25)
-        client = self._dashscope_embed_client()
+        client = self._get_openai(provider_id)
         out: list[list[float]] = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
@@ -107,7 +110,7 @@ class LLMClient:
             for attempt in range(settings.LLM_MAX_RETRIES):
                 try:
                     resp = client.embeddings.create(
-                        model=settings.EMBEDDING_MODEL,
+                        model=model_name,
                         input=batch,
                         dimensions=settings.EMBEDDING_DIMENSIONS,
                         encoding_format="float",
@@ -126,19 +129,47 @@ class LLMClient:
         return out
 
     @staticmethod
-    def _openai_uses_max_completion_tokens(provider_id: str, model_name: str) -> bool:
-        if provider_id != "openai":
-            return False
+    def _is_openai_reasoning_model(model_name: str) -> bool:
         m = model_name.lower()
         return m.startswith(("gpt-5", "o1", "o3", "o4"))
 
     @staticmethod
-    def _openai_omit_temperature(provider_id: str, model_name: str) -> bool:
-        if provider_id != "openai":
-            return False
-        # Native OpenAI gpt-5 / o-series models reject non-default temperature values.
-        m = model_name.lower()
-        return m.startswith(("gpt-5", "o1", "o3", "o4"))
+    def _resolve_openai_max_tokens(model_name: str, max_tokens: int) -> int:
+        """gpt-5 / o 系列会把 hidden reasoning 计入 completion 预算，4096 常不够输出正文。"""
+        if not LLMClient._is_openai_reasoning_model(model_name):
+            return max_tokens
+        return max(max_tokens, _OPENAI_REASONING_MIN_COMPLETION_TOKENS)
+
+    @staticmethod
+    def completion_budget_for_chinese_words(target_words: int, model: str | None = None) -> int:
+        """按目标字数估算流式写作 completion 预算（中文 Markdown）。"""
+        words = max(int(target_words or 3000), 800)
+        budget = int(words * 2.2) + 4096
+        _, model_name = parse_ai_model(model)
+        if LLMClient._is_openai_reasoning_model(model_name):
+            budget = int(budget * 2)
+        return max(8192, min(budget, _LONG_FORM_COMPLETION_MAX_TOKENS))
+
+    @staticmethod
+    def _openai_uses_max_completion_tokens(_provider_id: str, model_name: str) -> bool:
+        return LLMClient._is_openai_reasoning_model(model_name)
+
+    @staticmethod
+    def _openai_omit_temperature(_provider_id: str, model_name: str) -> bool:
+        return LLMClient._is_openai_reasoning_model(model_name)
+
+    @staticmethod
+    def _is_deepseek_v4_model(model_name: str) -> bool:
+        return "deepseek-v4" in model_name.lower()
+
+    @staticmethod
+    def _extract_openai_choice_text(choice: Any) -> str:
+        msg = choice.message
+        content = (msg.content or "").strip()
+        if content:
+            return content
+        dumped = choice.message.model_dump()
+        return (dumped.get("content") or "").strip()
 
     def _chat_openai(
         self,
@@ -149,7 +180,8 @@ class LLMClient:
         *,
         max_tokens: int,
         temperature: float,
-    ) -> str:
+        disable_thinking: bool = False,
+    ) -> tuple[str, str | None]:
         kwargs: dict[str, Any] = {
             "model": model_name,
             "messages": messages,
@@ -160,9 +192,24 @@ class LLMClient:
             kwargs["max_completion_tokens"] = max_tokens
         else:
             kwargs["max_tokens"] = max_tokens
+        if disable_thinking and self._is_deepseek_v4_model(model_name):
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         resp = client.chat.completions.create(**kwargs)
-        choice = resp.choices[0].message
-        return (choice.content or "").strip()
+        choice = resp.choices[0]
+        text = self._extract_openai_choice_text(choice)
+        finish_reason = choice.finish_reason
+        if not text:
+            usage = getattr(resp, "usage", None)
+            completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
+            logger.warning(
+                "chat_completion empty content provider=%s model=%s finish_reason=%s completion_tokens=%s max_tokens=%s",
+                provider_id,
+                model_name,
+                finish_reason,
+                completion_tokens,
+                max_tokens,
+            )
+        return text, finish_reason
 
     def _chat_anthropic(
         self,
@@ -194,6 +241,7 @@ class LLMClient:
         model: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
+        disable_thinking: bool = False,
     ) -> str:
         primary_provider, _ = parse_ai_model(model)
         specs = _fallback_targets(primary_provider, model)
@@ -201,7 +249,7 @@ class LLMClient:
 
         for idx, (provider_id, model_name) in enumerate(specs):
             last_err: Exception | None = None
-            for attempt in range(settings.LLM_MAX_RETRIES):
+            for api_attempt in range(settings.LLM_MAX_RETRIES):
                 try:
                     if provider_id == "claude":
                         return self._chat_anthropic(
@@ -211,25 +259,57 @@ class LLMClient:
                             temperature=temperature,
                         )
                     client = self._get_openai(provider_id)
-                    return self._chat_openai(
-                        client,
-                        provider_id,
-                        model_name,
-                        messages,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                    )
+                    use_disable_thinking = disable_thinking or self._is_deepseek_v4_model(model_name)
+                    effective_max = self._resolve_openai_max_tokens(model_name, max_tokens)
+                    text = ""
+                    for empty_attempt in range(settings.LLM_MAX_RETRIES):
+                        text, finish_reason = self._chat_openai(
+                            client,
+                            provider_id,
+                            model_name,
+                            messages,
+                            max_tokens=effective_max,
+                            temperature=temperature,
+                            disable_thinking=use_disable_thinking,
+                        )
+                        if text:
+                            return text
+                        if finish_reason == "length" and effective_max < _OPENAI_REASONING_MAX_COMPLETION_TOKENS:
+                            next_max = min(
+                                max(effective_max * 2, effective_max + 4096),
+                                _OPENAI_REASONING_MAX_COMPLETION_TOKENS,
+                            )
+                            if next_max > effective_max:
+                                logger.warning(
+                                    "chat_completion empty content retry provider=%s model=%s attempt=%s max_tokens=%s->%s",
+                                    provider_id,
+                                    model_name,
+                                    empty_attempt + 1,
+                                    effective_max,
+                                    next_max,
+                                )
+                                effective_max = next_max
+                                continue
+                        logger.warning(
+                            "chat_completion empty content provider=%s model=%s attempt=%s finish_reason=%s",
+                            provider_id,
+                            model_name,
+                            empty_attempt + 1,
+                            finish_reason,
+                        )
+                        break
+                    break
                 except (APIError, RateLimitError, TimeoutError, AnthropicAPIError, AnthropicRateLimitError) as e:
                     last_err = e
                     logger.warning(
                         "chat_completion attempt %s (%s:%s) failed: %s",
-                        attempt + 1,
+                        api_attempt + 1,
                         provider_id,
                         model_name,
                         e,
                     )
-                    if attempt < settings.LLM_MAX_RETRIES - 1:
-                        _backoff_sleep(attempt)
+                    if api_attempt < settings.LLM_MAX_RETRIES - 1:
+                        _backoff_sleep(api_attempt)
             last_outer = last_err
             if idx < len(specs) - 1 and last_err is not None:
                 logger.warning(
@@ -284,16 +364,27 @@ class AsyncLLMClient:
         if not LLMClient._openai_omit_temperature(provider_id, model_name):
             kwargs["temperature"] = temperature
         if LLMClient._openai_uses_max_completion_tokens(provider_id, model_name):
-            kwargs["max_completion_tokens"] = max_tokens
+            kwargs["max_completion_tokens"] = LLMClient._resolve_openai_max_tokens(model_name, max_tokens)
         else:
             kwargs["max_tokens"] = max_tokens
         stream = await client.chat.completions.create(**kwargs)
+        finish_reason: str | None = None
         async for chunk in stream:
             if not chunk.choices:
                 continue
-            delta = chunk.choices[0].delta
+            choice = chunk.choices[0]
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+            delta = choice.delta
             if delta and delta.content:
                 yield delta.content
+        if finish_reason == "length":
+            logger.warning(
+                "stream_chat stopped at max_tokens provider=%s model=%s max_tokens=%s",
+                provider_id,
+                model_name,
+                kwargs.get("max_completion_tokens") or kwargs.get("max_tokens"),
+            )
 
     async def _stream_anthropic(
         self,

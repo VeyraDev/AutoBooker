@@ -155,6 +155,40 @@ def list_references(
     ]
 
 
+@router.delete("/{book_id}/references/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_reference(
+    book_id: UUID,
+    file_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book = book_service.get_book_or_404(book_id, user, db)
+    ref = db.query(ReferenceFile).filter(ReferenceFile.id == file_id, ReferenceFile.book_id == book_id).first()
+    if not ref:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Reference not found")
+
+    if ref.ingest_kind == "material" and (book.user_material or "").strip():
+        try:
+            agent = DocumentParserAgent(db, book_id)
+            snippet = agent.extract_text(ref.storage_path, ref.file_type)[:5000].strip()
+            if snippet:
+                blocks = [b.strip() for b in book.user_material.split("\n\n---\n\n") if b.strip()]
+                blocks = [b for b in blocks if b != snippet]
+                book.user_material = "\n\n---\n\n".join(blocks) if blocks else None
+        except Exception:
+            logger.warning("could not remove material snippet for file=%s", file_id, exc_info=True)
+
+    storage = Path(ref.storage_path)
+    if storage.is_file():
+        try:
+            storage.unlink()
+        except OSError:
+            logger.warning("failed to delete reference file on disk: %s", storage, exc_info=True)
+
+    db.delete(ref)
+    db.commit()
+
+
 @router.get("/{book_id}/references/{file_id}/status", response_model=ReferenceFileOut)
 def reference_status(
     book_id: UUID,

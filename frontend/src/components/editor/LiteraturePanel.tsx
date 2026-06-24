@@ -240,10 +240,6 @@ export default function LiteraturePanel({
       toast.error("请先勾选文献");
       return;
     }
-    if (!citationStyle) {
-      toast.error("请先在「写作参数」中选择引用格式并保存设定");
-      return;
-    }
     setBusy(true);
     try {
       await addSelectedLiterature(bookId, selectedPapers);
@@ -252,11 +248,16 @@ export default function LiteraturePanel({
       }
       await refreshSaved();
       setSelected(new Set());
-      toast.success(
-        syncBibliography
-          ? `已加入 ${selectedPapers.length} 条并同步书末参考文献章节`
-          : `已加入引用库（${selectedPapers.length} 条）`,
-      );
+      const baseMsg = syncBibliography
+        ? `已加入 ${selectedPapers.length} 条并同步书末参考文献章节`
+        : `已加入引用库（${selectedPapers.length} 条）`;
+      if (!citationStyle) {
+        toast.success(`${baseMsg}。尚未设置引用格式，将暂按 APA 排版；可在书稿设定中修改。`, {
+          duration: 5000,
+        });
+      } else {
+        toast.success(baseMsg);
+      }
     } catch {
       toast.error("加入引用库失败");
     } finally {
@@ -319,6 +320,9 @@ export default function LiteraturePanel({
     : isSetup
       ? "按书类自动选择检索源；勾选后加入本书引用库（自动解析摘录）。"
       : "检索后加入引用库；在下方本书引用库勾选并插入正文（叙述性援引，书目仅出现在参考文献章）。";
+  const citationHint = !citationStyle
+    ? "尚未设置引用格式，入库与排版将暂按 APA；可在书稿设定中修改。"
+    : null;
 
   return (
     <div className="space-y-4 text-sm">
@@ -327,6 +331,9 @@ export default function LiteraturePanel({
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400">文献检索</p>
         ) : null}
         <p className="text-[11px] leading-relaxed text-slate-500">{hintText}</p>
+        {citationHint ? (
+          <p className="text-[11px] leading-relaxed text-amber-700">{citationHint}</p>
+        ) : null}
         <div className="flex flex-wrap gap-2">
           {isSetup ? (
             <button

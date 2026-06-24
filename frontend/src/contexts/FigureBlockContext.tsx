@@ -1,3 +1,4 @@
+import type { FigureOut } from "@/api/figures";
 import { createContext, useContext } from "react";
 import type { Editor } from "@tiptap/core";
 
@@ -10,8 +11,8 @@ export type FigureBlockContextValue = {
   /** 本章 TipTap 中该 figureBlock 的序号（从 1 起），未找到返回 0 */
   getFigureOrdinal: (figureId: string) => number;
   onFigureUpdated: (figureId: string, patch: Record<string, unknown>) => void;
-  /** 按当前编辑器文档重算后端图号并写回 attrs */
-  refreshFigureNumbers: () => Promise<void>;
+  /** 按当前编辑器文档重算后端图号并写回 attrs；返回本章图表列表 */
+  refreshFigureNumbers: () => Promise<FigureOut[]>;
   onQuoteFigure?: (figureId: string, annotation: string) => void;
 };
 
@@ -27,7 +28,7 @@ export function useFigureBlockContext(): FigureBlockContextValue {
       figureDocRevision: 0,
       getFigureOrdinal: () => 0,
       onFigureUpdated: () => {},
-      refreshFigureNumbers: async () => {},
+      refreshFigureNumbers: async () => [],
     };
   }
   return ctx;

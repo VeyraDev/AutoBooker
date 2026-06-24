@@ -1,9 +1,9 @@
-import { Loader2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
-import { listReferences, uploadReference } from "@/api/references";
+import { deleteReference, listReferences, uploadReference } from "@/api/references";
 import LiteraturePanel from "@/components/editor/LiteraturePanel";
 import { updateBook } from "@/api/books";
 import { styleOptionsFor, TOPIC_TAG_PRESETS } from "@/lib/styleTypes";
@@ -190,6 +190,20 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
     }
     await refreshRefs();
     void qc.invalidateQueries({ queryKey: ["book", book.id] });
+  }
+
+  async function onDeleteFile(file: ReferenceFile) {
+    if (!window.confirm(`确定删除「${file.filename}」？${file.ingest_kind === "material" ? " 对应说明片段将从写作资料中移除。" : " 向量片段将一并删除。"}`)) {
+      return;
+    }
+    try {
+      await deleteReference(book.id, file.id);
+      toast.success("已删除");
+      await refreshRefs();
+      void qc.invalidateQueries({ queryKey: ["book", book.id] });
+    } catch {
+      toast.error("删除失败");
+    }
   }
 
   function applyPreset(text: string) {
@@ -428,7 +442,9 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
             }}
           >
             <h4 className="text-sm font-medium text-slate-800">参考文献</h4>
-            <p className="mt-1 text-xs text-slate-600">论文 PDF 向量化供检索；含参考文献章节时自动解析条目</p>
+            <p className="mt-1 text-xs text-slate-600">
+              论文 PDF 向量化供检索（需配置 DASHSCOPE_API_KEY）；含参考文献章节时自动解析条目
+            </p>
             <label className="btn-secondary mt-3 inline-flex cursor-pointer text-xs">
               选择文献文件
               <input
@@ -514,7 +530,8 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
                             if (!file) return;
                             void (async () => {
                               try {
-                                await uploadReference(book.id, file);
+                                const hint = f.ingest_kind === "material" ? "material" : "reference";
+                                await uploadReference(book.id, file, hint, shareToLibrary);
                                 toast.success(`已上传 ${file.name}`);
                                 await refreshRefs();
                                 void qc.invalidateQueries({ queryKey: ["book", book.id] });
@@ -529,6 +546,15 @@ export default function SetupView({ book, onBookPatched, onRegisterActions }: Pr
                   ) : (
                     <span className="text-slate-500">{f.parse_status}</span>
                   )}
+                  <button
+                    type="button"
+                    className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    title="删除"
+                    aria-label={`删除 ${f.filename}`}
+                    onClick={() => void onDeleteFile(f)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </span>
               </li>
             ))

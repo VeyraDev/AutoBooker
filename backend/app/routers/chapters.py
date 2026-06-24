@@ -516,6 +516,17 @@ async def generate_chapter_stream(
                 asyncio.to_thread(_memory_background, book_id, chapter_index, md_text)
             )
             done_payload: dict = {"done": True, "markdown": md_text}
+            if row:
+                target = int(chapter_dict.get("estimated_words") or 0)
+                if target and wc < int(target * 0.72):
+                    done_payload["truncated"] = True
+                    logger.warning(
+                        "chapter output shorter than target book=%s ch=%s wc=%s target=%s",
+                        book_id,
+                        chapter_index,
+                        wc,
+                        target,
+                    )
             yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
         except Exception:
             logger.exception("chapter generate failed")

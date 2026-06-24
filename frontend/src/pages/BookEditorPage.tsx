@@ -38,7 +38,7 @@ import { topicKey } from "@/components/editor/SetupView";
 import { getChapterGenMode, setChapterGenMode, type ChapterGenMode } from "@/lib/chapterGenMode";
 import { chapterStreamPrimaryIntent } from "@/lib/chapterStreamPrimaryIntent";
 import { useAutoSave } from "@/hooks/useAutoSave";
-import { useChapterStream } from "@/hooks/useChapterStream";
+import { isCitationInsufficientError, useChapterStream } from "@/hooks/useChapterStream";
 import { useLlmModels } from "@/hooks/useLlmModels";
 import { useDailyWordDelta } from "@/hooks/useDailyWordDelta";
 import { effectiveSceneModel } from "@/lib/bookAiModels";
@@ -160,6 +160,7 @@ export default function BookEditorPage() {
   const streamPreviewRafRef = useRef<number | null>(null);
   const [streamPreviewMd, setStreamPreviewMd] = useState<string | null>(null);
   const autoGenAbortRef = useRef(false);
+  const forceGenerateCitationsRef = useRef(false);
   const chapterIndexRef = useRef<number | null>(null);
   const streamingIndexRef = useRef<number | null>(null);
   const streamingPrefaceRef = useRef(false);
@@ -778,6 +779,7 @@ export default function BookEditorPage() {
   async function startAutoGenerate(chaptersToGenerate: OutlineChapter[]) {
     if (autoGenerating) return;
     autoGenAbortRef.current = false;
+    forceGenerateCitationsRef.current = false;
 
     let pf: PrefaceData | null = null;
     if (bookId) {
@@ -827,44 +829,67 @@ export default function BookEditorPage() {
       setStreamPreviewMd("");
 
       await new Promise<void>((resolve) => {
-        startStream(bookId!, ch.index, {
-          onToken: appendStreamToken,
-          onDone: async () => {
-            streamPlainRef.current = "";
-            await finishChapterGeneration(ch.index);
-            endStreamPreviewUi();
-            setStreamingIndex(null);
-            resolve();
-          },
-            onError: (e) => {
-              endStreamPreviewUi();
-              setStreamingIndex(null);
-              toast.error(`第 ${ch.index} 章生成失败，已跳过：${e.message}`);
-              void (async () => {
-                try {
-                  await cancelChapterGeneration(bookId!, ch.index);
-                } catch {
-                  /* ignore */
+        const run = (forceGenerate: boolean) => {
+          startStream(
+            bookId!,
+            ch.index,
+            {
+              onToken: appendStreamToken,
+              onDone: async (payload) => {
+                streamPlainRef.current = "";
+                await finishChapterGeneration(ch.index);
+                endStreamPreviewUi();
+                setStreamingIndex(null);
+                if (payload?.truncated) {
+                  toast.warning(`第 ${ch.index} 章可能未写完，建议重新生成`);
                 }
-                await invalidateAll();
-              })();
-              resolve();
+                resolve();
+              },
+              onError: (e) => {
+                if (!forceGenerate && isCitationInsufficientError(e)) {
+                  const ok = window.confirm(
+                    `${e.message}\n\n是否仍继续生成？（写作中将较少自动引用文献）`,
+                  );
+                  if (ok) {
+                    forceGenerateCitationsRef.current = true;
+                    streamPlainRef.current = "";
+                    setStreamPreviewMd("");
+                    run(true);
+                    return;
+                  }
+                }
+                endStreamPreviewUi();
+                setStreamingIndex(null);
+                toast.error(`第 ${ch.index} 章生成失败，已跳过：${e.message}`);
+                void (async () => {
+                  try {
+                    await cancelChapterGeneration(bookId!, ch.index);
+                  } catch {
+                    /* ignore */
+                  }
+                  await invalidateAll();
+                })();
+                resolve();
+              },
+              onAbort: () => {
+                endStreamPreviewUi();
+                setStreamingIndex(null);
+                streamPlainRef.current = "";
+                void (async () => {
+                  try {
+                    await cancelChapterGeneration(bookId!, ch.index);
+                  } catch {
+                    /* ignore */
+                  }
+                  await invalidateAll();
+                })();
+                resolve();
+              },
             },
-            onAbort: () => {
-              endStreamPreviewUi();
-              setStreamingIndex(null);
-              streamPlainRef.current = "";
-              void (async () => {
-                try {
-                  await cancelChapterGeneration(bookId!, ch.index);
-                } catch {
-                  /* ignore */
-                }
-                await invalidateAll();
-              })();
-            resolve();
-          },
-        });
+            { forceGenerate: forceGenerate || forceGenerateCitationsRef.current },
+          );
+        };
+        run(forceGenerateCitationsRef.current);
       });
 
       if (autoGenAbortRef.current) break;
@@ -979,16 +1004,79 @@ export default function BookEditorPage() {
     setStreamingIndex(idx);
     streamPlainRef.current = "";
     setStreamPreviewMd("");
-    startStream(bookId, idx, {
-      onToken: appendStreamToken,
-      onDone: async () => {
-        streamPlainRef.current = "";
-        await finishChapterGeneration(idx);
-        endStreamPreviewUi();
-        setStreamingIndex(null);
-        toast.success(mode === "regenerate" ? "本章已重新生成" : "本章生成完成");
-      },
+    startStream(
+      bookId,
+      idx,
+      {
+        onToken: appendStreamToken,
+        onDone: async (payload) => {
+          streamPlainRef.current = "";
+          await finishChapterGeneration(idx);
+          endStreamPreviewUi();
+          setStreamingIndex(null);
+          if (payload?.truncated) {
+            toast.warning("本章可能未写完，建议重新生成");
+          } else {
+            toast.success(mode === "regenerate" ? "本章已重新生成" : "本章生成完成");
+          }
+        },
         onError: (e) => {
+          if (isCitationInsufficientError(e)) {
+            const ok = window.confirm(
+              `${e.message}\n\n是否仍继续生成？（写作中将较少自动引用文献）`,
+            );
+            if (ok) {
+              forceGenerateCitationsRef.current = true;
+              streamPlainRef.current = "";
+              setStreamPreviewMd("");
+              startStream(
+                bookId,
+                idx,
+                {
+                  onToken: appendStreamToken,
+                  onDone: async (payload) => {
+                    streamPlainRef.current = "";
+                    await finishChapterGeneration(idx);
+                    endStreamPreviewUi();
+                    setStreamingIndex(null);
+                    if (payload?.truncated) {
+                      toast.warning("本章可能未写完，建议重新生成");
+                    } else {
+                      toast.success(mode === "regenerate" ? "本章已重新生成" : "本章生成完成");
+                    }
+                  },
+                  onError: (retryErr) => {
+                    endStreamPreviewUi();
+                    setStreamingIndex(null);
+                    toast.error(retryErr.message);
+                    void (async () => {
+                      try {
+                        await cancelChapterGeneration(bookId, idx);
+                      } catch {
+                        /* ignore */
+                      }
+                      await invalidateAll();
+                    })();
+                  },
+                  onAbort: () => {
+                    endStreamPreviewUi();
+                    setStreamingIndex(null);
+                    streamPlainRef.current = "";
+                    void (async () => {
+                      try {
+                        await cancelChapterGeneration(bookId, idx);
+                      } catch {
+                        /* ignore */
+                      }
+                      await invalidateAll();
+                    })();
+                  },
+                },
+                { forceGenerate: true },
+              );
+              return;
+            }
+          }
           endStreamPreviewUi();
           setStreamingIndex(null);
           toast.error(e.message);
@@ -1014,7 +1102,9 @@ export default function BookEditorPage() {
             await invalidateAll();
           })();
         },
-      });
+      },
+      { forceGenerate: forceGenerateCitationsRef.current },
+    );
   }
 
   async function handleAddChapterSubmit(values: AddChapterFormValues) {

@@ -20,6 +20,18 @@ PDF_FIGURE_WIDTH_PX = int(PDF_CONTENT_WIDTH_PT / 72 * 96)
 PDF_FIGURE_MAX_HEIGHT_PX = int(PDF_CONTENT_HEIGHT_PT / 72 * 96)
 DOC_BODY_FONT = "宋体"
 
+# AST 角色 → Word 标准标题级别（1–6）。书名不入目录。
+AST_WORD_HEADING_LEVEL: dict[str, int | None] = {
+    "book_title": None,
+    "preface_title": 1,
+    "chapter_title": 1,
+    "section_title": 2,
+}
+
+def subsection_word_heading_level(tiptap_level: int) -> int:
+    """Tiptap heading level 3–6 → Word Heading 3–6。"""
+    return max(3, min(6, int(tiptap_level or 3)))
+
 PUBLICATION_CSS = """
 body {
   font-family: "Noto Serif SC", "SimSun", serif;

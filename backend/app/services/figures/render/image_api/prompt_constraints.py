@@ -18,6 +18,7 @@ IMAGE_API_SUBTYPES = frozenset({
     "taxonomy_map",
     "decision_tree",
     "timeline_roadmap",
+    "chart",
     "scene_illustration",
 })
 
@@ -246,6 +247,24 @@ TIMELINE_LAYOUT_NEGATIVE = """不要做成一堆卡片加装饰线。
 不要在同一图中混用真实时间间距和等距阶段逻辑。
 不要给每个节点都加不必要的箭头。"""
 
+CHART_LAYOUT_CONSTRAINTS = """重点表达用户提供的真实数值数据。
+图表类型、坐标轴、系列、单位、类别顺序和数值标签必须来自用户输入或数据图脚本。
+柱状图和条形图的数值轴默认从 0 开始，除非数据图脚本明确说明理由。
+时间序列必须保持原始时间顺序，分类比较必须保持用户给出的顺序，除非用户明确要求排名。
+同一系列的颜色、线型、点型和图例名称必须稳定一致。
+图例只在存在多个系列或颜色编码需要解释时出现。
+数据标签只显示用户提供的数值，不添加增长率、平均值、趋势线、预测或统计结论。
+长标签优先换行、旋转或扩大画布，不得缩小到不可读。
+图题只在用户明确要求画内标题时出现；否则图题由正文题注承担。"""
+
+CHART_LAYOUT_NEGATIVE = """不要虚构、补齐、估算、四舍五入或换算用户没有提供的数据。
+不要添加增长率、预测线、平均值、显著性、排名结论或原因解释。
+不要把不属于同一总量的数据画成饼图。
+不要用折线连接没有连续关系的类别。
+不要截断数值轴来夸大差异。
+不要使用 3D 柱体、透视、倾斜坐标轴、厚重阴影或装饰性插画。
+不要让标题、坐标轴、刻度、图例、标签或数据源被裁切。"""
+
 SCENE_LAYOUT_CONSTRAINTS = """生成克制、干净、适合书籍正文的概念插图布局说明。
 只表达一个核心概念或关系，不讲多个故事。
 默认不出现任何可见文字，除非用户明确要求。
@@ -271,6 +290,7 @@ LAYOUT_TYPE_MODULES: dict[str, dict[str, str]] = {
     "taxonomy_map": {"constraints": TAXONOMY_LAYOUT_CONSTRAINTS, "negative": TAXONOMY_LAYOUT_NEGATIVE},
     "decision_tree": {"constraints": DECISION_TREE_LAYOUT_CONSTRAINTS, "negative": DECISION_TREE_LAYOUT_NEGATIVE},
     "timeline_roadmap": {"constraints": TIMELINE_LAYOUT_CONSTRAINTS, "negative": TIMELINE_LAYOUT_NEGATIVE},
+    "chart": {"constraints": CHART_LAYOUT_CONSTRAINTS, "negative": CHART_LAYOUT_NEGATIVE},
     "scene_illustration": {"constraints": SCENE_LAYOUT_CONSTRAINTS, "negative": SCENE_LAYOUT_NEGATIVE},
 }
 
@@ -284,6 +304,7 @@ IMAGE_TYPE_RENDER_BLOCKS: dict[str, str] = {
     "taxonomy_map": "画成分类图；根节点、分类层级、成员归属清晰，连接线表示属于而不是流程。",
     "decision_tree": "画成决策树；判断节点、分支标签和结果节点清楚，每条路径到达唯一结果。",
     "timeline_roadmap": "画成时间线或路线图；时间轴贯穿画面，所有节点锚定在时间轴上，顺序不可错乱。",
+    "chart": "画成数据图表；严格保留所有类别、时间点、系列、数值、单位、坐标轴和图例，不添加用户未提供的统计结论。",
     "scene_illustration": "画成概念场景插图；默认少字或无字，使用克制隐喻表达核心概念，不做信息图或 UI 截图。",
 }
 
@@ -357,6 +378,7 @@ TYPE_FAILURE_GUARDS: dict[str, str] = {
     "taxonomy_map": "特别检查：根节点、一级分类、二级分类和成员必须完整保留；不得把归属关系画成流程顺序。",
     "decision_tree": "特别检查：每个判断节点、分支标签和结果节点必须完整；分支标签必须靠近分叉线，不得只用颜色或位置暗示。",
     "timeline_roadmap": "特别检查：每个时间点和事件必须锚定在时间轴上；不得把时间线画成普通卡片列表。",
+    "chart": "特别检查：所有用户提供的类别、系列、数值和单位必须完整出现；不得新增增长率、趋势线、预测数据或未经提供的结论。",
     "scene_illustration": "特别检查：默认少字或无字，只有用户明确提供的可见文字才出现；不得画成信息图或截图。",
 }
 

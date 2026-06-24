@@ -29,6 +29,10 @@ export async function uploadReference(
   return data;
 }
 
+export async function deleteReference(bookId: string, fileId: string): Promise<void> {
+  await client.delete(`/books/${bookId}/references/${fileId}`);
+}
+
 export async function searchReferences(
   bookId: string,
   payload: ReferenceSearchPayload,

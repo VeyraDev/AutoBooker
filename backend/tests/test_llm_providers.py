@@ -44,3 +44,29 @@ def test_zeelin_is_default_when_configured(monkeypatch):
     monkeypatch.setattr(settings, "DASHSCOPE_API_KEY", "qwen-key")
 
     assert default_ai_model() == "zeelin:DeepSeek-V4-Pro"
+
+
+def test_embed_provider_uses_qwen(monkeypatch):
+    from app.llm.providers import embed_model_name, embed_provider_id
+
+    monkeypatch.setattr(settings, "DASHSCOPE_API_KEY", "qwen-key")
+    monkeypatch.setattr(settings, "ZEELIN_API_KEY", "zeelin-key")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "gemini-key")
+    monkeypatch.setattr(settings, "EMBEDDING_MODEL", "text-embedding-v4")
+
+    assert embed_provider_id() == "qwen"
+    assert embed_model_name("qwen") == "text-embedding-v4"
+
+
+def test_embed_provider_requires_dashscope_key(monkeypatch):
+    from app.llm.providers import embed_provider_id
+
+    monkeypatch.setattr(settings, "DASHSCOPE_API_KEY", "")
+    monkeypatch.setattr(settings, "ZEELIN_API_KEY", "zeelin-key")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "gemini-key")
+
+    try:
+        embed_provider_id()
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert "DASHSCOPE_API_KEY" in str(e)

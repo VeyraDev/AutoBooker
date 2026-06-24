@@ -53,6 +53,7 @@ _SUBTYPE_CANVAS: dict[str, CanvasProfile] = {
     "mechanism_diagram": LANDSCAPE_CANVAS,
     "comparison_matrix": LANDSCAPE_CANVAS,
     "timeline_roadmap": LANDSCAPE_CANVAS,
+    "chart": LANDSCAPE_CANVAS,
     "decision_tree": PORTRAIT_CANVAS,
     "taxonomy_map": PORTRAIT_CANVAS,
     "concept_diagram": SQUARE_CANVAS,
