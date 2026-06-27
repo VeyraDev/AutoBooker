@@ -14,10 +14,6 @@ class BookCreate(BaseModel):
     target_audience: str | None = Field(default=None, max_length=500)
     citation_style: CitationStyle | None = None
     target_words: int | None = Field(default=None, ge=1000, le=500000)
-    ai_model: str | None = Field(default="deepseek:deepseek-chat", max_length=80)
-    outline_ai_model: str | None = Field(default=None, max_length=80)
-    constitution_ai_model: str | None = Field(default=None, max_length=80)
-    writing_ai_model: str | None = Field(default=None, max_length=80)
     style_type: StyleType | str | None = None
     topic_tags: list[str] | None = None
 
@@ -42,10 +38,6 @@ class BookUpdate(BaseModel):
     citation_style: CitationStyle | None = None
     target_words: int | None = Field(default=None, ge=1000, le=500000)
     status: BookStatus | None = None
-    ai_model: str | None = Field(default=None, max_length=80)
-    outline_ai_model: str | None = Field(default=None, max_length=80)
-    constitution_ai_model: str | None = Field(default=None, max_length=80)
-    writing_ai_model: str | None = Field(default=None, max_length=80)
     style_type: StyleType | str | None = None
     topic_tags: list[str] | None = None
     topic_brief: str | None = Field(default=None, max_length=20_000)
@@ -90,10 +82,6 @@ class BookOut(BaseModel):
     citation_style: CitationStyle | None
     target_words: int | None
     status: BookStatus
-    ai_model: str | None
-    outline_ai_model: str | None = None
-    constitution_ai_model: str | None = None
-    writing_ai_model: str | None = None
     style_type: str | None
     topic_tags: list[str] | None
     topic_brief: str | None = None
@@ -117,6 +105,10 @@ class SetupRecommendOut(BaseModel):
     target_audience: str = ""
     disciplines: list[str] = Field(default_factory=list)
     topic_brief: str = ""
+
+
+class BookDuplicateIn(BaseModel):
+    copy_outline: bool = False
 
 
 class BookDuplicateOut(BaseModel):

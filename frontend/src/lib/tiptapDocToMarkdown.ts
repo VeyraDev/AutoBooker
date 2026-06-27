@@ -19,6 +19,9 @@ function inlineToMd(nodes: unknown[] | undefined): string {
       out += t;
     } else if (node.type === "hardBreak") {
       out += "\n";
+    } else if (node.type === "mathInline") {
+      const latex = String(((node as Record<string, unknown>).attrs as Record<string, unknown> | undefined)?.latex ?? "");
+      out += `$${latex}$`;
     }
   }
   return out;
@@ -52,8 +55,19 @@ function blockToMd(node: unknown, depth = 0): string {
     return lang ? `\`\`\`${lang}\n${body}\n\`\`\`` : `\`\`\`\n${body}\n\`\`\``;
   }
   if (t === "mathBlock") {
-    const latex = String((n.attrs as Record<string, unknown>)?.latex ?? "");
-    return `$$\n${latex}\n$$`;
+    const attrs = n.attrs as Record<string, unknown>;
+    const latex = String(attrs?.latex ?? "");
+    const numbered = Boolean(attrs?.numbered);
+    const eqNum = String(attrs?.equationNumber ?? "").trim();
+    const label = String(attrs?.label ?? "").trim();
+    let body = `$$\n${latex}\n$$`;
+    if (numbered && eqNum) {
+      body += `\n<!-- eq-number:${eqNum} -->`;
+    }
+    if (label) {
+      body += `\n<!-- eq-label:${label} -->`;
+    }
+    return body;
   }
   if (t === "bulletList" || t === "orderedList") {
     const items = (n.content as unknown[]) ?? [];

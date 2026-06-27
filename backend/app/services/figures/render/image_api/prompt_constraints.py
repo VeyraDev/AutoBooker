@@ -1,7 +1,7 @@
-"""V3 布局脚本提示词约束。
+"""V3 图像提示词约束。
 
-图像接口默认接收布局脚本，不直接接收用户原始请求。
-用户原文只用于分类和布局规划。
+默认路径为 no_layout：用户原文 + 图类/画布/风格约束直接交给 Image API。
+full_v3 布局脚本路径仅作显式回退保留。
 """
 
 from __future__ import annotations
@@ -340,6 +340,15 @@ NEGATIVE_BLOCK = """不要生成黑底高对比图、霓虹科技风、赛博朋
 不要遗漏布局脚本明确要求的步骤、模块、类别、时间点、关系和箭头标签。
 不要把中文翻译成英文，也不要把英文翻译成中文。"""
 
+NO_LAYOUT_NEGATIVE_BLOCK = """不要生成黑底高对比图、霓虹科技风、赛博朋克风、3D 渲染、摄影写实、厚重阴影、复杂渐变、纹理背景、网页首屏、仪表盘 UI、PPT 模板或宣传海报。
+不要生成潦草手绘、黑白线稿草图、低完成度示意图。
+不要在图片顶部生成大字标题，不要把用户输入里的“xxx图”“xxx示意图”“xxx流程图”作为画内标题。
+不要裁切任何文字、节点、箭头或图例。
+不要让连接线穿过文字或节点。
+不要添加用户未提供的标题、英文标签、英文说明、编号、术语或注释。
+不要遗漏用户输入明确要求的步骤、模块、类别、时间点、关系和箭头标签。
+不要把中文翻译成英文，也不要把英文翻译成中文。"""
+
 STRUCTURE_FIDELITY_BLOCK = """1. 图片中的所有节点、模块、分组、时间点、公式、箭头标签和注释，必须来自布局脚本的可见文字白名单。
 2. 不得新增任何不在白名单中的可见文字。
 3. 不得翻译、改写、扩写、缩写或替换任何标题、节点名、标签、注释、术语或公式。
@@ -546,6 +555,52 @@ def build_layout_agent_prompt(
 """.strip()
 
 
+def build_no_layout_image_prompt(user_input: str, subtype: str) -> str:
+    st = _exact_image_subtype(subtype)
+    source = str(user_input or "").strip()
+    module = layout_modules_for_subtype(st)
+    canvas = canvas_guidance_for_subtype(st, user_input=source)
+    return f"""{source}
+
+请根据上面的用户输入生成图片。
+不要调用布局规划器；只把分类得到的当前图类约束、画布建议和统一风格约束作为提示词补充。
+不要输出 JSON、SVG、Mermaid、代码或解释。直接生成图片。
+
+【文字语言要求】
+图片中所有可见文字必须严格使用用户原始输入或数据图脚本中提供的文字。
+不得翻译、改写、扩写或替换任何标题、节点名、标签、注释或术语。
+如果原始文本是中文，保持中文；如果是英文，保持英文；如果中英文混合，保持原始混合形式。
+不得自行新增未提供的英文标签、英文标题、英文缩写或英文说明。
+
+【内容完整性硬要求】
+{LAYOUT_COMPLETENESS_BLOCK}
+
+【当前图类】
+{st}
+
+【画布建议】
+{canvas}
+
+【当前图类布局约束】
+{module["constraints"]}
+
+【当前图类负面约束】
+{module["negative"]}
+
+【当前图类容易失败的点】
+{type_failure_guard(st)}
+
+【图类渲染约束】
+{image_type_render_block(st)}
+
+【统一视觉风格】
+{STYLE_BLOCK}
+
+【通用负面约束】
+{NO_LAYOUT_NEGATIVE_BLOCK}
+""".strip()
+
+
 def build_layoutscript_image_prompt(layout_script: str, subtype: str) -> str:
     st = _exact_image_subtype(subtype)
     return f"""请根据下面的布局脚本生成图片。
@@ -654,5 +709,5 @@ def build_direct_fallback_prompt(user_input: str, subtype: str) -> str:
 
 
 def build_v3_image_prompt(user_input: str, subtype: str) -> str:
-    """Compatibility helper for direct fallback prompts."""
-    return build_direct_fallback_prompt(user_input, subtype)
+    """Compatibility helper for no_layout prompts."""
+    return build_no_layout_image_prompt(user_input, subtype)

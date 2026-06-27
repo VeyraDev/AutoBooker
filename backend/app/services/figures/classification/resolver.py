@@ -8,6 +8,7 @@ from app.services.figures.render.legacy_svg.renderer_rules import has_numeric_da
 from app.services.figures.quality import initial_quality_report, intent_candidate_report
 from app.services.figures.intent.taxonomy import (
     RENDERER_ILLUSTRATION,
+    RENDERER_NEED_DATA,
     RENDERER_STRUCTURED_CHART,
     RENDERER_UPLOAD,
     SUBTYPE_TO_LEGACY_IMAGE_TYPE,
@@ -126,7 +127,7 @@ def _structured_quality(parsed_spec: dict, subtype: str, renderer: str) -> tuple
     if renderer == RENDERER_ILLUSTRATION:
         return warnings, flags, "image_api"
     if st == "chart" or renderer == RENDERER_STRUCTURED_CHART:
-        return warnings, flags, "chart"
+        return warnings, flags, "image_api"
 
     strategy = layout or (policy.strategies[0] if policy.strategies else policy.default_direction)
 
@@ -217,7 +218,7 @@ def _visual_requirements_for(subtype: str, renderer: str) -> list[str]:
     if renderer == RENDERER_ILLUSTRATION:
         if subtype == "scene_illustration":
             return ["场景氛围优先", "默认不出现文字标注框", "构图有前景/背景层次"]
-        return base + ["严格使用布局脚本中的可见文字白名单", "文字清晰完整，不翻译、不改写、不裁切"]
+        return base + ["严格保留用户原文中的可见文字", "文字清晰完整，不翻译、不改写、不裁切"]
     subtype_extras = {
         "process_flow": ["步骤节点等高等宽", "决策菱形与步骤矩形形状明确区分", "反馈边用虚线"],
         "system_architecture": ["层容器背景区分明显", "跨层箭头不交叉", "网关/入口节点用强调色"],
@@ -252,7 +253,7 @@ def build_classification_record(
 
     renderer = resolve_renderer_key(subtype, has_numeric_data=numeric)
     if subtype == "chart":
-        renderer = RENDERER_STRUCTURED_CHART
+        renderer = RENDERER_ILLUSTRATION if numeric else RENDERER_NEED_DATA
     elif subtype == "screenshot":
         renderer = RENDERER_UPLOAD
     else:
@@ -313,8 +314,9 @@ def build_classification_record(
         "secondary_type",
         "do_not_draw_as",
         "layout_risks",
-        "layout_script",
-        "layout_agent_fallback",
+        "image_input",
+        "prompt_mode",
+        "data_chart_script_fallback",
     ):
         if key in parsed.parsed_spec:
             prompt_spec[key] = parsed.parsed_spec.get(key)

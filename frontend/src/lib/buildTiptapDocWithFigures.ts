@@ -1,7 +1,8 @@
 import { ANNOTATION_FULL_RE, FIGURE_CAPTION_LINE_RE } from "@/lib/annotationPatterns";
 import { isRichMarkdown, markdownToTiptapDoc } from "@/lib/markdownToTiptapDoc";
+import { textHasMathDelimiters, tiptapDocHasMathNodes } from "@/lib/migrateMathInTiptapDoc";
 import { plainTextMarkdownToTiptapDoc } from "@/lib/plainTextMarkdownToTiptap";
-import { normalizeGfmMarkdown } from "@/lib/normalizeGfmMarkdown";
+import { countMarkdownTableDataRows, normalizeGfmMarkdown, textHasMarkdownTable, tiptapHasBrokenTable } from "@/lib/normalizeGfmMarkdown";
 
 /** 从 sync 接口返回的「简陋」TipTap 文档中提取 figureBlock 节点（保留 figureId 等 attrs） */
 export function extractFigureBlocksFromDoc(doc: Record<string, unknown>): Record<string, unknown>[] {
@@ -181,14 +182,45 @@ export function tiptapHasNodeType(doc: Record<string, unknown>, nodeType: string
 }
 
 /** text 含代码块/表格/有序列表，但 tiptap_json 未保留对应节点（常见于 sync 后的简陋文档） */
+export function countTiptapTableDataRows(doc: Record<string, unknown>): number {
+  let count = 0;
+
+  function walk(node: unknown) {
+    if (!node || typeof node !== "object") return;
+    const n = node as Record<string, unknown>;
+    if (n.type === "table" && Array.isArray(n.content)) {
+      const rows = (n.content as unknown[]).filter(
+        (r) => r && typeof r === "object" && (r as Record<string, unknown>).type === "tableRow",
+      ) as Record<string, unknown>[];
+      if (rows.length <= 1) return;
+      count += Math.max(0, rows.length - 1);
+      return;
+    }
+    if (Array.isArray(n.content)) {
+      for (const child of n.content) walk(child);
+    }
+  }
+
+  walk(doc);
+  return count;
+}
+
+/** text 含代码块/表格/有序列表，但 tiptap_json 未保留对应节点（常见于 sync 后的简陋文档） */
 export function tiptapMissingMarkdownFeatures(
   text: string,
   doc: Record<string, unknown>,
 ): boolean {
   const s = text.replace(/\r\n/g, "\n");
   if (/```/.test(s) && !tiptapHasNodeType(doc, "codeBlock")) return true;
-  if (/^\s{0,3}\|[^\n]+\|\s*$/m.test(s) && !tiptapHasNodeType(doc, "table")) return true;
+  const textHasTable = textHasMarkdownTable(s);
+  if (textHasTable && (!tiptapHasNodeType(doc, "table") || tiptapHasBrokenTable(doc))) return true;
+  if (textHasTable && tiptapHasNodeType(doc, "table")) {
+    const mdRows = countMarkdownTableDataRows(s);
+    const tjRows = countTiptapTableDataRows(doc);
+    if (mdRows > 0 && tjRows < mdRows) return true;
+  }
   if (/(^|\n)\s*\d+\.\s+\S/.test(s) && !tiptapHasNodeType(doc, "orderedList")) return true;
+  if (textHasMathDelimiters(s) && !tiptapDocHasMathNodes(doc)) return true;
   return false;
 }
 

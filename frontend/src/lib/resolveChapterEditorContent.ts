@@ -8,10 +8,12 @@ import {
 } from "@/lib/buildTiptapDocWithFigures";
 import { ANNOTATION_TEST_RE } from "@/lib/annotationPatterns";
 import { migrateTiptapDoc } from "@/lib/migrateTiptapDoc";
+import { textHasMathDelimiters, tiptapDocHasMathNodes, tiptapDocHasRawMathText } from "@/lib/migrateMathInTiptapDoc";
 import { isRichMarkdown, markdownToTiptapDoc } from "@/lib/markdownToTiptapDoc";
+import { tiptapDocCollapsedButTextStructured } from "@/lib/reconcileTablesFromText";
 import { plainTextMarkdownToTiptapDoc, shouldParseAsMarkdown } from "@/lib/plainTextMarkdownToTiptap";
 
-/** 生成结束 / 从服务端载入时：优先用 Markdown 原文恢复排版，并嵌入图表占位。 */
+/** 生成结束 / 从服务端载入时：优先保留 tiptap_json 结构，仅就地修补公式/表格。 */
 export function resolveChapterEditorContent(
   content: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> {
@@ -29,36 +31,52 @@ export function resolveChapterEditorContent(
   const tjFigureCount = tjObj ? extractFigureBlocksFromDoc(tjObj).length : 0;
   const tiptapIncomplete =
     tjObj && text.trim() ? tiptapMissingMarkdownFeatures(text, tjObj) : false;
+  const needsMathMigration =
+    tjObj != null &&
+    (tiptapDocHasRawMathText(tjObj) ||
+      (text.trim() && textHasMathDelimiters(text) && !tiptapDocHasMathNodes(tjObj)));
+  const collapsedWall =
+    Boolean(tjObj && text.trim() && tiptapDocCollapsedButTextStructured(text, tjObj));
 
   const needsFigureRebuild =
     textHasAnnotations && (!tjHasFigures || tjFigureCount < annotationCount);
 
-  if (tjObj && !needsFigureRebuild && !tiptapIncomplete && (tjHasFigures || tjRich)) {
-    return migrateTiptapDoc(tjObj);
+  if (
+    tjObj &&
+    !needsFigureRebuild &&
+    !tiptapIncomplete &&
+    !needsMathMigration &&
+    !collapsedWall &&
+    (tjHasFigures || tjRich)
+  ) {
+    return migrateTiptapDoc(tjObj, { sourceText: text });
   }
 
   if (text.trim()) {
     const figBlocks = tjObj ? extractFigureBlocksFromDoc(tjObj) : [];
 
-    if (textHasAnnotations || figBlocks.length > 0 || tiptapIncomplete) {
-      return migrateTiptapDoc(buildTiptapDocWithFigures(text, figBlocks));
+    if (needsFigureRebuild || tiptapIncomplete || needsMathMigration || collapsedWall) {
+      if (tjObj && tiptapDocHasRawMathText(tjObj) && !collapsedWall && !tiptapIncomplete) {
+        return migrateTiptapDoc(tjObj, { sourceText: text });
+      }
+      return migrateTiptapDoc(buildTiptapDocWithFigures(text, figBlocks), { sourceText: text });
     }
 
     if (isRichMarkdown(text) && (!tjObj || !tjRich)) {
       try {
-        return migrateTiptapDoc(markdownToTiptapDoc(text));
+        return migrateTiptapDoc(markdownToTiptapDoc(text), { sourceText: text });
       } catch {
         /* fall through */
       }
     }
 
     if (shouldParseAsMarkdown(text)) {
-      return migrateTiptapDoc(plainTextMarkdownToTiptapDoc(text));
+      return migrateTiptapDoc(plainTextMarkdownToTiptapDoc(text), { sourceText: text });
     }
   }
 
   if (tjObj) {
-    return migrateTiptapDoc(tjObj);
+    return migrateTiptapDoc(tjObj, { sourceText: text });
   }
 
   if (text.trim()) {

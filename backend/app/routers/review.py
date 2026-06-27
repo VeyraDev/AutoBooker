@@ -448,7 +448,7 @@ def ai_inline_preview(
                 ),
             },
         ],
-        model=_chat_model_for_book(book),
+        model=_chat_model_for_book(book, user, db),
         max_tokens=1600,
         temperature=0.45,
     ).strip()
@@ -482,7 +482,7 @@ def apply_review_issue(
     try:
         result_text, preview_kind = apply_review_issue_text(
             book=book,
-            chat_model=_chat_model_for_book(book),
+            chat_model=_chat_model_for_book(book, user, db),
             action_type=body.action_type.value,
             quote=body.quote,
             suggestion=body.suggestion,
@@ -568,7 +568,7 @@ def _create_review_report(book, ch: Chapter, md: str, db: Session) -> ChapterRev
     figures = db.query(Figure).filter(Figure.book_id == book.id, Figure.chapter_index == ch.index).all()
     figure_lines = [f"- {f.figure_type.value}: {(f.caption or f.raw_annotation or '')[:120]}" for f in figures]
 
-    agent = ReviewAgent(model=_chat_model_for_book(book))
+    agent = ReviewAgent(model=_chat_model_for_book(book, user, db))
     result = agent.review_chapter(
         chapter_title=ch.title or f"第{ch.index}章",
         body=canonical,
@@ -648,7 +648,7 @@ def _create_review_report(book, ch: Chapter, md: str, db: Session) -> ChapterRev
         issues=anchored,
         total_score=total,
         status=status_text,
-        model_name=_chat_model_for_book(book),
+        model_name=_chat_model_for_book(book, user, db),
         constitution_hash=_hash_text(book.narrative_constitution or ""),
         citation_index_hash=_hash_json([getattr(c, "id", "") for c in citations]),
         figure_index_hash=_hash_json([getattr(f, "id", "") for f in figures]),
@@ -843,7 +843,7 @@ def _replacement_for_issue(book, issue: ChapterReviewIssue, current_md: str) -> 
         return issue.replacement_text.strip(), "replace"
     result_text, preview_kind = apply_review_issue_text(
         book=book,
-        chat_model=_chat_model_for_book(book),
+        chat_model=_chat_model_for_book(book, user, db),
         action_type=issue.action,
         quote=issue.quote or "",
         suggestion=issue.replacement_text or "",
@@ -890,7 +890,7 @@ def _dedupe_replacement_for_issue(
     result = DedupeService().dedupe_text(
         source_text,
         client=LLMClient(),
-        chat_model=_chat_model_for_book(book),
+        chat_model=_chat_model_for_book(book, user, db),
         context=_dedupe_context(current_md, source_text),
     )
     replacement = (result.text or "").strip()

@@ -55,7 +55,7 @@ def _parse_json(text: str) -> dict:
     return json.loads(t)
 
 
-def classify_intent(ctx: AssistantContext) -> dict:
+def classify_intent(ctx: AssistantContext, *, model: str | None = None) -> dict:
     if ctx.explicit_intent:
         return {
             "intent": ctx.explicit_intent,
@@ -79,7 +79,7 @@ def classify_intent(ctx: AssistantContext) -> dict:
     )
     out = client.chat_completion(
         [{"role": "user", "content": prompt}],
-        model=settings.intent_model,
+        model=model or settings.intent_model,
         max_tokens=300,
         temperature=0.1,
     )

@@ -132,8 +132,15 @@ def generate_figure_image_wanx(
     style_type: str = "",
     sub_kind: str = "figure",
     layout_script: str | None = None,
+    prompt_mode: str | None = None,
 ) -> tuple[str, Path]:
-    prompt = build_figure_prompt(description, style_type, sub_kind=sub_kind, layout_script=layout_script)
+    prompt = build_figure_prompt(
+        description,
+        style_type,
+        sub_kind=sub_kind,
+        layout_script=layout_script,
+        prompt_mode=prompt_mode,
+    )
     if not settings.DASHSCOPE_API_KEY.strip():
         raise RuntimeError("DASHSCOPE_API_KEY 未配置，无法调用通义万相")
 

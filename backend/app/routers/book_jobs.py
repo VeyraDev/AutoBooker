@@ -16,7 +16,6 @@ from app.routers.auth import get_current_user
 from app.schemas.book_job import AutoGenerateIn, BookJobOut
 from app.services import book_service
 from app.services.auto_book_job import run_auto_book_job
-from app.llm.providers import default_ai_model
 
 router = APIRouter(prefix="/book-jobs", tags=["book-jobs"])
 
@@ -37,7 +36,6 @@ def start_auto_generate(
             "book_type": BookType(body.book_type),
             "style_type": st,
             "discipline": body.discipline,
-            "ai_model": default_ai_model(),
         },
         db,
     )

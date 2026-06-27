@@ -35,27 +35,17 @@ def test_structured_pipeline_never_empty_nodes():
         assert "grammar_blocked" not in (parsed.parsed_spec or {})
 
 
-def test_orchestrator_v3_trace_uses_layoutscript_image_api():
-    brief = VisualBrief(
-        diagram_type="process_flow",
-        title="flow",
-        content_brief={"main_flow": [{"label": "A"}, {"label": "B"}]},
-        visual_brief={},
-    )
-    with patch("app.services.figures.pipeline.structured_run.extract_visual_brief", return_value=brief), \
-         patch("app.services.figures.intent.understand._call_intent_understanding_llm", return_value={
+def test_orchestrator_v3_trace_uses_no_layout_image_api():
+    with patch("app.services.figures.intent.understand._call_intent_understanding_llm", return_value={
              "route": "image_api",
              "diagram_candidates": [{"type": "process_flow", "score": 0.9}],
-         }), \
-         patch(
-             "app.services.figures.pipeline.orchestrator.generate_layout_script",
-             return_value=("layout for process_flow", False),
-         ):
+         }):
         out = classify_figure_description("A to B flow", use_llm=True, model="dummy")
         steps = [t.get("step") for t in out.get("pipeline_trace") or []]
         assert "type_router" in steps
-        assert "layout_agent" in steps
+        assert "layout_agent" not in steps
         assert "visual_brief" not in steps
         assert "compiler" not in steps
         assert out["renderer"] == "illustration.image_api"
         assert out["parsed_spec"]["render_mode"] == "image_api"
+        assert out["parsed_spec"]["prompt_mode"] == "no_layout"

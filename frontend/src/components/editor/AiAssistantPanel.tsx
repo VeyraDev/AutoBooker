@@ -167,7 +167,7 @@ export default function AiAssistantPanel({
   return (
     <div className="ai-assistant-panel flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">模型</p>
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">助手模型</p>
         <ModelSelector
           aiModel={aiModel}
           catalog={llmCatalog}

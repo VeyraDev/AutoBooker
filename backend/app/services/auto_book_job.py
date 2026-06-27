@@ -199,9 +199,9 @@ def run_auto_book_job(job_id: UUID) -> None:
 
         book.status = BookStatus.auto_generating
         db.commit()
-        outline_model = resolve_book_outline_model(book)
-        constitution_model = resolve_book_constitution_model(book)
-        writing_model = resolve_book_writing_model(book)
+        outline_model = resolve_book_outline_model(book, user)
+        constitution_model = resolve_book_constitution_model(book, user)
+        writing_model = resolve_book_writing_model(book, user)
 
         _update_job(db, job, step=BookJobStep.setting, pct=10)
         _infer_book_settings(book, writing_model)

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { patchUserAiModels } from "@/api/auth";
 import { EXPORT_EXT, exportBook, getBook, updateBook, duplicateBook, type ExportFormat } from "@/api/books";
 import {
   cancelChapterGeneration,
@@ -26,6 +27,7 @@ import {
 import AddChapterDialog from "@/components/editor/AddChapterDialog";
 import type { AddChapterFormValues } from "@/components/editor/AddChapterDialog";
 import BookSettingsModal from "@/components/editor/BookSettingsModal";
+import DuplicateBookDialog from "@/components/editor/DuplicateBookDialog";
 import ChapterTiptapEditor, { type ChapterEditorHandle } from "@/components/editor/ChapterTiptapEditor";
 import EditorTopBar from "@/components/editor/EditorTopBar";
 import OutlineDrawer from "@/components/editor/OutlineDrawer";
@@ -40,8 +42,9 @@ import { useAutoSave } from "@/hooks/useAutoSave";
 import { isCitationInsufficientError, useChapterStream } from "@/hooks/useChapterStream";
 import { useLlmModels } from "@/hooks/useLlmModels";
 import { useDailyWordDelta } from "@/hooks/useDailyWordDelta";
-import { effectiveSceneModel } from "@/lib/bookAiModels";
+import { resolveUserSceneModel } from "@/lib/bookAiModels";
 import { phaseOf, type Phase } from "@/lib/bookStatus";
+import { useAuthStore } from "@/stores/authStore";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import type { Chapter } from "@/types/chapter";
 import { isChapterBodyEffectivelyEmpty } from "@/lib/chapterBodyEmpty";
@@ -150,6 +153,8 @@ export default function BookEditorPage() {
   const [quotedFigureId, setQuotedFigureId] = useState<string | null>(null);
   const [quotedFigureAnnotation, setQuotedFigureAnnotation] = useState("");
   const [bookSettingsModalOpen, setBookSettingsModalOpen] = useState(false);
+  const [duplicateBookOpen, setDuplicateBookOpen] = useState(false);
+  const [duplicateBookBusy, setDuplicateBookBusy] = useState(false);
   const [editorSelectionText, setEditorSelectionText] = useState("");
   const [editorChapterContext, setEditorChapterContext] = useState("");
 
@@ -169,6 +174,8 @@ export default function BookEditorPage() {
   const { start: startStream } = useChapterStream();
   const { status: saveStatus, savedAt, scheduleSave } = useAutoSave();
   const { recordChars } = useDailyWordDelta(bookId);
+  const authUser = useAuthStore((s) => s.user);
+  const setAuthUser = useAuthStore((s) => s.setUser);
 
   const bookQuery = useQuery({
     queryKey: ["book", bookId],
@@ -708,14 +715,17 @@ export default function BookEditorPage() {
   });
 
   const modelMutation = useMutation({
-    mutationFn: (writing_ai_model: string) =>
-      updateBook(bookId!, { writing_ai_model, ai_model: writing_ai_model }),
-    onSuccess: (b) => qc.setQueryData(["book", bookId], b),
+    mutationFn: (writing_ai_model: string) => patchUserAiModels({ writing_ai_model }),
+    onSuccess: (u) => setAuthUser(u),
   });
 
-  const writingModel = book
-    ? effectiveSceneModel("writing", { book, catalog: llmModelsQuery.data })
-    : null;
+  const assistantModelMutation = useMutation({
+    mutationFn: (assistant_ai_model: string) => patchUserAiModels({ assistant_ai_model }),
+    onSuccess: (u) => setAuthUser(u),
+  });
+
+  const writingModel = resolveUserSceneModel("writing", authUser?.ai_models, llmModelsQuery.data);
+  const assistantModel = resolveUserSceneModel("assistant", authUser?.ai_models, llmModelsQuery.data);
 
   function toastAxiosDetail(e: unknown, fallback: string): string {
     const ax = axios.isAxiosError(e) ? e : null;
@@ -740,18 +750,31 @@ export default function BookEditorPage() {
     if (!bookId) return false;
     setOutlineBusy(true);
     try {
-      await generateOutline(bookId, payload);
+      const nextOutline = await generateOutline(bookId, payload);
+      qc.setQueryData(["outline", bookId], nextOutline);
+      try {
+        const freshBook = await getBook(bookId);
+        qc.setQueryData(["book", bookId], freshBook);
+      } catch {
+        /* 回退到 invalidate 后的 refetch */
+      }
       await invalidateAll();
       toast.success("大纲已更新");
       return true;
     } catch (e) {
       console.warn("generateOutline failed", axios.isAxiosError(e) ? e.response?.status : e, axios.isAxiosError(e) ? e.response?.data : e);
       toast.error(toastAxiosDetail(e, "大纲生成失败"));
+      try {
+        const freshBook = await getBook(bookId);
+        qc.setQueryData(["book", bookId], freshBook);
+      } catch {
+        /* ignore */
+      }
       return false;
     } finally {
       setOutlineBusy(false);
-      await qc.invalidateQueries({ queryKey: ["book", bookId] });
-      await qc.invalidateQueries({ queryKey: ["outline", bookId] });
+      await qc.refetchQueries({ queryKey: ["book", bookId] });
+      await qc.refetchQueries({ queryKey: ["outline", bookId] });
     }
   }
 
@@ -1185,6 +1208,7 @@ export default function BookEditorPage() {
           book={book}
           bookId={bookId}
           outline={outline}
+          outlineBusy={outlineBusy}
           outlineGeneratingUi={outlineGeneratingUi}
           onPatchBook={(b) => qc.setQueryData(["book", bookId], b)}
           onGenerateOutline={handleGenerateOutline}
@@ -1581,10 +1605,10 @@ export default function BookEditorPage() {
                     activeChapter={selectedMeta}
                     autoSaveStatus={saveStatus}
                     savedAt={savedAt}
-                    aiModel={writingModel}
+                    aiModel={assistantModel}
                     llmCatalog={llmModelsQuery.data}
                     llmCatalogLoading={llmModelsQuery.isLoading}
-                    onModelChange={(m) => modelMutation.mutate(m)}
+                    onModelChange={(m) => assistantModelMutation.mutate(m)}
                     activeTab={panelTab}
                     onTabChange={setPanelTab}
                     assistantSeed={assistantSeed}
@@ -1743,24 +1767,7 @@ export default function BookEditorPage() {
                   <button
                     type="button"
                     className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                    onClick={() => {
-                      if (
-                        !window.confirm(
-                          "将复制书稿设定与用户资料，不复制大纲和正文，原书不会改变。是否继续？",
-                        )
-                      ) {
-                        return;
-                      }
-                      void (async () => {
-                        try {
-                          const { book: newBook, message } = await duplicateBook(bookId);
-                          toast.success(message);
-                          navigate(`/app/books/${newBook.id}`);
-                        } catch {
-                          toast.error("创建副本失败");
-                        }
-                      })();
-                    }}
+                    onClick={() => setDuplicateBookOpen(true)}
                   >
                     基于本书新建
                   </button>
@@ -1803,6 +1810,32 @@ export default function BookEditorPage() {
         onClose={() => setBookSettingsModalOpen(false)}
         onSaved={(b) => qc.setQueryData(["book", bookId], b)}
       />
+
+      {book ? (
+        <DuplicateBookDialog
+          open={duplicateBookOpen}
+          bookTitle={book.title}
+          hasOutline={chapters.length > 0}
+          chapterCount={chapters.length}
+          busy={duplicateBookBusy}
+          onClose={() => !duplicateBookBusy && setDuplicateBookOpen(false)}
+          onConfirm={(copyOutline) => {
+            void (async () => {
+              setDuplicateBookBusy(true);
+              try {
+                const { book: newBook, message } = await duplicateBook(bookId, { copy_outline: copyOutline });
+                toast.success(message);
+                setDuplicateBookOpen(false);
+                navigate(`/app/books/${newBook.id}`);
+              } catch {
+                toast.error("创建副本失败");
+              } finally {
+                setDuplicateBookBusy(false);
+              }
+            })();
+          }}
+        />
+      ) : null}
 
       {auxPanelTrigger}
     </>

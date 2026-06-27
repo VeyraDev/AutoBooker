@@ -1,7 +1,7 @@
 import { BubbleMenu, EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/core";
 import { isTextSelection } from "@tiptap/core";
-import { Bold, Loader2, MoreHorizontal } from "lucide-react";
+import { Bold, Loader2, MoreHorizontal, Sigma } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -14,6 +14,7 @@ import { TextSelection, type EditorState } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 
 import EditorErrorBoundary from "@/components/common/EditorErrorBoundary";
+import FormulaEditorDialog from "@/components/editor/FormulaEditorDialog";
 import { ANNOTATION_TEST_RE } from "@/lib/annotationPatterns";
 import {
   refreshChapterFigures,
@@ -25,15 +26,15 @@ import {
 import { editChapterSelection, type SelectionEditMode } from "@/api/chapters";
 import { FigureBlockContext } from "@/contexts/FigureBlockContext";
 import { getChapterEditorExtensions } from "@/lib/chapterEditorExtensions";
+import type { FormulaEditRequest } from "@/lib/formulaEditorBridge";
 import { aiInlinePreviewKey, type AiInlinePreviewData } from "@/lib/tiptap/AiInlinePreview";
 import {
-  buildTiptapDocWithFigures,
   enrichSyncedTiptapDoc,
-  extractFigureBlocksFromDoc,
   tiptapHasFigureBlocks,
   tiptapHasRichStructure,
   tiptapMissingMarkdownFeatures,
 } from "@/lib/buildTiptapDocWithFigures";
+import { textHasMathDelimiters, tiptapDocHasMathNodes } from "@/lib/migrateMathInTiptapDoc";
 import { cleanSuggestionText } from "@/lib/cleanSuggestion";
 import { migrateTiptapDoc } from "@/lib/migrateTiptapDoc";
 import type { EditorAiPreviewPayload } from "@/types/aiPreview";
@@ -43,6 +44,7 @@ import { tiptapDocToMarkdown } from "@/lib/tiptapDocToMarkdown";
 import { isRichMarkdown, markdownToTiptapDoc } from "@/lib/markdownToTiptapDoc";
 import { hasUnlinkedFigureBlocks, syncFigureBlocksWithServer } from "@/lib/syncFigureBlocksWithServer";
 import { normalizeGfmMarkdown } from "@/lib/normalizeGfmMarkdown";
+import { tiptapDocCollapsedButTextStructured } from "@/lib/reconcileTablesFromText";
 import { plainTextMarkdownToTiptapDoc, shouldParseAsMarkdown } from "@/lib/plainTextMarkdownToTiptap";
 import type { Chapter } from "@/types/chapter";
 
@@ -114,6 +116,10 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
 ) {
   const [aiBusy, setAiBusy] = useState<SelectionEditMode | null>(null);
   const [headingMenuOpen, setHeadingMenuOpen] = useState(false);
+  const [formulaMenuOpen, setFormulaMenuOpen] = useState(false);
+  const [formulaDialogOpen, setFormulaDialogOpen] = useState(false);
+  const [formulaDialogInitial, setFormulaDialogInitial] = useState<FormulaEditRequest | null>(null);
+  const formulaClickRef = useRef<(req: FormulaEditRequest) => void>(() => {});
   const figureSyncAttemptRef = useRef<string | null>(null);
   const figureSyncInFlightRef = useRef(false);
   const figureRefreshDoneRef = useRef<string | null>(null);
@@ -128,12 +134,23 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
   bubbleGateRef.current = { readOnly, stream: streamingMarkdown !== null };
 
   const previewHandlersRef = useRef({ onAccept: () => {}, onReject: () => {} });
+  formulaClickRef.current = (req) => {
+    setFormulaDialogInitial(req);
+    setFormulaDialogOpen(true);
+  };
+
   const extensions = useMemo(
     () =>
-      getChapterEditorExtensions("从这里开始撰写本章正文…", {
-        onAccept: () => previewHandlersRef.current.onAccept(),
-        onReject: () => previewHandlersRef.current.onReject(),
-      }),
+      getChapterEditorExtensions(
+        "从这里开始撰写本章正文…",
+        {
+          onAccept: () => previewHandlersRef.current.onAccept(),
+          onReject: () => previewHandlersRef.current.onReject(),
+        },
+        {
+          onFormulaClick: (req) => formulaClickRef.current(req),
+        },
+      ),
     [],
   );
 
@@ -464,14 +481,15 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     if (!text.trim() || !tj || typeof tj !== "object") return;
     const tjRecord = tj as Record<string, unknown>;
     const incomplete = tiptapMissingMarkdownFeatures(text, tjRecord);
-    if (!incomplete && tiptapHasRichStructure(tjRecord)) return;
-    if (!incomplete && tiptapHasFigureBlocks(tjRecord)) return;
-    if (!isRichMarkdown(text)) return;
+    const missingMath =
+      textHasMathDelimiters(text) && !tiptapDocHasMathNodes(tjRecord);
+    const collapsedWall = tiptapDocCollapsedButTextStructured(text, tjRecord);
+    if (!incomplete && !missingMath && !collapsedWall && tiptapHasRichStructure(tjRecord)) return;
+    if (!incomplete && !missingMath && !collapsedWall && tiptapHasFigureBlocks(tjRecord)) return;
+    if (!isRichMarkdown(text) && !missingMath && !collapsedWall) return;
     if (formatRecoveredChapterRef.current === chapter.id) return;
     formatRecoveredChapterRef.current = chapter.id;
-    const figBlocks = extractFigureBlocksFromDoc(tj as Record<string, unknown>);
-    const rich = buildTiptapDocWithFigures(text, figBlocks);
-    safeSetContent(migrateTiptapDoc(rich));
+    safeSetContent(resolveChapterEditorContent(c));
   }, [chapter.id, chapter.content, editor, readOnly]);
 
   useEffect(() => {
@@ -903,6 +921,85 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     setHeadingMenuOpen(false);
   }
 
+  function openInsertFormula(kind: "inline" | "block") {
+    setFormulaDialogInitial({
+      mode: kind === "block" ? "insert-block" : "insert-inline",
+      latex: "",
+    });
+    setFormulaDialogOpen(true);
+  }
+
+  function handleFormulaConfirm(result: {
+    mode: FormulaEditRequest["mode"];
+    latex: string;
+    pos?: number;
+    nodeType?: FormulaEditRequest["nodeType"];
+    numbered?: boolean;
+    equationNumber?: string;
+    label?: string;
+  }) {
+    if (!editor) return;
+    const latex = result.latex.trim();
+    if (!latex) return;
+
+    if (result.mode === "edit" && result.pos != null) {
+      const existing = editor.state.doc.nodeAt(result.pos);
+      if (!existing) return;
+      const targetType = result.nodeType ?? (existing.type.name as "mathInline" | "mathBlock");
+      const typeChanged = existing.type.name !== targetType;
+
+      if (typeChanged) {
+        const nodeSize = existing.nodeSize;
+        editor
+          .chain()
+          .focus()
+          .deleteRange({ from: result.pos, to: result.pos + nodeSize })
+          .insertContentAt(result.pos, {
+            type: targetType,
+            attrs:
+              targetType === "mathBlock"
+                ? {
+                    latex,
+                    numbered: result.numbered ?? false,
+                    equationNumber: result.equationNumber ?? "",
+                    label: result.label ?? "",
+                  }
+                : { latex },
+          })
+          .run();
+        return;
+      }
+
+      if (targetType === "mathBlock") {
+        editor.commands.updateBlockMath({
+          latex,
+          pos: result.pos,
+          numbered: result.numbered,
+          equationNumber: result.equationNumber,
+          label: result.label,
+        });
+      } else {
+        editor.commands.updateInlineMath({ latex, pos: result.pos });
+      }
+      return;
+    }
+
+    if (result.nodeType === "mathBlock") {
+      editor
+        .chain()
+        .focus()
+        .insertBlockMath({
+          latex,
+          numbered: result.numbered ?? false,
+          equationNumber: result.equationNumber ?? "",
+          label: result.label ?? "",
+        })
+        .run();
+      return;
+    }
+    editor.chain().focus().insertInlineMath({ latex }).run();
+  }
+
   return (
     <EditorErrorBoundary key={chapter.id ? `ch-${chapter.id}` : `idx-${chapter.index}`}>
       <FigureBlockContext.Provider value={figureContextValue}>
@@ -962,6 +1059,44 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
               ) : null}
             </div>
             <span className="mx-0.5 w-px self-stretch bg-slate-200" />
+            <div className="relative">
+              <button
+                type="button"
+                disabled={readOnly}
+                className="rounded px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-violet-50 disabled:opacity-50"
+                title="插入公式"
+                onClick={() => setFormulaMenuOpen((v) => !v)}
+              >
+                <Sigma className="h-4 w-4" />
+              </button>
+              {formulaMenuOpen ? (
+                <>
+                  <div className="fixed inset-0 z-[150]" aria-hidden onClick={() => setFormulaMenuOpen(false)} />
+                  <div className="absolute left-0 top-full z-[160] mt-1 min-w-[9rem] rounded-lg border border-slate-200 bg-white py-1 text-xs shadow-lg">
+                    <button
+                      type="button"
+                      className="block w-full px-3 py-1.5 text-left hover:bg-slate-50"
+                      onClick={() => {
+                        setFormulaMenuOpen(false);
+                        openInsertFormula("inline");
+                      }}
+                    >
+                      行内公式 $…$
+                    </button>
+                    <button
+                      type="button"
+                      className="block w-full px-3 py-1.5 text-left hover:bg-slate-50"
+                      onClick={() => {
+                        setFormulaMenuOpen(false);
+                        openInsertFormula("block");
+                      }}
+                    >
+                      独立公式 $$…$$
+                    </button>
+                  </div>
+                </>
+              ) : null}
+            </div>
             <button
               type="button"
               disabled={readOnly || aiBusy !== null}
@@ -1023,6 +1158,15 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
       )}
       </div>
       </FigureBlockContext.Provider>
+      <FormulaEditorDialog
+        open={formulaDialogOpen}
+        initial={formulaDialogInitial}
+        onClose={() => {
+          setFormulaDialogOpen(false);
+          setFormulaDialogInitial(null);
+        }}
+        onConfirm={handleFormulaConfirm}
+      />
     </EditorErrorBoundary>
   );
 });

@@ -39,6 +39,7 @@ async def assistant(
             book_id=book_id,
             chapter_index=chapter_index,
             db=db,
+            owner=user,
             chart_type=body.chart_type,
             sub_kind=body.sub_kind,
         )

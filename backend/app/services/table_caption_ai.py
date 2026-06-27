@@ -6,6 +6,8 @@ import logging
 import re
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from app.llm.client import LLMClient
 from app.llm.providers import resolve_book_writing_model
 from app.models.book import Book
@@ -73,6 +75,7 @@ def suggest_table_caption(
     book: Book,
     context: str = "",
     fallback: str = "本章数据表",
+    db: Session | None = None,
 ) -> str:
     preview = _table_preview_markdown(table)
     if not preview.strip():
@@ -93,7 +96,7 @@ def suggest_table_caption(
         client = LLMClient()
         raw = client.chat_completion(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            model=resolve_book_writing_model(book),
+            model=resolve_book_writing_model(book, db=db),
             temperature=0.3,
             max_tokens=64,
         )
@@ -111,6 +114,7 @@ def suggest_figure_caption(
     book: Book,
     context: str = "",
     fallback: str = "本章示意图",
+    db: Session | None = None,
 ) -> str:
     ctx = (context or "").strip()[-800:]
     source = (raw_annotation or "").strip()[:1200]
@@ -128,7 +132,7 @@ def suggest_figure_caption(
         client = LLMClient()
         raw = client.chat_completion(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            model=resolve_book_writing_model(book),
+            model=resolve_book_writing_model(book, db=db),
             temperature=0.2,
             max_tokens=64,
         )

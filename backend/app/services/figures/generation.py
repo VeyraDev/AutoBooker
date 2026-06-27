@@ -30,8 +30,8 @@ class FigureGenerationError(ValueError):
         self.quality_report = quality_report or {}
 
 
-def chat_model_for_book(book: Book) -> str:
-    return resolve_book_writing_model(book)
+def chat_model_for_book(book: Book, user=None, db=None) -> str:
+    return resolve_book_writing_model(book, user=user, db=db)
 
 
 def figure_output_path(book_id: UUID, figure_id: UUID, *, chapter_index: int = 0) -> Path:
@@ -133,7 +133,7 @@ def generate_figure_asset(
         chapter_title=chapter_title,
         legacy_tag=legacy_tag,
         user_hint=user_hint,
-        model=chat_model_for_book(book),
+        model=chat_model_for_book(book, db=db),
         use_llm=True,
     )
 
@@ -144,7 +144,7 @@ def generate_figure_asset(
     candidate_png = candidate_base.with_suffix(".png")
     candidate_svg = candidate_base.with_suffix(".svg")
 
-    model = chat_model_for_book(book)
+    model = chat_model_for_book(book, db=db)
     render_result = None
     png: Path | None = None
     rendered_svg: Path | None = None

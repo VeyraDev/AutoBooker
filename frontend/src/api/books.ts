@@ -23,18 +23,28 @@ export async function updateBook(id: string, payload: BookUpdatePayload): Promis
   return data;
 }
 
+/** 设定推荐会同步调用 LLM，默认 axios 超时（15s）过短。 */
+const SETUP_RECOMMEND_TIMEOUT_MS = 120_000;
+
 export async function setupRecommend(
   id: string,
   options?: { force?: boolean },
 ): Promise<SetupRecommendResult> {
-  const { data } = await client.post<SetupRecommendResult>(`/books/${id}/setup-recommend`, {
-    force: options?.force ?? false,
-  });
+  const { data } = await client.post<SetupRecommendResult>(
+    `/books/${id}/setup-recommend`,
+    { force: options?.force ?? false },
+    { timeout: SETUP_RECOMMEND_TIMEOUT_MS },
+  );
   return data;
 }
 
-export async function duplicateBook(id: string): Promise<{ book: Book; message: string }> {
-  const { data } = await client.post<{ book: Book; message: string }>(`/books/${id}/duplicate`);
+export async function duplicateBook(
+  id: string,
+  options?: { copy_outline?: boolean },
+): Promise<{ book: Book; message: string }> {
+  const { data } = await client.post<{ book: Book; message: string }>(`/books/${id}/duplicate`, {
+    copy_outline: options?.copy_outline ?? false,
+  });
   return data;
 }
 

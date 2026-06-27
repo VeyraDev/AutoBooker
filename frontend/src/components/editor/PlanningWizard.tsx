@@ -12,6 +12,7 @@ type Props = {
   book: Book;
   bookId: string;
   outline: OutlineBookResponse | undefined;
+  outlineBusy: boolean;
   outlineGeneratingUi: boolean;
   onPatchBook: (b: Book) => void;
   onGenerateOutline: (payload: {
@@ -55,6 +56,7 @@ export default function PlanningWizard({
   book,
   bookId,
   outline,
+  outlineBusy,
   outlineGeneratingUi,
   onPatchBook,
   onGenerateOutline,
@@ -76,10 +78,10 @@ export default function PlanningWizard({
   }, [bookId]);
 
   useEffect(() => {
-    if (outline && outline.chapters.length > 0 && book.status === "outline_ready") {
+    if (outline && outline.chapters.length > 0) {
       setWizardStep((s) => (s === 1 ? 2 : s));
     }
-  }, [book.status, outline?.chapters.length]);
+  }, [outline?.chapters.length]);
 
   async function handleFabGenerate() {
     try {
@@ -139,7 +141,7 @@ export default function PlanningWizard({
             <div className="mt-12 flex justify-end border-t border-slate-100/90 pt-10">
               <button
                 type="button"
-                disabled={outlineGeneratingUi}
+                disabled={outlineBusy}
                 onClick={() =>
                   step1SaveOnlyFab
                     ? void handleFabSaveOnly()
@@ -149,15 +151,23 @@ export default function PlanningWizard({
                 }
                 className="btn-primary shadow-md"
               >
-                {outlineGeneratingUi
+                {outlineBusy
                   ? "大纲生成中…"
-                  : step1SaveOnlyFab
-                    ? "保存设定"
-                    : "保存并生成大纲 →"}
+                  : book.status === "outline_generating"
+                    ? "重新生成大纲 →"
+                    : step1SaveOnlyFab
+                      ? "保存设定"
+                      : "保存并生成大纲 →"}
               </button>
             </div>
           </>
         )}
+
+        {wizardStep === 2 && !outline && outlineGeneratingUi ? (
+          <div className="card border border-slate-200/80 bg-white/85 p-10 text-center text-sm text-slate-600">
+            大纲生成中，请稍候…
+          </div>
+        ) : null}
 
         {wizardStep === 2 && outline && (
           <OutlineReviewPanel
@@ -165,13 +175,14 @@ export default function PlanningWizard({
             book={book}
             bookId={bookId}
             outline={outline}
-            outlineGeneratingUi={outlineGeneratingUi}
+            outlineGeneratingUi={outlineBusy}
             onGenerateOutline={async () => {
-              await onGenerateOutline({
+              const ok = await onGenerateOutline({
                 topic_override: null,
                 target_audience: book.target_audience?.trim() || null,
                 topic_brief: book.topic_brief?.trim() || null,
               });
+              if (ok) setWizardStep(2);
             }}
             onOutlinePatched={onOutlinePatched}
             onDeleteChapter={onDeleteChapter}

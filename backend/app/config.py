@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     INTENT_MODEL: str = ""
     """FIGURE 插图管道：zeelin | openai | wanx | auto（有 ZEELIN_API_KEY 时默认 zeelin）。"""
     FIGURE_IMAGE_PROVIDER: str = "auto"
+    """no_layout | full_v3；默认 no_layout，用户原文 + 图类约束直接进 Image API。"""
+    FIGURE_PROMPT_MODE: str = "no_layout"
     OPENAI_IMAGE_MODEL: str = "gpt-image-1"
     OPENAI_IMAGE_SIZE: str = "1024x1024"
     OPENAI_IMAGE_QUALITY: str = "medium"

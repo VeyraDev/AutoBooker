@@ -22,3 +22,5 @@ graphviz>=0.20
 matplotlib>=3.8
 Pillow>=10.0
 zhconv>=1.4.3
+latex2mathml>=3.77.0
+mathml2omml>=0.0.2

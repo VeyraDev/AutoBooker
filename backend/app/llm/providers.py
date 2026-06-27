@@ -325,35 +325,57 @@ def normalize_ai_model(raw: str | None) -> str:
     return format_ai_model(provider_id, model)
 
 
-def resolve_book_ai_model(book) -> str:
-    """从书稿读取并规范化 ai_model（通用回退）。"""
-    raw = (getattr(book, "ai_model", None) or "").strip()
-    if not raw:
+def resolve_book_ai_model(book, user=None, db=None) -> str:
+    """兼容旧名：等同于写作场景用户模型。"""
+    return resolve_book_writing_model(book, user=user, db=db)
+
+
+def _user_for_book(book, user=None, db=None):
+    if user is not None:
+        return user
+    owner = getattr(book, "owner", None)
+    if owner is not None:
+        return owner
+    if db is not None:
+        from app.models.user import User
+
+        uid = getattr(book, "user_id", None)
+        if uid:
+            return db.get(User, uid)
+    return None
+
+
+def resolve_book_outline_model(book, user=None, db=None) -> str:
+    return resolve_user_scene_model(_user_for_book(book, user, db), "outline")
+
+
+def resolve_book_constitution_model(book, user=None, db=None) -> str:
+    return resolve_user_scene_model(_user_for_book(book, user, db), "constitution")
+
+
+def resolve_book_writing_model(book, user=None, db=None) -> str:
+    return resolve_user_scene_model(_user_for_book(book, user, db), "writing")
+
+
+def resolve_user_scene_model(user, scene: str) -> str:
+    """用户在某场景的模型；未设置时使用系统默认。"""
+    field_map = {
+        "outline": "outline_ai_model",
+        "constitution": "constitution_ai_model",
+        "writing": "writing_ai_model",
+        "assistant": "assistant_ai_model",
+    }
+    field = field_map.get(scene)
+    if not field or user is None:
         return default_ai_model()
-    return normalize_ai_model(raw)
-
-
-def _resolve_scene_model(book, field_name: str) -> str:
-    """按场景字段解析模型，空则回退 writing_ai_model / ai_model。"""
-    raw = (getattr(book, field_name, None) or "").strip()
+    raw = (getattr(user, field, None) or "").strip()
     if raw:
         return normalize_ai_model(raw)
-    writing = (getattr(book, "writing_ai_model", None) or "").strip()
-    if writing and field_name in ("outline_ai_model", "constitution_ai_model"):
-        return normalize_ai_model(writing)
-    return resolve_book_ai_model(book)
+    return default_ai_model()
 
 
-def resolve_book_outline_model(book) -> str:
-    return _resolve_scene_model(book, "outline_ai_model")
-
-
-def resolve_book_constitution_model(book) -> str:
-    return _resolve_scene_model(book, "constitution_ai_model")
-
-
-def resolve_book_writing_model(book) -> str:
-    return _resolve_scene_model(book, "writing_ai_model")
+def resolve_assistant_model(user) -> str:
+    return resolve_user_scene_model(user, "assistant")
 
 
 def _zeelin_models_catalog() -> dict:

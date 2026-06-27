@@ -33,6 +33,6 @@ def refresh_figure_classification(
         chapter_title=chapter_title,
         legacy_tag=legacy,
         user_hint=user_hint,
-        model=resolve_book_writing_model(book),
+        model=resolve_book_writing_model(book, db=db),
         use_llm=use_llm,
     )

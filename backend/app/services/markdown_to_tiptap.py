@@ -114,7 +114,37 @@ def _parse_table_rows(lines: list[str], start: int) -> tuple[dict[str, Any] | No
     return {"type": "table", "content": table_rows}, i
 
 
+def _parse_paragraph_inline(text: str) -> list[dict[str, Any]]:
+    """段落内联：支持 $...$、\\(...\\) 行内公式。"""
+    from app.services.math_tokenizer import split_inline_math
+
+    nodes: list[dict[str, Any]] = []
+    for seg in split_inline_math(text):
+        if seg.kind == "inline":
+            nodes.append({"type": "mathInline", "attrs": {"latex": seg.latex}})
+        elif seg.value:
+            nodes.extend(_parse_inline_bold(seg.value))
+    if not nodes:
+        nodes.append({"type": "text", "text": text or ""})
+    return nodes
+
+
 def markdown_body_to_tiptap_blocks(body: str) -> list[dict[str, Any]]:
+    from app.services.math_tokenizer import tokenize_math_in_markdown
+
+    segments = tokenize_math_in_markdown(body or "")
+    blocks: list[dict[str, Any]] = []
+    for seg in segments:
+        if seg.kind == "block":
+            blocks.append({"type": "mathBlock", "attrs": {"latex": seg.latex}})
+        elif seg.kind == "text" and seg.value.strip():
+            blocks.extend(_markdown_text_to_tiptap_blocks(seg.value))
+    if not blocks:
+        blocks.append({"type": "paragraph", "content": []})
+    return blocks
+
+
+def _markdown_text_to_tiptap_blocks(body: str) -> list[dict[str, Any]]:
     normalized = normalize_gfm_tables(body or "").replace("\r\n", "\n")
     lines = normalized.split("\n")
     blocks: list[dict[str, Any]] = []
@@ -126,7 +156,7 @@ def markdown_body_to_tiptap_blocks(body: str) -> list[dict[str, Any]]:
         t = "\n".join(para_lines).strip()
         para_lines.clear()
         if t:
-            block: dict[str, Any] = {"type": "paragraph", "content": _parse_inline_bold(t)}
+            block: dict[str, Any] = {"type": "paragraph", "content": _parse_paragraph_inline(t)}
             if CAPTION_LINE_RE.match(t):
                 block["attrs"] = {"textAlign": "center"}
             blocks.append(block)
@@ -143,7 +173,7 @@ def markdown_body_to_tiptap_blocks(body: str) -> list[dict[str, Any]]:
                         "content": [
                             {
                                 "type": "paragraph",
-                                "content": _parse_inline_bold(
+                                "content": _parse_paragraph_inline(
                                     re.sub(r"^\s*[-*]\s+", "", raw).strip()
                                 ),
                             }
@@ -167,7 +197,7 @@ def markdown_body_to_tiptap_blocks(body: str) -> list[dict[str, Any]]:
                         "content": [
                             {
                                 "type": "paragraph",
-                                "content": _parse_inline_bold(
+                                "content": _parse_paragraph_inline(
                                     re.sub(r"^\s*\d+\.\s+", "", raw).strip()
                                 ),
                             }

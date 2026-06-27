@@ -13,6 +13,7 @@ from app.constants.style_types import STYLE_TYPE_LABELS
 from app.llm.client import LLMClient
 from app.llm.providers import resolve_book_outline_model
 from app.models.book import Book, BookType
+from app.models.user import User
 from app.prompts.setup_recommend import SETUP_RECOMMEND_SYSTEM, SETUP_RECOMMEND_USER_TEMPLATE
 from app.utils.json_llm import parse_llm_json
 
@@ -63,6 +64,7 @@ def _normalize_disciplines(items: Any) -> list[str]:
 
 def recommend_book_setup(
     book: Book,
+    user: User,
     db: Session,
     *,
     force: bool = False,
@@ -93,22 +95,40 @@ def recommend_book_setup(
         style_type_label=STYLE_TYPE_LABELS.get(st, st or "（未指定）"),
         disciplines="、".join(disciplines_existing) if disciplines_existing else "（无）",
     )
-    model = resolve_book_outline_model(book)
+    model = resolve_book_outline_model(book, user, db)
     client = LLMClient()
-    try:
-        out = client.chat_completion(
-            [
-                {"role": "system", "content": SETUP_RECOMMEND_SYSTEM},
-                {"role": "user", "content": user_msg},
-            ],
-            model=model,
-            max_tokens=1200,
-            temperature=0.35,
-        )
-        data = parse_llm_json(out)
-    except Exception as exc:
-        logger.warning("setup recommend failed book=%s: %s", book.id, exc)
-        raise
+    last_err: str | None = None
+    data: dict[str, Any] | None = None
+    for attempt in range(3):
+        extra = ""
+        if last_err:
+            extra = (
+                f"\n\n上次输出不是合法 JSON（{last_err}）。"
+                "请严格只输出 JSON：字符串内换行写 \\n，内部双引号写 \\\"，不要 markdown 代码块。"
+            )
+        try:
+            out = client.chat_completion(
+                [
+                    {"role": "system", "content": SETUP_RECOMMEND_SYSTEM},
+                    {"role": "user", "content": user_msg + extra},
+                ],
+                model=model,
+                max_tokens=1200,
+                temperature=0.35,
+            )
+            data = parse_llm_json(out)
+            break
+        except Exception as exc:
+            last_err = str(exc)
+            logger.warning(
+                "setup recommend parse failed book=%s attempt=%s: %s",
+                book.id,
+                attempt + 1,
+                exc,
+            )
+    if data is None:
+        logger.warning("setup recommend failed book=%s: %s", book.id, last_err)
+        raise RuntimeError(last_err or "setup recommend JSON parse failed")
 
     result = {
         "from_cache": False,

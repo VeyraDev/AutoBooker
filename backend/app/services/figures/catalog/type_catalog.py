@@ -77,14 +77,14 @@ FIGURE_TYPE_CATALOG: dict[str, FigureTypeSpec] = {
     "chart": FigureTypeSpec(
         subtype="chart",
         family="data",
-        renderer=RENDERER_STRUCTURED_CHART,
-        pipeline="chart",
+        renderer=RENDERER_ILLUSTRATION,
+        pipeline="illustration",
         parser="parse_chart_data",
         layout_policy_key="chart",
         diagram_type="chart",
         required_fields=("labels", "values"),
         legacy_image_type="chart",
-        description="numeric data chart",
+        description="numeric data chart via image api",
     ),
     "timeline_roadmap": _image_type("timeline_roadmap", "timeline", "timeline"),
     "process_flow": _image_type("process_flow", "workflow", "flowchart"),
@@ -142,7 +142,7 @@ def validate_catalog() -> list[str]:
         spec = FIGURE_TYPE_CATALOG[subtype]
         resolved = resolve_renderer_key(subtype, has_numeric_data=(subtype == "chart"))
         if subtype == "chart" and resolved == "need_data":
-            resolved = RENDERER_STRUCTURED_CHART
+            resolved = RENDERER_ILLUSTRATION
         if resolved != spec.renderer:
             issues.append(f"{subtype}: renderer catalog={spec.renderer} taxonomy={resolved}")
         dt = subtype_to_diagram_type(subtype)

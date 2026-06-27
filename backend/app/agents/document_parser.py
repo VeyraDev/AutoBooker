@@ -56,8 +56,14 @@ class DocumentParserAgent:
             finally:
                 doc.close()
         if ft == "docx":
-            doc = DocxDocument(file_path)
-            return "\n".join(p.text for p in doc.paragraphs if p.text and p.text.strip())
+            from app.services.docx_math_extract import extract_docx_text_with_math
+
+            try:
+                return extract_docx_text_with_math(file_path)
+            except Exception:
+                logger.warning("docx math extract failed, fallback to plain text", exc_info=True)
+                doc = DocxDocument(file_path)
+                return "\n".join(p.text for p in doc.paragraphs if p.text and p.text.strip())
         raise ValueError(f"Unsupported file type: {file_type}")
 
     @staticmethod

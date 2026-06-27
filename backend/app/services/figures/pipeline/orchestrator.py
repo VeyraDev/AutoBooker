@@ -8,13 +8,12 @@ import time
 from sqlalchemy.orm import Session
 
 from app.models.figure import Figure, FigureStatus
-from app.services.figures.render.image_api.layoutscript import generate_layout_script
+from app.services.figures.render.image_api.data_chart_script import generate_data_chart_script
 from app.services.figures.render.image_api.prompt_constraints import IMAGE_API_SUBTYPES
 from app.services.figures.classification.resolver import build_classification_record
 from app.services.figures.intent.reconcile import reconcile_intent_with_text
 from app.services.figures.intent.taxonomy import subtype_to_diagram_type
 from app.services.figures.intent.resolve import resolve_intent_unified
-from app.services.figures.pipeline.chart_run import run_chart_pipeline
 from app.services.figures.intent.understand import understand_intent
 from app.services.figures.pipeline.normalize import normalize_figure_input
 from app.services.figures.pipeline.type_router import PipelineRoute
@@ -42,6 +41,53 @@ def _resolve_intent(ctx: PipelineContext) -> tuple[DiagramIntent, dict]:
     return _ensure_diagram_type(reconcile_intent_with_text(intent, ctx.normalized_input)), understanding
 
 
+def _image_input_for_subtype(
+    ctx: PipelineContext,
+    subtype: str,
+    understanding: dict,
+) -> tuple[str, list[str], dict[str, object]]:
+    image_input = ctx.normalized_input
+    flags: list[str] = []
+    extras: dict[str, object] = {
+        "intent_understanding": understanding,
+        "pipeline": "no_layout_image_api",
+        "primary_type": subtype,
+        "prompt_mode": "no_layout",
+    }
+
+    secondary_type = str(understanding.get("secondary_type") or "").strip()
+    do_not_draw_as = str(understanding.get("do_not_draw_as") or "").strip()
+    layout_risks = str(understanding.get("layout_risks") or "").strip()
+    if secondary_type:
+        extras["secondary_type"] = secondary_type
+    if do_not_draw_as:
+        extras["do_not_draw_as"] = do_not_draw_as
+    if layout_risks:
+        extras["layout_risks"] = layout_risks
+
+    if subtype != "chart":
+        return image_input, flags, extras
+
+    t0 = time.perf_counter()
+    chart_script, chart_fallback = generate_data_chart_script(
+        ctx.normalized_input,
+        book_type=ctx.book_type,
+        style_type=ctx.style_type,
+        model=ctx.model,
+        use_llm=ctx.use_llm,
+    )
+    _trace(
+        ctx,
+        "data_chart_script",
+        ms=int((time.perf_counter() - t0) * 1000),
+        fallback=chart_fallback,
+    )
+    if chart_fallback:
+        flags.append("data_chart_script_fallback")
+    extras["data_chart_script_fallback"] = chart_fallback
+    return chart_script or ctx.normalized_input, flags, extras
+
+
 def _run_pipeline(
     ctx: PipelineContext,
     intent: DiagramIntent,
@@ -53,58 +99,29 @@ def _run_pipeline(
         intent.diagram_subtype = subtype
         intent.diagram_family = "knowledge"
         intent.diagram_type = subtype_to_diagram_type(subtype)
-    if subtype == "chart":
-        ctx.pipeline_trace.append({"step": "type_router", "route": PipelineRoute.CHART.value})
-        return run_chart_pipeline(ctx, intent, understanding)
     if subtype == "screenshot":
         ctx.pipeline_trace.append({"step": "type_router", "route": PipelineRoute.SCREENSHOT.value})
         parsed = ParsedDiagram({"title": intent.title, "render_mode": "screenshot_placeholder"}, source="v3_screenshot")
         return intent, parsed, None, None, ["screenshot_placeholder"], {"intent_understanding": understanding}
     if subtype in IMAGE_API_SUBTYPES:
         ctx.pipeline_trace.append({"step": "type_router", "route": "image_api"})
-        t0 = time.perf_counter()
-        secondary_type = str(understanding.get("secondary_type") or "").strip()
-        do_not_draw_as = str(understanding.get("do_not_draw_as") or "").strip()
-        layout_risks = str(understanding.get("layout_risks") or "").strip()
-        layout_script, layout_fallback = generate_layout_script(
-            ctx.normalized_input,
-            subtype,
-            secondary_type=secondary_type,
-            do_not_draw_as=do_not_draw_as,
-            layout_risks=layout_risks,
-            model=ctx.model,
-            use_llm=ctx.use_llm,
-        )
-        ctx.pipeline_trace.append({
-            "step": "layout_agent",
-            "ms": int((time.perf_counter() - t0) * 1000),
-            "fallback": layout_fallback,
-        })
+        image_input, flags, ir_bundle = _image_input_for_subtype(ctx, subtype, understanding)
         parsed = ParsedDiagram(
             {
                 "title": intent.title,
                 "render_mode": "image_api",
                 "diagram_subtype": subtype,
                 "primary_type": subtype,
-                "secondary_type": secondary_type,
-                "do_not_draw_as": do_not_draw_as,
-                "layout_risks": layout_risks,
-                "layout_script": layout_script,
-                "layout_agent_fallback": layout_fallback,
+                "secondary_type": ir_bundle.get("secondary_type", ""),
+                "do_not_draw_as": ir_bundle.get("do_not_draw_as", ""),
+                "layout_risks": ir_bundle.get("layout_risks", ""),
+                "image_input": image_input,
+                "prompt_mode": "no_layout",
+                "data_chart_script_fallback": ir_bundle.get("data_chart_script_fallback"),
             },
-            source="layoutscript_image_api",
+            source="no_layout_image_api",
         )
-        flags = ["layout_agent_fallback"] if layout_fallback else []
-        return intent, parsed, None, None, flags, {
-            "intent_understanding": understanding,
-            "pipeline": "layoutscript_image_api",
-            "primary_type": subtype,
-            "secondary_type": secondary_type,
-            "do_not_draw_as": do_not_draw_as,
-            "layout_risks": layout_risks,
-            "layout_script": layout_script,
-            "layout_agent_fallback": layout_fallback,
-        }
+        return intent, parsed, None, None, flags, ir_bundle
 
     raise ValueError(f"unsupported figure subtype: {subtype}")
 

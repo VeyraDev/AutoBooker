@@ -16,7 +16,7 @@ export function isRichMarkdown(text: string): boolean {
   if (/^\s{0,3}\|[^\n]+\|\s*$/m.test(s)) return true;
   if (/(^|\n)\s*\d+\.\s+\S/.test(s)) return true;
   if (/(^|\n)\s*>\s/.test(s)) return true;
-  if (/\$\$[\s\S]+?\$\$/.test(s) || /(?<!\$)\$(?!\$)[^\$\n]+?\$(?!\$)/.test(s)) return true;
+  if (/\$\$[\s\S]+?\$\$/.test(s) || /(?<!\$)\$(?!\$)[^\$]+?\$(?!\$)/.test(s)) return true;
   return false;
 }
 

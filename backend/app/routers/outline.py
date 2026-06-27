@@ -97,6 +97,20 @@ def get_outline(
     )
 
 
+def _restore_outline_book_status(db: Session, book, previous_status: BookStatus) -> None:
+    """大纲生成失败时恢复书稿状态，避免永久卡在 outline_generating。"""
+    has_chapters = (
+        db.query(Chapter.id).filter(Chapter.book_id == book.id).limit(1).first() is not None
+    )
+    if has_chapters:
+        book.status = BookStatus.outline_ready
+    elif previous_status in (BookStatus.setup, BookStatus.outline_ready):
+        book.status = previous_status
+    else:
+        book.status = BookStatus.setup
+    db.commit()
+
+
 @router.post("/{book_id}/outline", response_model=OutlineBookResponse)
 def generate_outline(
     book_id: UUID,
@@ -111,15 +125,22 @@ def generate_outline(
         {"book_id": str(book_id), "status": str(book.status)},
         "H4",
     )
-    if book.status not in (BookStatus.setup, BookStatus.outline_ready):
+    if book.status == BookStatus.outline_generating:
+        has_chapters = (
+            db.query(Chapter.id).filter(Chapter.book_id == book.id).limit(1).first() is not None
+        )
+        previous_status = BookStatus.outline_ready if has_chapters else BookStatus.setup
+    elif book.status in (BookStatus.setup, BookStatus.outline_ready):
+        previous_status = book.status
+    else:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "Book must be in setup or outline_ready to generate outline",
         )
-
-    body = body or OutlineGenerateIn()
     book.status = BookStatus.outline_generating
     db.commit()
+
+    body = body or OutlineGenerateIn()
 
     try:
         query = (body.topic_override or book.title) + " " + (book.discipline or "")
@@ -147,7 +168,7 @@ def generate_outline(
         }
 
         agent = OutlineAgent()
-        chat_model = resolve_book_outline_model(book)
+        chat_model = resolve_book_outline_model(book, user)
         outline = agent.generate(cfg, snippets, model=chat_model)
 
         db.query(Chapter).filter(Chapter.book_id == book.id).delete()
@@ -211,6 +232,7 @@ def generate_outline(
             chapters=outs,
         )
     except HTTPException:
+        _restore_outline_book_status(db, book, previous_status)
         raise
     except Exception as e:
         _agent_ndjson(
@@ -220,8 +242,7 @@ def generate_outline(
             "H1-H5",
         )
         logger.exception("outline generation failed")
-        book.status = BookStatus.setup
-        db.commit()
+        _restore_outline_book_status(db, book, previous_status)
         detail = f"{type(e).__name__}: {str(e)}"
         if len(detail) > 2000:
             detail = detail[:2000] + "…"

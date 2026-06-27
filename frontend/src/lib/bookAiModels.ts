@@ -1,24 +1,26 @@
 import { normalizeAiModelValue, type LlmModelsResponse } from "@/api/config";
-import type { AiScene } from "@/stores/aiModelPrefsStore";
-import type { Book } from "@/types/book";
+import type { UserAiModels } from "@/types/auth";
 
-const SCENE_FIELD: Record<AiScene, keyof Book> = {
+export type UserAiScene = "outline" | "constitution" | "writing" | "assistant";
+
+const USER_SCENE_FIELD: Record<UserAiScene, keyof UserAiModels> = {
   outline: "outline_ai_model",
   constitution: "constitution_ai_model",
   writing: "writing_ai_model",
+  assistant: "assistant_ai_model",
 };
 
-export function effectiveSceneModel(
-  scene: AiScene,
-  opts: {
-    book?: Book | null;
-    prefs?: Partial<Record<AiScene, string | null>>;
-    catalog?: LlmModelsResponse;
-  },
+/** 系统默认模型（用户未选择时使用） */
+export function systemDefaultModel(catalog?: LlmModelsResponse): string {
+  return catalog?.default ?? "deepseek:deepseek-chat";
+}
+
+export function resolveUserSceneModel(
+  scene: UserAiScene,
+  userModels: UserAiModels | null | undefined,
+  catalog?: LlmModelsResponse,
 ): string {
-  const fallback = opts.catalog?.default ?? "deepseek:deepseek-chat";
-  const bookField = opts.book?.[SCENE_FIELD[scene]] as string | null | undefined;
-  const raw = String(bookField ?? opts.prefs?.[scene] ?? opts.book?.ai_model ?? "").trim();
-  if (!raw) return fallback;
-  return normalizeAiModelValue(raw, opts.catalog);
+  const raw = String(userModels?.[USER_SCENE_FIELD[scene]] ?? "").trim();
+  if (!raw) return systemDefaultModel(catalog);
+  return normalizeAiModelValue(raw, catalog);
 }

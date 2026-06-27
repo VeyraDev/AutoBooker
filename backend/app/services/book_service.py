@@ -10,8 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.constants.style_types import DEFAULT_TARGET_WORDS, coerce_style
 from app.models.book import Book, BookStatus
+from app.models.chapter import Chapter, ChapterStatus
 from app.models.reference import ReferenceFile
 from app.models.user import User
+from app.services.heading_formatter import normalize_outline_sections
+from app.services.preface_service import DEFAULT_PREFACE, get_preface
 
 
 def get_book_or_404(book_id: UUID, user: User, db: Session) -> Book:
@@ -80,8 +83,56 @@ def delete_book(book: Book, db: Session) -> None:
     db.commit()
 
 
-def duplicate_book(source: Book, user: User, db: Session) -> Book:
-    """复制书稿设定与用户资料，不复制大纲、正文、宪法与审校结果。"""
+def _outline_meta_from_chapter_content(meta: object) -> dict:
+    raw = meta if isinstance(meta, dict) else {}
+    sections_raw = raw.get("sections") or []
+    sections = (
+        normalize_outline_sections([s for s in sections_raw if isinstance(s, dict)])
+        if isinstance(sections_raw, list)
+        else []
+    )
+    return {
+        "key_points": list(raw.get("key_points") or []),
+        "sections": sections,
+        "estimated_words": int(raw.get("estimated_words") or 3000),
+    }
+
+
+def _preface_outline_from_source(source: Book) -> dict | None:
+    pf = get_preface(source)
+    brief = str(pf.get("brief") or "").strip()
+    summary = str(pf.get("summary") or "").strip()
+    if not brief and not summary:
+        return None
+    return {
+        **DEFAULT_PREFACE,
+        "enabled": bool(pf.get("enabled", True)),
+        "target_words": int(pf.get("target_words") or 3000),
+        "brief": pf.get("brief", ""),
+        "summary": pf.get("summary", ""),
+        "text": "",
+        "word_count": 0,
+        "tiptap_json": None,
+        "status": "ready" if brief else "empty",
+    }
+
+
+def _duplicate_result_message(*, copy_outline: bool, copied_chapters: int) -> str:
+    if copy_outline and copied_chapters > 0:
+        return "已基于原书创建新书，设定、用户资料与大纲已复制，正文与审校结果未复制。"
+    if copy_outline:
+        return "已基于原书创建新书，设定与用户资料已复制（原书尚无大纲可复用）。"
+    return "已基于原书创建新书，设定与用户资料已复制，大纲与正文未复制。"
+
+
+def duplicate_book(
+    source: Book,
+    user: User,
+    db: Session,
+    *,
+    copy_outline: bool = False,
+) -> tuple[Book, str]:
+    """复制书稿设定与用户资料；可选复制大纲结构，不复制正文、宪法与审校结果。"""
     if str(source.user_id) != str(user.id):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
 
@@ -108,10 +159,6 @@ def duplicate_book(source: Book, user: User, db: Session) -> Book:
         setup_recommendation_cache=source.setup_recommendation_cache,
         material_conflicts=source.material_conflicts,
         status=BookStatus.setup,
-        ai_model=source.ai_model,
-        outline_ai_model=source.outline_ai_model,
-        constitution_ai_model=source.constitution_ai_model,
-        writing_ai_model=source.writing_ai_model,
         last_literature_query=source.last_literature_query,
     )
     db.add(new_book)
@@ -149,6 +196,37 @@ def duplicate_book(source: Book, user: User, db: Session) -> Book:
             )
         )
 
+    copied_chapters = 0
+    if copy_outline:
+        src_chapters = (
+            db.query(Chapter)
+            .filter(Chapter.book_id == source.id)
+            .order_by(Chapter.index.asc())
+            .all()
+        )
+        for ch in src_chapters:
+            db.add(
+                Chapter(
+                    book_id=new_book.id,
+                    index=ch.index,
+                    title=ch.title,
+                    summary=ch.summary,
+                    content=_outline_meta_from_chapter_content(ch.content),
+                    word_count=0,
+                    status=ChapterStatus.pending,
+                )
+            )
+        copied_chapters = len(src_chapters)
+        if copied_chapters > 0:
+            new_book.status = BookStatus.outline_ready
+            new_book.constitution_stale = True
+        preface_outline = _preface_outline_from_source(source)
+        if preface_outline is not None:
+            new_book.preface = preface_outline
+
     db.commit()
     db.refresh(new_book)
-    return new_book
+    return new_book, _duplicate_result_message(
+        copy_outline=copy_outline,
+        copied_chapters=copied_chapters,
+    )

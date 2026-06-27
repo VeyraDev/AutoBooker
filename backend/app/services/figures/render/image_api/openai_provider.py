@@ -79,8 +79,15 @@ def generate_figure_image_openai(
     style_type: str = "",
     sub_kind: str = "figure",
     layout_script: str | None = None,
+    prompt_mode: str | None = None,
 ) -> tuple[str, Path]:
-    prompt = build_figure_prompt(description, style_type, sub_kind=sub_kind, layout_script=layout_script)
+    prompt = build_figure_prompt(
+        description,
+        style_type,
+        sub_kind=sub_kind,
+        layout_script=layout_script,
+        prompt_mode=prompt_mode,
+    )
     model = (settings.OPENAI_IMAGE_MODEL or "gpt-image-1").strip()
     client = _openai_client()
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -15,7 +15,6 @@ from app.services.figures.render.image_api.prompt_constraints import build_layou
 from app.services.figures.generation import sync_figure_urls_from_disk
 from app.services.figures.intent.taxonomy import (
     RENDERER_ILLUSTRATION,
-    RENDERER_STRUCTURED_CHART,
     RENDERER_UPLOAD,
 )
 from app.services.figures.pipeline.orchestrator import classify_figure_description
@@ -165,7 +164,13 @@ def test_image_prompt_uses_layoutscript_not_raw_user_input():
 【整体版式】
 横向三步流程。"""
 
-    prompt = build_figure_prompt(raw_user_input, "", sub_kind="process_flow", layout_script=layout_script)
+    prompt = build_figure_prompt(
+        raw_user_input,
+        "",
+        sub_kind="process_flow",
+        layout_script=layout_script,
+        prompt_mode="full_v3",
+    )
 
     assert prompt.startswith("请根据下面的布局脚本生成图片。")
     assert "布局脚本是唯一结构依据。" in prompt
@@ -185,33 +190,15 @@ def test_direct_prompt_fallback_still_available_without_layoutscript():
     prompt = build_figure_prompt(raw_user_input, "", sub_kind="process_flow")
 
     assert prompt.startswith(raw_user_input)
-    assert "请严格根据上面的内容生成图片" in prompt
+    assert "不要调用布局规划器" in prompt
     assert "每个主要步骤画成清晰步骤节点" in prompt
-    assert "不得把中文术语翻译成英文" in prompt
+    assert "不得翻译、改写、扩写或替换" in prompt
 
 
 def test_llm_candidate_overrides_stale_subtype_hint(monkeypatch):
-    def fake_compile(_text: str, **_kwargs):
-        return (
-            {
-                "chart_type": "process_flow",
-                "template_id": "horizontal_stage_cards",
-                "title": "流程",
-                "stages": [{"title": "A"}, {"title": "B"}],
-            },
-            {"source": "test", "compiler_fallback": False},
-        )
-
-    def fake_layout(_text: str, subtype: str, **_kwargs):
-        return (f"layout for {subtype}", False)
-
     monkeypatch.setattr(
         "app.services.figures.intent.understand._call_intent_understanding_llm",
         lambda _ctx: _understanding("process_flow"),
-    )
-    monkeypatch.setattr(
-        "app.services.figures.pipeline.orchestrator.generate_layout_script",
-        fake_layout,
     )
 
     record = classify_figure_description(
@@ -225,8 +212,9 @@ def test_llm_candidate_overrides_stale_subtype_hint(monkeypatch):
     assert record["subtype"] == "process_flow"
     assert record["renderer"] == RENDERER_ILLUSTRATION
     assert record["parsed_spec"]["render_mode"] == "image_api"
-    assert record["layout_script"] == "layout for process_flow"
-    assert "layout_agent" in [t["step"] for t in record["pipeline_trace"]]
+    assert record["parsed_spec"]["prompt_mode"] == "no_layout"
+    assert record["parsed_spec"]["image_input"]
+    assert "layout_agent" not in [t["step"] for t in record["pipeline_trace"]]
     assert "visual_brief" not in [t["step"] for t in record["pipeline_trace"]]
 
 
@@ -248,36 +236,9 @@ def test_default_prompt_spec_has_no_domain_template_terms():
 def test_llm_classifies_all_v3_image_api_subtypes(monkeypatch):
     current = {"subtype": "process_flow"}
 
-    def fake_compile(_text: str, subtype: str = "", **_kwargs):
-        template = {
-            "process_flow": ("process_flow", "horizontal_stage_cards", "stages", [{"title": "A"}, {"title": "B"}]),
-            "system_architecture": ("system_architecture", "vertical_layers", "layers", [{"label": "A", "title": "A"}, {"label": "B", "title": "B"}]),
-            "mechanism_diagram": ("mechanism", "mechanism_mapping", "sections", [{"title": "A"}, {"title": "B"}, {"title": "C"}]),
-            "comparison_matrix": ("comparison", "comparison_matrix", "dimensions", [{"title": "A"}, {"title": "B"}]),
-            "concept_diagram": ("concept", "hub_spoke_concept", "items", [{"title": "A"}, {"title": "B"}, {"title": "C"}]),
-            "infographic": ("infographic", "grouped_infographic", "cards", [{"title": "A"}, {"title": "B"}, {"title": "C"}]),
-            "taxonomy_map": ("taxonomy", "taxonomy_tree", "groups", [{"title": "A"}, {"title": "B"}]),
-            "decision_tree": ("decision_tree", "decision_cards", "branches", [{"condition": "A", "title": "A"}, {"condition": "B", "title": "B"}]),
-            "timeline_roadmap": ("timeline", "horizontal_timeline", "events", [{"year": "2020", "title": "A"}, {"year": "2021", "title": "B"}, {"year": "2022", "title": "C"}]),
-        }.get(subtype)
-        if not template:
-            raise AssertionError(f"unexpected template subtype {subtype}")
-        chart_type, template_id, field, values = template
-        return (
-            {"chart_type": chart_type, "template_id": template_id, "title": subtype, field: values},
-            {"source": "test", "compiler_fallback": False},
-        )
-
-    def fake_layout(_text: str, subtype: str, **_kwargs):
-        return (f"layout for {subtype}", False)
-
     monkeypatch.setattr(
         "app.services.figures.intent.understand._call_intent_understanding_llm",
         lambda _ctx: _understanding(current["subtype"]),
-    )
-    monkeypatch.setattr(
-        "app.services.figures.pipeline.orchestrator.generate_layout_script",
-        fake_layout,
     )
 
     for subtype in [
@@ -303,7 +264,8 @@ def test_llm_classifies_all_v3_image_api_subtypes(monkeypatch):
         assert record["subtype"] == subtype
         assert record["renderer"] == RENDERER_ILLUSTRATION
         assert record["parsed_spec"]["render_mode"] == "image_api"
-        assert record["layout_script"] == f"layout for {subtype}"
+        assert record["parsed_spec"]["prompt_mode"] == "no_layout"
+        assert record["parsed_spec"]["image_input"]
 
 
 def test_scene_illustration_remains_image_api(monkeypatch):
@@ -311,28 +273,24 @@ def test_scene_illustration_remains_image_api(monkeypatch):
         "app.services.figures.intent.understand._call_intent_understanding_llm",
         lambda _ctx: _understanding("scene_illustration"),
     )
-    monkeypatch.setattr(
-        "app.services.figures.pipeline.orchestrator.generate_layout_script",
-        lambda _text, subtype, **_kwargs: (f"布局脚本：{subtype}", False),
-    )
 
     record = classify_figure_description("AI 助手帮助用户写作的场景插图", model="dummy", use_llm=True)
 
     assert record["diagram_subtype"] == "scene_illustration"
     assert record["renderer"] == RENDERER_ILLUSTRATION
     assert record["parsed_spec"]["render_mode"] == "image_api"
-    assert record["layout_script"] == "布局脚本：scene_illustration"
+    assert record["parsed_spec"]["image_input"]
 
 
-def test_chart_stays_matplotlib_path(monkeypatch):
-    layout_calls: list[str] = []
+def test_chart_uses_image_api_no_layout(monkeypatch):
+    chart_calls: list[str] = []
     monkeypatch.setattr(
         "app.services.figures.intent.understand._call_intent_understanding_llm",
         lambda _ctx: _understanding("chart", route="chart"),
     )
     monkeypatch.setattr(
-        "app.services.figures.pipeline.orchestrator.generate_layout_script",
-        lambda *args, **kwargs: layout_calls.append("called") or ("layout", False),
+        "app.services.figures.pipeline.orchestrator.generate_data_chart_script",
+        lambda *args, **kwargs: chart_calls.append("called") or ("2024 年 A=10，B=20 柱状图脚本", False),
     )
 
     record = classify_figure_description(
@@ -342,19 +300,16 @@ def test_chart_stays_matplotlib_path(monkeypatch):
     )
 
     assert record["diagram_subtype"] == "chart"
-    assert record["renderer"] == RENDERER_STRUCTURED_CHART
-    assert layout_calls == []
+    assert record["renderer"] == RENDERER_ILLUSTRATION
+    assert record["parsed_spec"]["render_mode"] == "image_api"
+    assert record["parsed_spec"]["prompt_mode"] == "no_layout"
+    assert chart_calls == ["called"]
 
 
 def test_screenshot_is_upload_only(monkeypatch):
-    layout_calls: list[str] = []
     monkeypatch.setattr(
         "app.services.figures.intent.understand._call_intent_understanding_llm",
         lambda _ctx: _understanding("screenshot", route="screenshot_placeholder"),
-    )
-    monkeypatch.setattr(
-        "app.services.figures.pipeline.orchestrator.generate_layout_script",
-        lambda *args, **kwargs: layout_calls.append("called") or ("layout", False),
     )
 
     record = classify_figure_description("这里需要产品界面截图", model="dummy", use_llm=True)
@@ -362,7 +317,6 @@ def test_screenshot_is_upload_only(monkeypatch):
     assert record["diagram_subtype"] == "screenshot"
     assert record["renderer"] == RENDERER_UPLOAD
     assert "screenshot_placeholder" in record["quality_flags"]
-    assert layout_calls == []
 
 
 def test_old_aliases_do_not_become_final_subtypes():
@@ -379,8 +333,8 @@ def test_old_aliases_do_not_become_final_subtypes():
         assert record["renderer"] == RENDERER_ILLUSTRATION
 
 
-def test_render_figure_image_api_uses_layoutscript(monkeypatch, tmp_path: Path):
-    calls: list[tuple[str, str, str | None]] = []
+def test_render_figure_image_api_uses_no_layout_input(monkeypatch, tmp_path: Path):
+    calls: list[tuple[str, str, str | None, str | None]] = []
 
     def fake_generate(
         description: str,
@@ -389,8 +343,9 @@ def test_render_figure_image_api_uses_layoutscript(monkeypatch, tmp_path: Path):
         style_type: str = "",
         sub_kind: str = "figure",
         layout_script: str | None = None,
+        prompt_mode: str | None = None,
     ):
-        calls.append((description, sub_kind, layout_script))
+        calls.append((description, sub_kind, layout_script, prompt_mode))
         output_path.write_bytes(b"png")
         return "prompt", output_path
 
@@ -410,7 +365,10 @@ def test_render_figure_image_api_uses_layoutscript(monkeypatch, tmp_path: Path):
         classification_json={
             "diagram_subtype": "system_architecture",
             "normalized_input": "SHOULD_NOT_USE",
-            "layout_script": "【图类确认】\n主图类：system_architecture\n【可见文字白名单】\n- RAG 系统架构",
+            "parsed_spec": {
+                "image_input": "RAG 系统架构：用户、检索器、向量库、LLM",
+                "prompt_mode": "no_layout",
+            },
         },
     )
 
@@ -419,9 +377,10 @@ def test_render_figure_image_api_uses_layoutscript(monkeypatch, tmp_path: Path):
     assert result.primary_png_path and result.primary_png_path.is_file()
     assert calls == [
         (
-            "",
+            "RAG 系统架构：用户、检索器、向量库、LLM",
             "system_architecture",
-            "【图类确认】\n主图类：system_architecture\n【可见文字白名单】\n- RAG 系统架构",
+            None,
+            "no_layout",
         )
     ]
 
@@ -436,6 +395,7 @@ def test_render_figure_old_compositor_record_is_forced_to_image_api(monkeypatch,
         style_type: str = "",
         sub_kind: str = "figure",
         layout_script: str | None = None,
+        prompt_mode: str | None = None,
     ):
         calls.append((description, sub_kind, layout_script))
         output_path.write_bytes(b"png")

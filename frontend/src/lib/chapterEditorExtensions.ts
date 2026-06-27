@@ -8,7 +8,8 @@ import TableHeader from "@tiptap/extension-table-header";
 import TableRow from "@tiptap/extension-table-row";
 import StarterKit from "@tiptap/starter-kit";
 
-import { MathBlock, MathInline } from "@/lib/tiptap/MathNodes";
+import { MathBlock, MathInline, type MathNodeOptions } from "@/lib/tiptap/MathNodes";
+import { MathInputRules } from "@/lib/tiptap/MathInputRules";
 import { AiInlinePreview } from "@/lib/tiptap/AiInlinePreview";
 import { FigureBlock } from "@/lib/tiptap/FigureBlock";
 import { HeadingWithId } from "@/lib/tiptap/HeadingWithId";
@@ -43,12 +44,20 @@ export const chapterEditorSchemaExtensions = [
   }),
 ];
 
+const schemaWithoutMath = chapterEditorSchemaExtensions.filter(
+  (ext) => ext.name !== "mathInline" && ext.name !== "mathBlock",
+);
+
 export function getChapterEditorExtensions(
   placeholder: string,
   aiPreviewOptions?: { onAccept: () => void; onReject: () => void },
+  mathOptions?: MathNodeOptions,
 ) {
   return [
-    ...chapterEditorSchemaExtensions,
+    ...schemaWithoutMath,
+    MathInline.configure(mathOptions ?? {}),
+    MathBlock.configure(mathOptions ?? {}),
+    MathInputRules,
     AiInlinePreview.configure(
       aiPreviewOptions ?? { onAccept: () => {}, onReject: () => {} },
     ),

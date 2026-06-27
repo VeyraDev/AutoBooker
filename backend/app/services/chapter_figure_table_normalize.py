@@ -325,6 +325,7 @@ def normalize_chapter_figures_tables(
                         book=book,
                         context=_context_before_figure(nodes, i, book=book),
                         fallback=_figure_caption_fallback(attrs),
+                        db=db,
                     )
             if not cap_title:
                 cap_title = _figure_caption_fallback(attrs)
@@ -381,6 +382,7 @@ def normalize_chapter_figures_tables(
                         node,
                         book=book,
                         context=_context_before_table(nodes, i, book=book),
+                        db=db,
                     )
                 elif not cap_title:
                     cap_title = "本章数据表"
@@ -410,6 +412,7 @@ def normalize_chapter_figures_tables(
                         node,
                         book=book,
                         context=_context_before_table(nodes, i, book=book),
+                        db=db,
                     )
                 else:
                     cap_title = "本章数据表"

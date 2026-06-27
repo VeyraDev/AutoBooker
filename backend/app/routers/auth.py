@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User
-from app.schemas.auth import LoginIn, RefreshIn, RegisterIn, TokenOut, UserOut
+from app.schemas.auth import LoginIn, RefreshIn, RegisterIn, TokenOut, UserAiModelsPatch, UserOut
 from app.services.auth_service import (
     create_access_token,
     create_refresh_token,
@@ -69,4 +69,18 @@ def get_current_user(
 
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
-    return user
+    return UserOut.from_user(user)
+
+
+@router.patch("/me/ai-models", response_model=UserOut)
+def patch_user_ai_models(
+    body: UserAiModelsPatch,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    data = body.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(user, key, value)
+    db.commit()
+    db.refresh(user)
+    return UserOut.from_user(user)

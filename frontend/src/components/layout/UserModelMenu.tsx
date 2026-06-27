@@ -1,18 +1,20 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useMatch } from "react-router-dom";
 
-import { getBook, updateBook } from "@/api/books";
+import { patchUserAiModels } from "@/api/auth";
 import { fetchLlmModels } from "@/api/config";
 import ModelSelector from "@/components/editor/ModelSelector";
-import { effectiveSceneModel } from "@/lib/bookAiModels";
-import { useAiModelPrefsStore, type AiScene } from "@/stores/aiModelPrefsStore";
-import type { BookUpdatePayload } from "@/types/book";
+import { resolveUserSceneModel, type UserAiScene } from "@/lib/bookAiModels";
+import { phaseOf } from "@/lib/bookStatus";
+import { useAuthStore } from "@/stores/authStore";
+import { getBook } from "@/api/books";
 
-const SCENES: { key: AiScene; label: string }[] = [
+const SCENES: { key: UserAiScene; label: string }[] = [
   { key: "outline", label: "大纲" },
   { key: "constitution", label: "叙事宪法" },
   { key: "writing", label: "写作" },
+  { key: "assistant", label: "AI 助手" },
 ];
 
 type Props = {
@@ -21,10 +23,10 @@ type Props = {
 };
 
 export default function UserModelMenu({ open, onClose }: Props) {
-  const qc = useQueryClient();
   const bookMatch = useMatch("/app/books/:bookId/*");
   const bookId = bookMatch?.params.bookId;
-  const { prefs, setSceneModel } = useAiModelPrefsStore();
+  const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
 
   const llmQuery = useQuery({
     queryKey: ["llm-models"],
@@ -39,54 +41,68 @@ export default function UserModelMenu({ open, onClose }: Props) {
   });
 
   const book = bookQuery.data;
+  const catalog = llmQuery.data;
+  const userModels = user?.ai_models;
+
+  const visibleScenes = useMemo(() => {
+    if (!book) return SCENES;
+    const phase = phaseOf(book);
+    if (phase === "WRITING" || phase === "COMPLETED") {
+      return SCENES.filter((s) => s.key === "writing" || s.key === "assistant");
+    }
+    return SCENES;
+  }, [book]);
 
   const sceneModels = useMemo(
     () =>
       Object.fromEntries(
-        SCENES.map(({ key }) => [key, effectiveSceneModel(key, { book, prefs, catalog: llmQuery.data })]),
-      ) as Record<AiScene, string>,
-    [book, prefs, llmQuery.data],
+        visibleScenes.map(({ key }) => [key, resolveUserSceneModel(key, userModels, catalog)]),
+      ) as Record<UserAiScene, string>,
+    [visibleScenes, userModels, catalog],
   );
 
-  const updateMutation = useMutation({
-    mutationFn: (payload: BookUpdatePayload) => updateBook(bookId!, payload),
-    onSuccess: (b) => {
-      qc.setQueryData(["book", bookId], b);
-    },
+  const updateUserMutation = useMutation({
+    mutationFn: patchUserAiModels,
+    onSuccess: (u) => setUser(u),
   });
 
-  function onSceneChange(scene: AiScene, model: string) {
-    if (bookId && book) {
-      const payload: BookUpdatePayload =
-        scene === "outline"
-          ? { outline_ai_model: model }
-          : scene === "constitution"
-            ? { constitution_ai_model: model }
-            : { writing_ai_model: model, ai_model: model };
-      updateMutation.mutate(payload);
-      return;
-    }
-    setSceneModel(scene, model);
+  function onSceneChange(scene: UserAiScene, model: string) {
+    const patch =
+      scene === "outline"
+        ? { outline_ai_model: model }
+        : scene === "constitution"
+          ? { constitution_ai_model: model }
+          : scene === "writing"
+            ? { writing_ai_model: model }
+            : { assistant_ai_model: model };
+    updateUserMutation.mutate(patch);
     onClose();
   }
+
+  const menuTitle = book
+    ? visibleScenes.length <= 2
+      ? "写作与助手模型"
+      : "模型偏好"
+    : "模型偏好";
+  const menuHint = book
+    ? visibleScenes.length <= 2
+      ? "与写作页顶栏一致；各场景独立生效，改哪项只影响哪项。"
+      : "大纲与叙事宪法用于本书生成流程；写作与助手见对应入口。"
+    : "未单独设置时使用系统默认。新建书稿与每次生成均按当前选择调用。";
 
   if (!open) return null;
 
   return (
     <section className="border-b border-slate-100 px-3 py-3">
-      <p className="text-xs font-medium text-slate-600">
-        {book ? "本书模型" : "默认模型"}
-      </p>
-      <p className="pt-1.5 text-[10px] leading-snug text-slate-400">
-        {book ? "分别作用于大纲、叙事宪法与写作。" : "新建书稿时将作为各场景默认模型。"}
-      </p>
+      <p className="text-xs font-medium text-slate-600">{menuTitle}</p>
+      <p className="pt-1.5 text-[10px] leading-snug text-slate-400">{menuHint}</p>
       <div className="mt-2.5 space-y-2.5">
-        {SCENES.map(({ key, label }) => (
+        {visibleScenes.map(({ key, label }) => (
           <div key={key} className="flex items-center gap-2">
             <span className="w-14 shrink-0 text-[11px] text-slate-500">{label}</span>
             <ModelSelector
               aiModel={sceneModels[key]}
-              catalog={llmQuery.data}
+              catalog={catalog}
               loading={llmQuery.isLoading}
               onModelChange={(m) => onSceneChange(key, m)}
               className="relative min-w-0 flex-1"

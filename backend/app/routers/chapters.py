@@ -139,13 +139,13 @@ def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> Non
 from app.llm.providers import resolve_book_constitution_model, resolve_book_writing_model
 
 
-def _chat_model_for_book(book) -> str:
-    """写作、审校、助手等正文相关 LLM 场景。"""
-    return resolve_book_writing_model(book)
+def _chat_model_for_book(book, user=None, db=None) -> str:
+    """写作、审校等正文相关 LLM 场景。"""
+    return resolve_book_writing_model(book, user=user, db=db)
 
 
-def _constitution_model_for_book(book) -> str:
-    return resolve_book_constitution_model(book)
+def _constitution_model_for_book(book, user=None, db=None) -> str:
+    return resolve_book_constitution_model(book, user=user, db=db)
 
 
 def _writer_temperature_for_book(book: Book) -> float:
@@ -173,7 +173,7 @@ def ensure_narrative_constitution(
     )
     if not needs:
         return NarrativeEnsureOut(ok=True, generated=False)
-    chat_model = _constitution_model_for_book(book)
+    chat_model = _constitution_model_for_book(book, user, db)
     try:
         _ensure_narrative_constitution_thread(book_id, chat_model)
     except Exception as exc:
@@ -408,8 +408,8 @@ async def generate_chapter_stream(
             )
 
     writer = ChapterWriterAgent()
-    writing_model = _chat_model_for_book(book)
-    constitution_model = _constitution_model_for_book(book)
+    writing_model = _chat_model_for_book(book, user, db)
+    constitution_model = _constitution_model_for_book(book, user, db)
 
     total_chapters = int(
         db.query(func.count(Chapter.id)).filter(Chapter.book_id == book_id).scalar() or 0
@@ -596,7 +596,7 @@ def edit_selection(
     book = book_service.get_book_or_404(book_id, user, db)
     _get_chapter(book_id, chapter_index, db)
     client = LLMClient()
-    chat_model = _chat_model_for_book(book)
+    chat_model = _chat_model_for_book(book, user, db)
 
     if body.mode == "dedupe":
         result = DedupeService().dedupe_text(
@@ -725,6 +725,6 @@ def dedupe_chapter(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "本章暂无正文")
 
     client = LLMClient()
-    chat_model = _chat_model_for_book(book)
+    chat_model = _chat_model_for_book(book, user, db)
     result = DedupeService().dedupe_markdown(md, client=client, chat_model=chat_model)
     return ChapterDedupeOut(text=result.text, original_text=md, report=result.report)

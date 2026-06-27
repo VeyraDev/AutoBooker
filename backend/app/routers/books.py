@@ -11,6 +11,7 @@ from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.book import (
     BookCreate,
+    BookDuplicateIn,
     BookDuplicateOut,
     BookOut,
     BookUpdate,
@@ -63,7 +64,7 @@ def setup_recommend(
     book = book_service.get_book_or_404(book_id, user, db)
     force = bool(body.force) if body else False
     try:
-        result = recommend_book_setup(book, db, force=force)
+        result = recommend_book_setup(book, user, db, force=force)
     except Exception as exc:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
@@ -75,12 +76,14 @@ def setup_recommend(
 @router.post("/{book_id}/duplicate", response_model=BookDuplicateOut, status_code=status.HTTP_201_CREATED)
 def duplicate_book(
     book_id: UUID,
+    body: BookDuplicateIn | None = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     source = book_service.get_book_or_404(book_id, user, db)
-    new_book = book_service.duplicate_book(source, user, db)
-    return BookDuplicateOut(book=BookOut.model_validate(new_book))
+    copy_outline = bool(body.copy_outline) if body else False
+    new_book, message = book_service.duplicate_book(source, user, db, copy_outline=copy_outline)
+    return BookDuplicateOut(book=BookOut.model_validate(new_book), message=message)
 
 
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)

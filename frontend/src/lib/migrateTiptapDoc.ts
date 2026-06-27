@@ -1,16 +1,30 @@
 import type { FigureBlockAttrs } from "@/lib/tiptap/FigureBlock";
 import { ANNOTATION_FULL_RE } from "@/lib/annotationPatterns";
 import { enrichInlineBoldInDoc } from "@/lib/enrichInlineBold";
+import { migrateMathInTiptapDoc } from "@/lib/migrateMathInTiptapDoc";
+import { reconcileTablesFromText } from "@/lib/reconcileTablesFromText";
+
+export type MigrateTiptapOptions = {
+  sourceText?: string;
+};
 
 /** 将旧版 diagramBlock / mermaidBlock 迁移为 figureBlock 占位 */
-export function migrateTiptapDoc(doc: Record<string, unknown>): Record<string, unknown> {
+export function migrateTiptapDoc(
+  doc: Record<string, unknown>,
+  opts?: MigrateTiptapOptions,
+): Record<string, unknown> {
   if (doc.type !== "doc" || !Array.isArray(doc.content)) return doc;
 
   const migrated = {
     ...doc,
     content: (doc.content as unknown[]).map((node) => migrateNode(node)),
   };
-  return enrichInlineBoldInDoc(migrated);
+  let out = migrateMathInTiptapDoc(enrichInlineBoldInDoc(migrated));
+  const sourceText = opts?.sourceText?.trim();
+  if (sourceText) {
+    out = reconcileTablesFromText(out, sourceText);
+  }
+  return out;
 }
 
 function diagramToFigure(attrs: Record<string, unknown>): Record<string, unknown> {

@@ -88,7 +88,7 @@ async def generate_preface_stream(
         raise HTTPException(400, "本书未启用前言")
 
     writer = PrefaceWriterAgent()
-    model = resolve_book_writing_model(book)
+    model = resolve_book_writing_model(book, user, db)
     target_words = int(pf.get("target_words") or 3000)
 
     async def event_stream():

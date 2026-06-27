@@ -9,7 +9,7 @@ from uuid import UUID
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
-from docx.oxml import OxmlElement
+from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
@@ -44,6 +44,9 @@ def _inline_to_markdown(nodes: list[dict[str, Any]] | None) -> str:
             parts.append(text)
         elif t == "hardBreak":
             parts.append("\n")
+        elif t == "mathInline":
+            latex = str((node.get("attrs") or {}).get("latex") or "")
+            parts.append(f"${latex}$")
     return "".join(parts)
 
 
@@ -165,6 +168,18 @@ def _block_to_markdown(node: dict[str, Any], depth: int = 0) -> str:
         else:
             tag = "DIAGRAM"
         return f"[{tag}: {raw}]" if raw else f"[{tag}: ]"
+    if t == "mathBlock":
+        attrs = node.get("attrs") or {}
+        latex = str(attrs.get("latex") or "").strip()
+        body = f"$$\n{latex}\n$$"
+        if attrs.get("numbered") and str(attrs.get("equationNumber") or "").strip():
+            body += f"\n<!-- eq-number:{attrs.get('equationNumber')} -->"
+        if str(attrs.get("label") or "").strip():
+            body += f"\n<!-- eq-label:{attrs.get('label')} -->"
+        return body
+    if t == "mathInline":
+        latex = str((node.get("attrs") or {}).get("latex") or "")
+        return f"${latex}$"
     if t == "listItem":
         return _list_item_body(node, depth)
     return ""
@@ -227,11 +242,44 @@ def _style_run(run, *, size_pt: int = BODY_PT, bold: bool = False, italic: bool 
     _apply_run_font(run, "Consolas" if mono else DOC_BODY_FONT)
 
 
+def _append_omml_to_paragraph(paragraph, omml_xml: str) -> None:
+    """向段落追加 inline OMML（m:oMath 为 w:p 的直接子元素）。"""
+    if not omml_xml:
+        return
+    paragraph._p.append(parse_xml(omml_xml))
+
+
+def _append_omml_block_to_document(doc: Document, omml_xml: str, *, numbered: bool = False, number: str = "") -> None:
+    from app.services.latex_omml import omml_block_xml, omml_numbered_table_xml
+
+    if numbered and number.strip():
+        tbl_xml = omml_numbered_table_xml(omml_xml, number.strip())
+        doc.element.body.append(parse_xml(tbl_xml))
+        return
+    p = doc.add_paragraph()
+    block = omml_block_xml(omml_xml)
+    p._p.append(parse_xml(block))
+
+
+def _docx_inline_math(paragraph, latex: str) -> None:
+    from app.services.latex_omml import latex_to_omml
+
+    result = latex_to_omml(latex)
+    if result.get("status") == "ok" and result.get("omml"):
+        _append_omml_to_paragraph(paragraph, str(result["omml"]))
+        return
+    run = paragraph.add_run(f"${latex}$")
+    _style_run(run, italic=True)
+
+
 def _add_inline_to_paragraph(paragraph, nodes: list[dict[str, Any]] | None, *, size_pt: int = BODY_PT) -> None:
     if not nodes:
         return
     for node in nodes:
         t = node.get("type")
+        if t == "mathInline":
+            _docx_inline_math(paragraph, str((node.get("attrs") or {}).get("latex") or ""))
+            continue
         if t == "text":
             run = paragraph.add_run(str(node.get("text") or ""))
             bold = italic = mono = False
@@ -632,6 +680,27 @@ def _docx_block(doc: Document, node: dict[str, Any]) -> None:
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             for run in p.runs:
                 _style_run(run)
+        return
+    if t == "mathBlock":
+        attrs = node.get("attrs") or {}
+        latex = str(attrs.get("latex") or "").strip()
+        if not latex:
+            return
+        from app.services.latex_omml import latex_to_omml
+
+        result = latex_to_omml(latex)
+        if result.get("status") == "ok" and result.get("omml"):
+            _append_omml_block_to_document(
+                doc,
+                str(result["omml"]),
+                numbered=bool(attrs.get("numbered")),
+                number=str(attrs.get("equationNumber") or ""),
+            )
+            return
+        p = doc.add_paragraph(f"${latex}$")
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in p.runs:
+            _style_run(run, italic=True)
         return
 
 

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.llm.client import LLMClient
 from app.llm.providers import resolve_book_writing_model
 from app.models.book import Book
+from app.models.user import User
 from app.models.memory import BookMemory, MemoryType
 from app.prompts.chapter_voice import get_chapter_voice_block
 from app.prompts.memory_extract import MEMORY_EXTRACT_PROMPT, MEMORY_JSON_SCHEMA
@@ -106,7 +107,8 @@ def extract_chapter_memory(book_id: uuid.UUID, chapter_index: int, content: str,
 
     client = LLMClient()
     book = db.get(Book, book_id)
-    chat_model = resolve_book_writing_model(book) if book else None
+    user = db.get(User, book.user_id) if book else None
+    chat_model = resolve_book_writing_model(book, user, db) if book else None
     prompt = MEMORY_EXTRACT_PROMPT + "\n\n章节内容：\n" + content[:8000]
     try:
         raw = client.chat_completion(

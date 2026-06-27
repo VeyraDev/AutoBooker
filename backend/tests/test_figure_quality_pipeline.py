@@ -281,7 +281,7 @@ def test_comparison_attention_and_infographic_do_not_fall_back_to_generic_relati
 
 
 def test_renderer_keys_route_non_chart_subtypes_to_image_api():
-    assert resolve_renderer_key("chart", has_numeric_data=True) == "structured.chart"
+    assert resolve_renderer_key("chart", has_numeric_data=True) == "illustration.image_api"
     assert resolve_renderer_key("chart") == "need_data"
     assert resolve_renderer_key("screenshot") == "upload"
     for subtype in [

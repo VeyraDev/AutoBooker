@@ -5,10 +5,7 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
 import { createBook } from "@/api/books";
-import { fetchLlmModels } from "@/api/config";
-import { effectiveSceneModel } from "@/lib/bookAiModels";
 import { DEFAULT_TARGET_WORDS, styleOptionsFor } from "@/lib/styleTypes";
-import { useAiModelPrefsStore } from "@/stores/aiModelPrefsStore";
 import type { BookType, StyleType } from "@/types/book";
 
 interface Props {
@@ -42,21 +39,14 @@ export default function NewBookDialog({ open, onClose }: Props) {
   const [mode, setMode] = useState<Mode>("manual");
 
   const styleOpts = styleOptionsFor(bookType);
-  const { prefs } = useAiModelPrefsStore();
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const catalog = await fetchLlmModels().catch(() => undefined);
-      const writing = effectiveSceneModel("writing", { prefs, catalog });
       const book = await createBook({
         title: title.trim(),
         book_type: bookType,
         target_words: DEFAULT_TARGET_WORDS[bookType],
         style_type: styleType,
-        ai_model: writing,
-        outline_ai_model: effectiveSceneModel("outline", { prefs, catalog }),
-        constitution_ai_model: effectiveSceneModel("constitution", { prefs, catalog }),
-        writing_ai_model: writing,
       });
       return { book_id: book.id, mode };
     },

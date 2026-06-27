@@ -12,9 +12,15 @@ from app.config import settings
 from app.services.figures.render.image_api.prompt_constraints import (
     build_direct_fallback_prompt,
     build_layoutscript_image_prompt,
+    build_no_layout_image_prompt,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_figure_prompt_mode(prompt_mode: str | None = None) -> str:
+    mode = (prompt_mode or settings.FIGURE_PROMPT_MODE or "no_layout").strip().lower()
+    return mode if mode in {"no_layout", "full_v3"} else "no_layout"
 
 
 def build_figure_prompt(
@@ -23,8 +29,14 @@ def build_figure_prompt(
     *,
     sub_kind: str = "figure",
     layout_script: str | None = None,
+    prompt_mode: str | None = None,
 ) -> str:
     _ = style_type
+    mode = resolve_figure_prompt_mode(prompt_mode)
+    if mode == "full_v3" and layout_script and layout_script.strip():
+        return build_layoutscript_image_prompt(layout_script, sub_kind or "concept_diagram")
+    if mode == "no_layout":
+        return build_no_layout_image_prompt(description, sub_kind or "concept_diagram")
     if layout_script and layout_script.strip():
         return build_layoutscript_image_prompt(layout_script, sub_kind or "concept_diagram")
     return build_direct_fallback_prompt(description, sub_kind or "concept_diagram")
@@ -70,6 +82,7 @@ def generate_figure_image(
     style_type: str = "",
     sub_kind: str = "figure",
     layout_script: str | None = None,
+    prompt_mode: str | None = None,
 ) -> tuple[str, Path]:
     provider = resolve_figure_image_provider()
     logger.info("figure image provider=%s", provider)
@@ -92,6 +105,7 @@ def generate_figure_image(
                 style_type=style_type,
                 sub_kind=sub_kind,
                 layout_script=layout_script,
+                prompt_mode=prompt_mode,
             )
         except Exception as e:
             if _wanx_fallback_enabled() and _is_openai_transient(e):
@@ -102,6 +116,7 @@ def generate_figure_image(
                     style_type=style_type,
                     sub_kind=sub_kind,
                     layout_script=layout_script,
+                    prompt_mode=prompt_mode,
                 )
             raise
 
@@ -113,4 +128,5 @@ def generate_figure_image(
         style_type=style_type,
         sub_kind=sub_kind,
         layout_script=layout_script,
+        prompt_mode=prompt_mode,
     )

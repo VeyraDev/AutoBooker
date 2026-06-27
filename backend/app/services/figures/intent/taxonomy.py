@@ -1,8 +1,8 @@
 """Diagram family / subtype 与 renderer 映射。
 
 分类只表达“画什么”。默认生成出口按 V3 文档收敛：
-chart 继续走 Matplotlib/结构化数据图，其余可生成图类走 Image API。
-旧结构化 renderer 常量保留给旧管线和显式回退使用。
+chart 与其余可生成图类均走 Image API no_layout 路径。
+旧 structured renderer 常量保留给旧管线和显式回退使用。
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ SUBTYPE_TO_RENDERER: dict[str, str] = {
     "decision_tree": RENDERER_ILLUSTRATION,
     "infographic": RENDERER_ILLUSTRATION,
     "scene_illustration": RENDERER_ILLUSTRATION,
-    "chart": RENDERER_STRUCTURED_CHART,
+    "chart": RENDERER_ILLUSTRATION,
     "screenshot": RENDERER_UPLOAD,
 }
 

@@ -7,14 +7,15 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.llm.client import LLMClient
+from app.llm.providers import resolve_assistant_model
 from app.models.book import Book
 from app.models.chapter import Chapter
+from app.models.user import User
 from app.models.figure import Figure, FigureType
 from app.services.assistant.context import AssistantContext
 from app.services.assistant.intent import classify_intent
 from app.services.assistant.prompt_builder import build_execution_prompt
 from app.services.figures.generation import (
-    chat_model_for_book,
     create_figure_from_annotation,
     generate_figure_asset,
 )
@@ -36,12 +37,13 @@ async def execute_text_processing(
     intent: dict,
     system: str,
     user: str,
-    book: Book,
+    *,
+    chat_model: str,
 ) -> dict:
     client = LLMClient()
     out = client.chat_completion(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        model=chat_model_for_book(book),
+        model=chat_model,
         max_tokens=4096,
         temperature=0.45,
     )
@@ -138,14 +140,16 @@ async def handle_assistant_request(
     book_id: UUID,
     chapter_index: int,
     db: Session,
+    owner: User,
     *,
     chart_type: str | None = None,
     sub_kind: str | None = None,
 ) -> dict:
+    from fastapi import HTTPException, status
+
+    assistant_model = resolve_assistant_model(owner)
     book = db.get(Book, book_id)
     if not book:
-        from fastapi import HTTPException, status
-
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Book not found")
 
     chapter = (
@@ -168,7 +172,7 @@ async def handle_assistant_request(
         explicit_intent=explicit_intent,
     )
 
-    intent = classify_intent(ctx)
+    intent = classify_intent(ctx, model=assistant_model)
     if intent.get("needs_confirmation") and not explicit_intent:
         return {
             "type": "confirm",
@@ -187,4 +191,4 @@ async def handle_assistant_request(
         return await execute_image_generation(
             intent, ctx, book, chapter, chapter_index, db, params
         )
-    return await execute_text_processing(intent, system, user, book)
+    return await execute_text_processing(intent, system, user, chat_model=assistant_model)

@@ -220,9 +220,7 @@ def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", c
     book_type = book.book_type.value if book.book_type else ""
     clf = _clf(fig)
     declared_subtype = str(fig.subtype or clf.get("diagram_subtype") or fig.image_type or "").strip().lower()
-    if declared_subtype == "chart":
-        renderer = RENDERER_STRUCTURED_CHART
-    elif declared_subtype == "screenshot":
+    if declared_subtype == "screenshot":
         renderer = RENDERER_UPLOAD
     elif renderer != RENDERER_ILLUSTRATION:
         renderer = RENDERER_ILLUSTRATION
@@ -244,20 +242,29 @@ def render_figure(fig: Figure, book: Book, out_path: Path, *, model: str = "", c
 
     if renderer == RENDERER_ILLUSTRATION:
         sub = declared_subtype if declared_subtype in IMAGE_API_SUBTYPES else "concept_diagram"
-        layout_script = str(
-            clf.get("layout_script")
-            or spec.get("layout_script")
-            or (clf.get("prompt_spec") or {}).get("layout_script")
+        source_text = str(
+            spec.get("image_input")
+            or clf.get("image_input")
+            or (clf.get("prompt_spec") or {}).get("image_input")
+            or fig.raw_annotation
+            or clf.get("normalized_input")
+            or fig.caption
             or ""
         ).strip()
-        source_text = "" if layout_script else (fig.raw_annotation or clf.get("normalized_input") or fig.caption or "").strip()
+        prompt_mode = str(
+            spec.get("prompt_mode")
+            or clf.get("prompt_mode")
+            or (clf.get("prompt_spec") or {}).get("prompt_mode")
+            or ""
+        ).strip() or None
         return _finish(
             generate_figure_image(
                 source_text,
                 out_path,
                 style_type=book.style_type or "",
                 sub_kind=sub,
-                layout_script=layout_script or None,
+                layout_script=None,
+                prompt_mode=prompt_mode,
             ),
             out_path,
         )

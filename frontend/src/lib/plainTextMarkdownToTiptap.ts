@@ -1,6 +1,8 @@
 /**
- * 将常见 Markdown 纯文本转为 TipTap JSON：标题 #～###、无序列表 - / *、**加粗**。
+ * 将常见 Markdown 纯文本转为 TipTap JSON：标题 #～###、无序列表 - / *、**加粗**、行内 $…$ 公式。
  */
+
+import { splitInlineMath, type MathSegment } from "@/lib/mathTokenizer";
 
 export function shouldParseAsMarkdown(text: string): boolean {
   const s = text.replace(/\r\n/g, "\n");
@@ -8,6 +10,8 @@ export function shouldParseAsMarkdown(text: string): boolean {
   if (/\*\*[^*]+\*\*/.test(s)) return true;
   if (/(^|\n)\s*[-*]\s+\S/.test(s)) return true;
   if (/(^|\n)\s*\d+\.\s+\S/.test(s)) return true;
+  if (/\$\$[\s\S]+?\$\$/.test(s)) return true;
+  if (/(?<!\$)\$(?!\$)[^\$]+?\$(?!\$)/.test(s)) return true;
   return false;
 }
 
@@ -19,17 +23,32 @@ function parseInlineBoldAndText(t: string): Record<string, unknown>[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(t)) !== null) {
     if (m.index > last) {
-      out.push({ type: "text", text: t.slice(last, m.index) });
+      out.push(...parseInlineMathOnly(t.slice(last, m.index)));
     }
     out.push({ type: "text", text: m[1], marks: [{ type: "bold" }] });
     last = m.index + m[0].length;
   }
   if (last < t.length) {
-    out.push({ type: "text", text: t.slice(last) });
+    out.push(...parseInlineMathOnly(t.slice(last)));
   }
   if (out.length === 0) {
-    out.push({ type: "text", text: t });
+    out.push(...parseInlineMathOnly(t));
   }
+  return out;
+}
+
+function parseInlineMathOnly(t: string): Record<string, unknown>[] {
+  if (!t) return [];
+  const segments: MathSegment[] = splitInlineMath(t);
+  const out: Record<string, unknown>[] = [];
+  for (const seg of segments) {
+    if (seg.kind === "text") {
+      if (seg.value) out.push({ type: "text", text: seg.value });
+    } else if (seg.kind === "inline") {
+      out.push({ type: "mathInline", attrs: { latex: seg.latex } });
+    }
+  }
+  if (out.length === 0) out.push({ type: "text", text: t });
   return out;
 }
 
