@@ -1,19 +1,15 @@
-"""一键生成书稿 Job 执行器。"""
+"""一键成书前置 Job：设定 → 文献 → 大纲 → 叙事宪法；章节写作由前端 SSE 批量生成。"""
 
 from __future__ import annotations
 
-import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import func
-
-from app.agents.chapter_writer import ChapterWriterAgent
 from app.agents.document_parser import DocumentParserAgent
 from app.agents.literature_agent import LiteratureAgent
 from app.agents.outline_agent import OutlineAgent
-from app.constants.style_types import StyleType
 from app.database import SessionLocal
 from app.llm.client import LLMClient
 from app.llm.providers import (
@@ -27,15 +23,10 @@ from app.models.chapter import Chapter, ChapterStatus
 from app.models.notification import Notification, NotificationType
 from app.models.user import User
 from app.routers.chapters import _ensure_narrative_constitution_thread
-from app.services.auto_book_figure_worker import AutoBookFigureWorker
 from app.services.auto_book_job_progress import patch_job_checkpoint
-from app.services.citation_grounding import build_citation_policy_block, merge_grounding_for_writer
-from app.services.citation_service import create_citation_from_paper, sync_bibliography_chapter
-from app.services.figure_service import _collect_annotation_matches, extract_and_store_figures, sync_figures_to_tiptap
+from app.services.citation_service import create_citation_from_paper
 from app.services.literature_query_refiner import refine_literature_query
-from app.services.memory_service import build_book_memory, extract_chapter_memory
 from app.services.preface_service import get_preface, set_preface
-from app.services.section_assembler import process_chapter_generation_result
 from app.utils.json_llm import parse_llm_json
 
 logger = logging.getLogger(__name__)
@@ -60,6 +51,7 @@ def _update_job(
             job.finished_at = datetime.now(timezone.utc)
     if error is not None:
         job.error_message = error
+    job.updated_at = datetime.now(timezone.utc)
     db.commit()
 
 
@@ -124,100 +116,15 @@ def _maybe_apply_outline_title(book: Book, outline: dict) -> None:
         book.title = new_title[:500]
 
 
-async def _write_chapter_sync(
-    book_id: UUID,
-    chapter_index: int,
-    chat_model: str,
-    *,
-    figure_worker: AutoBookFigureWorker | None = None,
-) -> None:
-    db = SessionLocal()
-    try:
-        book = db.get(Book, book_id)
-        ch = db.query(Chapter).filter(Chapter.book_id == book_id, Chapter.index == chapter_index).first()
-        if not book or not ch:
-            return
-        total = int(db.query(func.count(Chapter.id)).filter(Chapter.book_id == book_id).scalar() or 0)
-        ch.status = ChapterStatus.generating
-        db.commit()
-
-        memory = build_book_memory(book_id, chapter_index, db)
-        from app.services.material_context import MaterialContextBuilder
-
-        ctx = MaterialContextBuilder(db, book_id)
-        summary_q = (ch.summary or "") + " " + ch.title
-        rag_snippets = ctx.retrieve_for_chapter(summary_q.strip() or book.title, top_k=4)
-        cite_blocks, rag_trimmed = merge_grounding_for_writer(db, book, rag_snippets, chapter_context=summary_q)
-        memory["citation_policy"] = build_citation_policy_block(bool(cite_blocks), bool(rag_trimmed))
-        st = (book.style_type or "").strip()
-        memory["writer_temperature"] = 0.55 if st in (StyleType.popular_science.value, StyleType.insight_opinion.value) else 0.75
-
-        chapter_dict = {
-            "title": ch.title,
-            "summary": ch.summary or "",
-            "key_points": list((ch.content or {}).get("key_points") or []) if isinstance(ch.content, dict) else [],
-            "sections": list((ch.content or {}).get("sections") or []) if isinstance(ch.content, dict) else [],
-            "estimated_words": int((ch.content or {}).get("estimated_words") or 3000) if isinstance(ch.content, dict) else 3000,
-            "chapter_index": chapter_index,
-            "total_chapters": max(total, 1),
-        }
-
-        writer = ChapterWriterAgent()
-        full_text = ""
-        async for token in writer.stream(
-            chapter_dict,
-            memory,
-            rag_trimmed,
-            citation_blocks=cite_blocks,
-            model=chat_model,
-            temperature=memory.get("writer_temperature"),
-        ):
-            full_text += token
-
-        meta = dict(ch.content) if isinstance(ch.content, dict) else {}
-        outline_sections = meta.get("sections") or []
-        try:
-            tiptap_doc, md_text, wc = process_chapter_generation_result(
-                full_text,
-                chapter_index=chapter_index,
-                outline_sections=outline_sections if isinstance(outline_sections, list) else [],
-            )
-        except Exception:
-            md_text, wc, tiptap_doc = full_text, len(full_text), None
-        meta["text"] = md_text
-        if tiptap_doc:
-            meta["tiptap_json"] = tiptap_doc
-        ch.content = meta
-        ch.word_count = wc
-        ch.status = ChapterStatus.done
-        db.commit()
-        try:
-            extract_and_store_figures(book_id, chapter_index, md_text, db)
-            if md_text.strip() and _collect_annotation_matches(md_text):
-                tiptap_doc = sync_figures_to_tiptap(book_id, chapter_index, md_text, db)
-                meta["tiptap_json"] = tiptap_doc
-                ch.content = meta
-                db.commit()
-        except Exception:
-            logger.exception("figures extract failed")
-        extract_chapter_memory(book_id, chapter_index, md_text, db)
-        if figure_worker is not None:
-            figure_worker.enqueue_chapter(book_id, chapter_index)
-            figure_worker.refresh_totals()
-    finally:
-        db.close()
-
-
 def run_auto_book_job(job_id: UUID) -> None:
     db = SessionLocal()
-    figure_worker: AutoBookFigureWorker | None = None
     try:
         job = db.get(BookJob, job_id)
         if not job or job.status not in (BookJobStatus.pending, BookJobStatus.running):
             return
         job.status = BookJobStatus.running
         db.commit()
-        patch_job_checkpoint(db, job, stage_message="正在初始化一键成书任务")
+        patch_job_checkpoint(db, job, stage_message="正在初始化", worker_pid=os.getpid())
 
         book = db.get(Book, job.book_id)
         user = db.get(User, job.user_id)
@@ -230,14 +137,13 @@ def run_auto_book_job(job_id: UUID) -> None:
         outline_model = resolve_book_outline_model(book, user)
         constitution_model = resolve_book_constitution_model(book, user)
         writing_model = resolve_book_writing_model(book, user)
-        figure_worker = AutoBookFigureWorker(job_id)
 
-        _update_job(db, job, step=BookJobStep.setting, pct=5)
-        patch_job_checkpoint(db, job, stage_message="正在推断书稿设定与主题理解")
+        _update_job(db, job, step=BookJobStep.setting, pct=10)
+        patch_job_checkpoint(db, job, stage_message="正在推断书稿设定")
         _infer_book_settings(book, writing_model)
         db.commit()
 
-        _update_job(db, job, step=BookJobStep.literature, pct=12)
+        _update_job(db, job, step=BookJobStep.literature, pct=25)
         patch_job_checkpoint(db, job, stage_message="正在规划参考文献")
         refined = refine_literature_query(db, book, raw_query=book.title)
         queries = refined.get("refined_queries") or [book.title]
@@ -251,7 +157,7 @@ def run_auto_book_job(job_id: UUID) -> None:
                 pass
         db.commit()
 
-        _update_job(db, job, step=BookJobStep.outline, pct=22)
+        _update_job(db, job, step=BookJobStep.outline, pct=45)
         patch_job_checkpoint(db, job, stage_message="正在生成全书大纲")
         book.status = BookStatus.outline_generating
         db.commit()
@@ -299,7 +205,6 @@ def run_auto_book_job(job_id: UUID) -> None:
             pf["status"] = "ready"
             set_preface(book, pf)
         n_chapters = len(outline.get("chapters") or [])
-        book.status = BookStatus.auto_generating
         patch_job_checkpoint(
             db,
             job,
@@ -309,57 +214,28 @@ def run_auto_book_job(job_id: UUID) -> None:
         )
         db.commit()
 
-        _update_job(db, job, step=BookJobStep.narrative, pct=38)
+        _update_job(db, job, step=BookJobStep.narrative, pct=75)
         patch_job_checkpoint(db, job, stage_message="正在生成叙事宪法")
         _ensure_narrative_constitution_thread(book.id, constitution_model)
         db.expire_all()
         book = db.get(Book, job.book_id)
-        patch_job_checkpoint(db, job, narrative_ready=True, stage_message="叙事宪法已就绪，准备章节写作")
-        book.status = BookStatus.writing
+
+        book.status = BookStatus.outline_ready
         db.commit()
 
-        _update_job(db, job, step=BookJobStep.preface, pct=42)
-        chapters = db.query(Chapter).filter(Chapter.book_id == book.id).order_by(Chapter.index.asc()).all()
-        n = len(chapters)
-        for i, ch in enumerate(chapters):
-            pct = 42 + int(48 * (i + 1) / max(n, 1))
-            _update_job(db, job, step=BookJobStep.writing, pct=min(pct, 90))
-            patch_job_checkpoint(
-                db,
-                job,
-                writing_started=True,
-                current_chapter_index=ch.index,
-                chapters_done=i,
-                stage_message=f"正在生成第 {ch.index} 章：{ch.title}",
-            )
-            if i == 0:
-                patch_job_checkpoint(db, job, ready_for_editor=True, stage_message=f"正在生成第 {ch.index} 章：{ch.title}")
-            asyncio.run(_write_chapter_sync(book.id, ch.index, writing_model, figure_worker=figure_worker))
-            patch_job_checkpoint(
-                db,
-                job,
-                chapters_done=i + 1,
-                stage_message=f"第 {ch.index} 章正文已完成",
-            )
-
-        _update_job(db, job, step=BookJobStep.bibliography, pct=92)
-        patch_job_checkpoint(db, job, stage_message="正在整理参考文献章节")
-        sync_bibliography_chapter(db, book)
-
-        _update_job(db, job, step=BookJobStep.figures, pct=94)
-        patch_job_checkpoint(db, job, stage_message="正文已完成，正在后台生成配图")
-        if figure_worker is not None:
-            figure_worker.wait_all()
-            figure_worker.shutdown(wait=True)
-
-        book.status = BookStatus.writing
+        patch_job_checkpoint(
+            db,
+            job,
+            narrative_ready=True,
+            ready_for_editor=True,
+            stage_message="叙事宪法已就绪，即将进入写作页",
+        )
         _update_job(db, job, step=BookJobStep.done, pct=100, status=BookJobStatus.completed)
-        patch_job_checkpoint(db, job, stage_message="一键成书任务已完成")
         _notify(
             db,
             user.id,
-            "一键生成完成",
-            f"《{book.title}》正文与配图任务已结束，可进入编辑器审校。",
+            "前置准备完成",
+            f"《{book.title}》大纲与叙事宪法已就绪，将进入自动写作。",
             {"book_id": str(book.id), "job_id": str(job.id)},
         )
     except Exception as e:
@@ -372,6 +248,4 @@ def run_auto_book_job(job_id: UUID) -> None:
             book.status = BookStatus.setup
             db.commit()
     finally:
-        if figure_worker is not None:
-            figure_worker.shutdown(wait=False)
         db.close()

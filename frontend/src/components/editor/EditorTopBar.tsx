@@ -121,12 +121,10 @@ export default function EditorTopBar({
       role="toolbar"
       aria-label="书稿编辑工具栏"
     >
-      {/* 返回 */}
       <button type="button" className="icon-button h-9 w-9 shrink-0" title="返回" onClick={onBack} aria-label="返回">
         <ChevronLeft className="h-5 w-5" />
       </button>
 
-      {/* 书名 */}
       <div className="flex min-w-[8rem] max-w-[14rem] shrink-0">
         {editing ? (
           <input
@@ -155,7 +153,6 @@ export default function EditorTopBar({
         )}
       </div>
 
-      {/* 进度条 */}
       <div className="flex min-w-[120px] flex-1 items-center gap-2 px-1">
         <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-200">
           <div
@@ -176,64 +173,68 @@ export default function EditorTopBar({
         triggerClassName="input flex h-9 min-w-[8.5rem] max-w-[10.5rem] cursor-pointer items-center justify-between gap-1 py-1 pl-2 pr-2 text-xs"
       />
 
-      {/* 导出 */}
-      <div className="relative shrink-0">
-        <button
-          ref={exportTriggerRef}
-          type="button"
-          className="btn-secondary h-9 px-2.5 text-xs"
-          aria-expanded={exportOpen}
-          aria-haspopup="menu"
-          onClick={() => setExportOpen((v) => !v)}
-        >
-          导出 ▾
-        </button>
-        {typeof document !== "undefined" &&
-          exportOpen &&
-          createPortal(
-            <>
-              <div className="fixed inset-0 z-[200] bg-transparent" aria-hidden onClick={() => setExportOpen(false)} />
-              <div role="menu" style={exportMenuStyle} className="z-[210] rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="block w-full px-3 py-2 text-left text-xs text-ink hover:bg-slate-50"
-                  onClick={() => {
-                    onExport?.("markdown");
-                    setExportOpen(false);
-                  }}
+      {onExport ? (
+        <div className="relative shrink-0">
+          <button
+            ref={exportTriggerRef}
+            type="button"
+            className="btn-secondary h-9 px-2.5 text-xs"
+            aria-expanded={exportOpen}
+            aria-haspopup="menu"
+            onClick={() => setExportOpen((v) => !v)}
+          >
+            导出 ▾
+          </button>
+          {typeof document !== "undefined" &&
+            exportOpen &&
+            createPortal(
+              <>
+                <div className="fixed inset-0 z-[200] bg-transparent" aria-hidden onClick={() => setExportOpen(false)} />
+                <div
+                  role="menu"
+                  style={exportMenuStyle}
+                  className="z-[210] rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
                 >
-                  Markdown (.md)
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="block w-full px-3 py-2 text-left text-xs text-ink hover:bg-slate-50"
-                  onClick={() => {
-                    onExport?.("docx");
-                    setExportOpen(false);
-                  }}
-                >
-                  Word (.docx)
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="block w-full px-3 py-2 text-left text-xs text-ink hover:bg-slate-50"
-                  onClick={() => {
-                    onExport?.("pdf");
-                    setExportOpen(false);
-                  }}
-                >
-                  PDF (.pdf)
-                </button>
-              </div>
-            </>,
-            document.body,
-          )}
-      </div>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-xs text-ink hover:bg-slate-50"
+                    onClick={() => {
+                      onExport("markdown");
+                      setExportOpen(false);
+                    }}
+                  >
+                    Markdown (.md)
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-xs text-ink hover:bg-slate-50"
+                    onClick={() => {
+                      onExport("docx");
+                      setExportOpen(false);
+                    }}
+                  >
+                    Word (.docx)
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-xs text-ink hover:bg-slate-50"
+                    onClick={() => {
+                      onExport("pdf");
+                      setExportOpen(false);
+                    }}
+                  >
+                    PDF (.pdf)
+                  </button>
+                </div>
+              </>,
+              document.body,
+            )}
+        </div>
+      ) : null}
 
-      {/* 保存状态 */}
       {saveLabel ? (
         <span className="hidden max-w-[120px] shrink-0 truncate text-[11px] text-slate-500 sm:inline" title={saveLabel}>
           {saveLabel}
@@ -242,7 +243,6 @@ export default function EditorTopBar({
         <span className="hidden w-14 shrink-0 sm:inline" aria-hidden />
       )}
 
-      {/* 批量：未在跑时为「全部生成」，跑时为「暂停生成」 */}
       {showBatchCtl ? (
         <button
           type="button"

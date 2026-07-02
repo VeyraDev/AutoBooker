@@ -25,6 +25,7 @@ def patch_job_checkpoint(db: Session, job: BookJob, **fields) -> dict:
     if "started_at" not in ck:
         ck["started_at"] = _now_iso()
     job.checkpoint_json = ck
+    job.updated_at = datetime.now(timezone.utc)
     db.commit()
     return ck
 

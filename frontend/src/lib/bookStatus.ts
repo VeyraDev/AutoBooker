@@ -4,8 +4,7 @@ export type Phase = "SETUP" | "WRITING" | "COMPLETED";
 
 export function phaseOf(book: Book): Phase {
   if (book.status === "completed") return "COMPLETED";
-  if (book.status === "writing" || book.status === "review_ready" || book.status === "auto_generating")
-    return "WRITING";
+  if (book.status === "writing" || book.status === "review_ready") return "WRITING";
   return "SETUP";
 }
 

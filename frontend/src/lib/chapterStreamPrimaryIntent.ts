@@ -14,7 +14,6 @@ export function chapterStreamPrimaryIntent(
   },
 ): ChapterStreamPrimaryIntent {
   const streamingHere = opts.streamingChapterIndex !== null && opts.streamingChapterIndex === meta.index;
-  // 仅本客户端正在推 SSE 时算 busy；勿仅用 meta.status===generating（刷新/断流后会永久禁用按钮）
   if (streamingHere) return "busy";
   if (meta.status === "done") {
     return opts.hasBody ? "regenerate" : "generate";

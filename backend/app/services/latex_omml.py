@@ -11,6 +11,35 @@ logger = logging.getLogger(__name__)
 MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
+_GROUPCHR_PR_CLOSE = re.compile(
+    r"(<m:groupChrPr\b[^>]*>.*?</m:groupChr>)(\s*<m:e>)",
+    re.DOTALL,
+)
+
+
+def _repair_omml_xml(omml: str) -> str:
+    """修复 mathml2omml 将 groupChrPr 误闭合为 groupChr 的已知问题。"""
+    fixed = omml
+    while True:
+        next_fixed = _GROUPCHR_PR_CLOSE.sub(
+            lambda m: m.group(1).replace("</m:groupChr>", "</m:groupChrPr>", 1) + m.group(2),
+            fixed,
+        )
+        if next_fixed == fixed:
+            break
+        fixed = next_fixed
+    return fixed
+
+
+def _validate_omml_xml(omml: str) -> bool:
+    from docx.oxml.parser import parse_xml
+
+    try:
+        parse_xml(omml)
+        return True
+    except Exception:
+        return False
+
 
 from app.services.latex_normalize import normalize_latex_input
 
@@ -31,6 +60,9 @@ def latex_to_omml(latex: str) -> dict[str, Any]:
             raise ValueError("empty_omml")
         if 'xmlns:m="' not in omml:
             omml = omml.replace("<m:oMath>", f'<m:oMath xmlns:m="{MATH_NS}">', 1)
+        omml = _repair_omml_xml(omml)
+        if not _validate_omml_xml(omml):
+            raise ValueError("invalid_omml_xml")
         return {"status": "ok", "latex": src, "error": None, "omml": omml}
     except Exception as exc:
         logger.warning("latex_to_omml failed latex=%r err=%s", src[:120], exc)

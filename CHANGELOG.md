@@ -16,12 +16,10 @@
 
 ## 2026-07-02
 
-- **一键成书进度页**：新增固定路由 `/app/books/:bookId/auto-progress`，分阶段展示设定、文献、大纲、叙事宪法、章节写作与配图进度；展示章节/配图计数与已运行时长（`frontend/src/pages/AutoBookProgressPage.tsx`、`frontend/src/lib/autoBookProgress.ts`）。
-- **一键成书跳转**：点击「一键出书」后创建书稿、立即启动 Job 并进入进度页，不再要求先到设定页手动确认；写作页在 Job 未就绪时自动重定向至进度页（`NewBookDialog.tsx`、`BookEditorPage.tsx`、`SetupView.tsx`）。
-- **进入写作页条件**：大纲与叙事宪法持久化、章节目录已创建、第一章写作启动后（`ready_for_editor`）才自动进入写作页，避免目录为空（`backend/app/services/auto_book_job.py`、`backend/app/services/auto_book_job_progress.py`）。
-- **一键成书配图**：章节正文完成后后台并行生成插图（默认 2 并发，不阻塞后续章节；单张失败不回滚正文）（`backend/app/services/auto_book_figure_worker.py`）。
-- **Job 状态 API**：`GET /book-jobs/{book_id}` 返回 `detail`（章节/配图进度、阶段文案、`ready_for_editor` 等）（`backend/app/schemas/book_job.py`、`backend/app/routers/book_jobs.py`）。
-- **数据库**：`book_job_step` 枚举新增 `figures`（迁移 `migrations/versions/o2p3q4r5s6t7_book_job_figures_step.py`）。
+- **一键成书流程简化**：后台 Job 仅负责设定/文献/大纲/叙事宪法；叙事宪法完成后进入写作页，自动调用与正常流程相同的 `handleStartWriting('auto')`（前言 SSE + 全书章节流式生成）；写作页不再显示成书进度/后台 Job 相关 UI（`auto_book_job.py`、`BookEditorPage.tsx`、`autoBookWrite.ts`）。
+- **修复自动写作未启动**：进度页跳转标记在大纲未加载完前被提前消费，导致前言不生成、流式与「暂停生成」失效；改为 `peekPendingAutoWrite` 待数据就绪后再 `consume`（`autoBookWrite.ts`、`BookEditorPage.tsx`）。
+- **一键成书进度页**：新增固定路由 `/app/books/:bookId/auto-progress`，仅展示设定、文献、大纲、叙事宪法四阶段（`AutoBookProgressPage.tsx`、`autoBookProgress.ts`）。
+- **一键成书跳转**：点击「一键出书」后创建书稿、启动前置 Job 并进入进度页；前置 Job 未完成时写作页自动重定向至进度页（`NewBookDialog.tsx`、`BookEditorPage.tsx`、`SetupView.tsx`）。
 
 ## 2026-06-30
 

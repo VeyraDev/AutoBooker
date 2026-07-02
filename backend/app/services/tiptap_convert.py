@@ -266,8 +266,11 @@ def _docx_inline_math(paragraph, latex: str) -> None:
 
     result = latex_to_omml(latex)
     if result.get("status") == "ok" and result.get("omml"):
-        _append_omml_to_paragraph(paragraph, str(result["omml"]))
-        return
+        try:
+            _append_omml_to_paragraph(paragraph, str(result["omml"]))
+            return
+        except Exception:
+            pass
     run = paragraph.add_run(f"${latex}$")
     _style_run(run, italic=True)
 
@@ -690,13 +693,16 @@ def _docx_block(doc: Document, node: dict[str, Any]) -> None:
 
         result = latex_to_omml(latex)
         if result.get("status") == "ok" and result.get("omml"):
-            _append_omml_block_to_document(
-                doc,
-                str(result["omml"]),
-                numbered=bool(attrs.get("numbered")),
-                number=str(attrs.get("equationNumber") or ""),
-            )
-            return
+            try:
+                _append_omml_block_to_document(
+                    doc,
+                    str(result["omml"]),
+                    numbered=bool(attrs.get("numbered")),
+                    number=str(attrs.get("equationNumber") or ""),
+                )
+                return
+            except Exception:
+                pass
         p = doc.add_paragraph(f"${latex}$")
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         for run in p.runs:

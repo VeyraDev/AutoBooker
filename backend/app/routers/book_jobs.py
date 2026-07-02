@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -16,9 +17,24 @@ from app.routers.auth import get_current_user
 from app.schemas.book_job import AutoGenerateIn, BookJobDetailOut, BookJobOut
 from app.services import book_service
 from app.services.auto_book_job import run_auto_book_job
-from app.services.auto_book_job_progress import build_job_detail
+from app.services.auto_book_job_progress import build_job_detail, patch_job_checkpoint
 
 router = APIRouter(prefix="/book-jobs", tags=["book-jobs"])
+
+
+def _reconcile_job_worker(db: Session, job: BookJob) -> None:
+    """BackgroundTasks 随进程重启而消失；若 Job 标记的 worker 非本进程则视为已中断。"""
+    if job.status not in (BookJobStatus.pending, BookJobStatus.running):
+        return
+    ck = dict(job.checkpoint_json or {})
+    worker_pid = ck.get("worker_pid")
+    if worker_pid is None:
+        return
+    if int(worker_pid) == os.getpid():
+        return
+    job.status = BookJobStatus.failed
+    job.error_message = "服务重启导致一键成书任务中断，请重新启动一键成书"
+    db.commit()
 
 
 def _job_to_out(job: BookJob, db: Session) -> BookJobOut:
@@ -77,6 +93,8 @@ def get_book_job(
     )
     if not job:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
+    _reconcile_job_worker(db, job)
+    db.refresh(job)
     return _job_to_out(job, db)
 
 
@@ -95,6 +113,8 @@ def start_auto_generate_for_book(
         .first()
     )
     if existing:
+        _reconcile_job_worker(db, existing)
+        db.refresh(existing)
         return _job_to_out(existing, db)
     job = BookJob(book_id=book.id, user_id=user.id, status=BookJobStatus.pending, progress_pct=0)
     db.add(job)

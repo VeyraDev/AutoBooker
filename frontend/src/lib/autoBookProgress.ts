@@ -1,13 +1,6 @@
-import type { BookJob, BookJobDetail } from "@/api/bookJobs";
+import type { BookJob } from "@/api/bookJobs";
 
-export type AutoBookStageId =
-  | "setting"
-  | "literature"
-  | "outline"
-  | "narrative"
-  | "writing"
-  | "figures"
-  | "done";
+export type AutoBookStageId = "setting" | "literature" | "outline" | "narrative";
 
 export type AutoBookStageState = "pending" | "active" | "done";
 
@@ -16,14 +9,12 @@ export interface AutoBookStage {
   label: string;
 }
 
+/** 进度页仅展示前置阶段；章节写作在写作页走正常 SSE 批量流程 */
 export const AUTO_BOOK_STAGES: AutoBookStage[] = [
   { id: "setting", label: "书稿设定" },
   { id: "literature", label: "文献规划" },
   { id: "outline", label: "大纲生成" },
   { id: "narrative", label: "叙事宪法" },
-  { id: "writing", label: "章节写作" },
-  { id: "figures", label: "图像生成" },
-  { id: "done", label: "全书检查" },
 ];
 
 const STEP_ORDER: Record<string, number> = {
@@ -31,11 +22,8 @@ const STEP_ORDER: Record<string, number> = {
   literature: 1,
   outline: 2,
   narrative: 3,
-  preface: 4,
-  writing: 4,
-  bibliography: 6,
-  figures: 5,
-  done: 6,
+  preface: 3,
+  done: 4,
 };
 
 function stepIndex(step: string | null | undefined): number {
@@ -47,16 +35,16 @@ export function stageState(stageId: AutoBookStageId, job: BookJob | null | undef
   if (!job) return "pending";
   const detail = job.detail;
   const current = stepIndex(job.current_step);
-  const target = STEP_ORDER[stageId] ?? 0;
 
   if (job.status === "completed") return "done";
   if (job.status === "failed") {
+    const target = STEP_ORDER[stageId] ?? 0;
     if (current > target) return "done";
     if (current === target) return "active";
     return "pending";
   }
 
-  if (stageId === "setting" && current >= 0) return current > 0 ? "done" : "active";
+  if (stageId === "setting") return current > 0 ? "done" : current === 0 ? "active" : "pending";
   if (stageId === "literature") {
     if (current > 1) return "done";
     if (current === 1) return "active";
@@ -68,50 +56,19 @@ export function stageState(stageId: AutoBookStageId, job: BookJob | null | undef
     return "pending";
   }
   if (stageId === "narrative") {
-    if (detail?.narrative_ready || current > 3) return "done";
+    if (detail?.narrative_ready || job.status === "completed") return "done";
     if (current === 3) return "active";
     return "pending";
   }
-  if (stageId === "writing") {
-    if (job.current_step === "bibliography" || job.current_step === "figures" || job.current_step === "done") {
-      return "done";
-    }
-    if (detail?.writing_started || job.current_step === "writing" || job.current_step === "preface") return "active";
-    return "pending";
-  }
-  if (stageId === "figures") {
-    if (job.status === "completed") return "done";
-    if (job.current_step === "figures") return "active";
-    if (job.current_step === "done") return "done";
-    if ((detail?.figures_total ?? 0) > 0 && (detail?.figures_done ?? 0) >= (detail?.figures_total ?? 0)) return "done";
-    return "pending";
-  }
-  if (stageId === "done") {
-    if (job.status === "completed") return "done";
-    if (job.current_step === "bibliography") return "active";
-    return "pending";
-  }
 
-  if (current > target) return "done";
-  if (current === target) return "active";
   return "pending";
 }
 
+/** 叙事宪法完成后进入写作页（章节由前端 SSE 批量生成） */
 export function shouldEnterEditor(job: BookJob | null | undefined): boolean {
-  if (!job) return false;
-  const d: BookJobDetail | null | undefined = job.detail;
-  return Boolean(
-    d?.ready_for_editor &&
-      d.outline_ready &&
-      d.narrative_ready &&
-      (d.total_chapters ?? 0) > 0 &&
-      (job.current_step === "writing" ||
-        job.current_step === "preface" ||
-        job.current_step === "bibliography" ||
-        job.current_step === "figures" ||
-        job.current_step === "done" ||
-        d.writing_started),
-  );
+  if (!job || job.status !== "completed") return false;
+  const d = job.detail;
+  return Boolean(d?.narrative_ready && d.outline_ready && (d.total_chapters ?? 0) > 0);
 }
 
 export function formatElapsed(seconds: number): string {
@@ -124,12 +81,12 @@ export function formatElapsed(seconds: number): string {
 export function estimateProgressPct(job: BookJob | null | undefined): number {
   if (!job) return 0;
   if (job.status === "completed") return 100;
-  const weights = [8, 10, 18, 12, 40, 10, 2];
+  const weights = [15, 20, 35, 30];
   let pct = 0;
   AUTO_BOOK_STAGES.forEach((stage, i) => {
     const st = stageState(stage.id, job);
     if (st === "done") pct += weights[i] ?? 0;
-    else if (st === "active") pct += Math.round((weights[i] ?? 0) * 0.45);
+    else if (st === "active") pct += Math.round((weights[i] ?? 0) * 0.5);
   });
   return Math.min(99, Math.max(job.progress_pct ?? 0, pct));
 }

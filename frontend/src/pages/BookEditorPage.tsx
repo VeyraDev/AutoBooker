@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -45,7 +46,7 @@ import { useLlmModels } from "@/hooks/useLlmModels";
 import { useDailyWordDelta } from "@/hooks/useDailyWordDelta";
 import { resolveUserSceneModel } from "@/lib/bookAiModels";
 import { phaseOf, type Phase } from "@/lib/bookStatus";
-import { shouldEnterEditor } from "@/lib/autoBookProgress";
+import { consumePendingAutoWrite, peekPendingAutoWrite } from "@/lib/autoBookWrite";
 import { useAuthStore } from "@/stores/authStore";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import type { Chapter } from "@/types/chapter";
@@ -179,32 +180,16 @@ export default function BookEditorPage() {
   const authUser = useAuthStore((s) => s.user);
   const setAuthUser = useAuthStore((s) => s.setUser);
 
+  const autoWriteStartedRef = useRef(false);
+  const [autoWriteBooting, setAutoWriteBooting] = useState(() =>
+    Boolean(bookId && peekPendingAutoWrite(bookId)),
+  );
+
   const bookQuery = useQuery({
     queryKey: ["book", bookId],
     queryFn: () => getBook(bookId!),
     enabled: !!bookId,
   });
-
-  const bookJobQuery = useQuery({
-    queryKey: ["bookJob", bookId],
-    queryFn: () => fetchBookJob(bookId!),
-    enabled: !!bookId,
-    refetchInterval: (q) => {
-      const job = q.state.data;
-      if (!job || job.status === "completed" || job.status === "failed") return false;
-      return 4000;
-    },
-  });
-
-  const backendAutoJobRunning = bookJobQuery.data?.status === "running";
-
-  useEffect(() => {
-    if (!bookId || bookJobQuery.isLoading) return;
-    const job = bookJobQuery.data;
-    if (job && (job.status === "pending" || job.status === "running") && !shouldEnterEditor(job)) {
-      navigate(`/app/books/${bookId}/auto-progress`, { replace: true });
-    }
-  }, [bookId, bookJobQuery.data, bookJobQuery.isLoading, navigate]);
 
   const outlineQuery = useQuery({
     queryKey: ["outline", bookId],
@@ -223,6 +208,17 @@ export default function BookEditorPage() {
   const book = bookQuery.data;
   const outline = outlineQuery.data;
   const chapters = useMemo(() => outline?.chapters ?? EMPTY_OUTLINE_CHAPTERS, [outline]);
+
+  /** 一键成书前置未完成时留在进度页 */
+  useEffect(() => {
+    if (!bookId || !book) return;
+    if (book.status !== "auto_generating" && book.status !== "outline_generating") return;
+    void fetchBookJob(bookId).then((job) => {
+      if (job && (job.status === "pending" || job.status === "running")) {
+        navigate(`/app/books/${bookId}/auto-progress`, { replace: true });
+      }
+    });
+  }, [bookId, book?.status, navigate]);
 
   /** 后端同步生成大纲时，刷新页面后 outlineBusy 会丢失；轮询直到状态离开 outline_generating。 */
   useEffect(() => {
@@ -251,21 +247,6 @@ export default function BookEditorPage() {
   });
 
   const chapterDetail = chapterDetailQuery.data;
-
-  useEffect(() => {
-    if (!bookId || !backendAutoJobRunning) return;
-    const tick = () => {
-      void qc.invalidateQueries({ queryKey: ["outline", bookId] });
-      void qc.invalidateQueries({ queryKey: ["book", bookId] });
-      void qc.invalidateQueries({ queryKey: ["figures", bookId] });
-      if (chapterIndex != null) {
-        void qc.invalidateQueries({ queryKey: ["chapter", bookId, chapterIndex] });
-      }
-    };
-    tick();
-    const id = window.setInterval(tick, 4000);
-    return () => window.clearInterval(id);
-  }, [bookId, backendAutoJobRunning, chapterIndex, qc]);
 
   const [liveChapterChars, setLiveChapterChars] = useState<number | null>(null);
 
@@ -1037,6 +1018,19 @@ export default function BookEditorPage() {
     }
   }
 
+  /** 一键成书：前置完成后进入写作页，复用正常「全部自动生成」流程（含前言 SSE） */
+  useEffect(() => {
+    if (!bookId) return;
+    if (!peekPendingAutoWrite(bookId)) return;
+    if (autoWriteStartedRef.current) return;
+    if (!outlineQuery.isFetched || chapters.length === 0) return;
+    if (!consumePendingAutoWrite(bookId)) return;
+    autoWriteStartedRef.current = true;
+    setAutoWriteBooting(true);
+    setChapterGenMode(bookId, "auto");
+    void handleStartWriting("auto").finally(() => setAutoWriteBooting(false));
+  }, [bookId, outlineQuery.isFetched, chapters.length]);
+
   async function handleReorder(items: { chapter_id: string; new_index: number }[]) {
     if (!bookId) return;
     await reorderChapters(bookId, items);
@@ -1252,6 +1246,14 @@ export default function BookEditorPage() {
       : null;
 
   if (phase === "SETUP") {
+    if (autoWriteBooting) {
+      return (
+        <div className="planning-setup-shell flex w-full flex-col items-center justify-center py-24">
+          <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+          <p className="mt-4 text-sm text-slate-600">正在进入写作页并启动全书生成…</p>
+        </div>
+      );
+    }
     return (
       <div className="planning-setup-shell flex w-full flex-col">
         <PlanningWizard
@@ -1290,9 +1292,10 @@ export default function BookEditorPage() {
             savedAt={savedAt}
             onBack={() => navigate("/app/books")}
             onExport={handleExport}
-            autoGenerating={autoGenerating || backendAutoJobRunning}
+            autoGenerating={autoGenerating}
             onPauseGeneration={() => {
               autoGenAbortRef.current = true;
+              setAutoGenerating(false);
             }}
             onStartBatchGeneration={() => void resumeAutoGenerate()}
           />
@@ -1360,7 +1363,7 @@ export default function BookEditorPage() {
                         streamingChapterIndex={streamingIndex}
                         onOpenGlobalOutline={() => setOutlineDrawerOpen(true)}
                         chapterGenMode={chapterGenMode}
-                        autoGenerating={autoGenerating || backendAutoJobRunning}
+                        autoGenerating={autoGenerating}
                         prefaceEnabled={prefaceQuery.data?.enabled !== false}
                         prefaceHasBody={prefaceHasBody}
                         prefaceStatus={prefaceQuery.data?.status ?? "empty"}
