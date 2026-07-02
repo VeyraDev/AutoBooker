@@ -40,6 +40,7 @@ import { migrateTiptapDoc } from "@/lib/migrateTiptapDoc";
 import type { EditorAiPreviewPayload } from "@/types/aiPreview";
 import { isChapterBodyEffectivelyEmpty } from "@/lib/chapterBodyEmpty";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
+import { prepareSourceMarkdown } from "@/lib/resolveChapterEditorContent";
 import { tiptapDocToMarkdown } from "@/lib/tiptapDocToMarkdown";
 import { isRichMarkdown, markdownToTiptapDoc } from "@/lib/markdownToTiptapDoc";
 import { hasUnlinkedFigureBlocks, syncFigureBlocksWithServer } from "@/lib/syncFigureBlocksWithServer";
@@ -354,7 +355,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     onUpdate: ({ editor: ed }) => {
       if (skipChangeEmitRef.current) return;
       const json = ed.getJSON() as unknown as Record<string, unknown>;
-      const md = tiptapDocToMarkdown(json);
+      const md = prepareSourceMarkdown(tiptapDocToMarkdown(json));
       onChange({
         json,
         text: md || ed.getText(),

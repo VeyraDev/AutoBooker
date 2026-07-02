@@ -95,7 +95,7 @@ export default function BooksPage() {
       <div className="dashboard-section-title">
         <div>
           <p className="eyebrow">Library</p>
-          <h1 className="page-title mt-2">图书管理</h1>
+          <h1 className="page-title mt-2">图书生成</h1>
           <p className="page-subtitle">管理书稿全生命周期并直接进入编辑工作台。新建书稿请使用顶部导航栏「新建书稿」。</p>
         </div>
       </div>

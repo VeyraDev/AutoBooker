@@ -11,6 +11,7 @@ from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
 from app.services.publication.book_ast import AstBlock, BookAst
+from app.services.publication.page_numbers import add_docx_page_numbers
 from app.services.publication.publication_styles import (
     AST_WORD_HEADING_LEVEL,
     BODY_PT,
@@ -259,6 +260,7 @@ def render_ast_to_docx(ast: BookAst) -> bytes:
                 p.paragraph_format.left_indent = Pt(18)
                 for r in p.runs:
                     _style_docx_run(r, size_pt=BODY_PT)
+    add_docx_page_numbers(doc)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()

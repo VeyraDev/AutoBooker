@@ -8,9 +8,7 @@ import HomePage from "@/pages/HomePage";
 import LandingPage from "@/pages/LandingPage";
 import LibraryPage from "@/pages/LibraryPage";
 import LoginPage from "@/pages/LoginPage";
-import ProfilePage from "@/pages/ProfilePage";
 import RegisterPage from "@/pages/RegisterPage";
-import StatsPage from "@/pages/StatsPage";
 
 export default function App() {
   return (
@@ -25,11 +23,11 @@ export default function App() {
           <Route path="books" element={<BooksPage />} />
           <Route path="library" element={<LibraryPage />} />
           <Route path="books/:bookId" element={<BookEditorPage />} />
-          <Route path="profile" element={<ProfilePage />} />
-          <Route path="stats" element={<StatsPage />} />
         </Route>
       </Route>
       <Route path="/dashboard" element={<Navigate to="/app/home" replace />} />
+      <Route path="/app/profile" element={<Navigate to="/app/home" replace />} />
+      <Route path="/app/stats" element={<Navigate to="/app/home" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

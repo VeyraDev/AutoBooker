@@ -54,7 +54,7 @@ export default function HomePage() {
         </div>
         <div className="mt-5 space-y-3">
           {recentBooks.length === 0 ? (
-            <p className="text-sm text-slate-500">暂无书稿，去图书管理创建第一本书。</p>
+            <p className="text-sm text-slate-500">暂无书稿，去图书生成创建第一本书。</p>
           ) : (
             recentBooks.map((book) => (
               <Link

@@ -11,6 +11,7 @@ import fitz
 from PIL import Image, ImageOps
 
 from app.services.publication.book_ast import BookAst
+from app.services.publication.page_numbers import add_pdf_page_numbers
 from app.services.publication.publication_styles import (
     PDF_CONTENT_HEIGHT_PT,
     PDF_CONTENT_WIDTH_PT,
@@ -409,4 +410,5 @@ def render_ast_to_pdf(ast: BookAst) -> bytes:
         if not bad - page_break_ids:
             break
         page_break_ids |= bad
-    return _repair_undersized_pdf_figures(pdf_bytes)
+    pdf_bytes = _repair_undersized_pdf_figures(pdf_bytes)
+    return add_pdf_page_numbers(pdf_bytes)

@@ -10,8 +10,8 @@ export async function getOutline(bookId: string): Promise<OutlineBookResponse> {
   return data;
 }
 
-/** Outline generation calls the LLM synchronously; default axios timeout (15s) is too short. */
-const OUTLINE_GENERATE_TIMEOUT_MS = 180_000;
+/** Outline generation calls the LLM synchronously (up to 3 attempts); allow enough time. */
+const OUTLINE_GENERATE_TIMEOUT_MS = 600_000;
 
 export async function generateOutline(
   bookId: string,

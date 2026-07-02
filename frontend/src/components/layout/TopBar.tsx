@@ -18,7 +18,7 @@ export default function TopBar() {
         <div className="flex items-center gap-2">
           <span className="inline-block h-7 w-7 rounded bg-brand" aria-hidden />
           <div>
-            <span className="block text-base font-medium tracking-tight text-ink">AutoBooker</span>
+            <span className="block text-base font-medium tracking-tight text-ink">AutoBook</span>
             <span className="block text-xs text-slate-400">智能写作看板</span>
           </div>
         </div>

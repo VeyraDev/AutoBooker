@@ -11,10 +11,8 @@ import { useAuthStore } from "@/stores/authStore";
 
 const navItems = [
   { to: "/app/home", label: "主页" },
-  { to: "/app/books", label: "图书管理" },
-  { to: "/app/library", label: "系统书库" },
-  { to: "/app/profile", label: "个人主页" },
-  { to: "/app/stats", label: "数据统计" },
+  { to: "/app/books", label: "图书生成" },
+  { to: "/app/library", label: "系统书库", badge: "待开发" as const },
 ];
 
 export default function AppShellHeader() {
@@ -81,7 +79,7 @@ export default function AppShellHeader() {
             <NavLink to="/app/home" className="flex items-start gap-2" aria-label="前往主页">
               <span className="app-brand-mark shrink-0">A</span>
               <div className="flex min-w-0 flex-col gap-0.5">
-                <span className="app-brand-title">AutoBooker</span>
+                <span className="app-brand-title">AutoBook</span>
                 <span className="app-brand-feedback">
                   意见反馈：
                   <a href="mailto:13523099777@163.com" className="hover:text-brand">
@@ -103,6 +101,11 @@ export default function AppShellHeader() {
                   title={item.label}
                 >
                   <span className="text-sm font-medium">{item.label}</span>
+                  {"badge" in item && item.badge ? (
+                    <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-medium text-amber-800">
+                      {item.badge}
+                    </span>
+                  ) : null}
                 </NavLink>
               );
             })}
@@ -265,6 +268,9 @@ export default function AppShellHeader() {
                     className={({ isActive }) => `icon-nav justify-center ${isActive ? "icon-nav-active" : ""}`}
                   >
                     <span className="text-xs">{item.label}</span>
+                    {"badge" in item && item.badge ? (
+                      <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] text-amber-800">{item.badge}</span>
+                    ) : null}
                   </NavLink>
                 );
               })}

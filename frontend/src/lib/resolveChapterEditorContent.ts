@@ -10,15 +10,31 @@ import { ANNOTATION_TEST_RE } from "@/lib/annotationPatterns";
 import { migrateTiptapDoc } from "@/lib/migrateTiptapDoc";
 import { textHasMathDelimiters, tiptapDocHasMathNodes, tiptapDocHasRawMathText } from "@/lib/migrateMathInTiptapDoc";
 import { isRichMarkdown, markdownToTiptapDoc } from "@/lib/markdownToTiptapDoc";
+import { normalizeGfmMarkdown } from "@/lib/normalizeGfmMarkdown";
 import { tiptapDocCollapsedButTextStructured } from "@/lib/reconcileTablesFromText";
 import { plainTextMarkdownToTiptapDoc, shouldParseAsMarkdown } from "@/lib/plainTextMarkdownToTiptap";
+import { repairFragmentedInlineMath } from "@/lib/repairInlineMath";
+import {
+  dropSpuriousDashListLines,
+  markdownHasReviewPidCorruption,
+  repairEmptyPidListPairs,
+  stripReviewPidComments,
+  tiptapHasSpuriousEmptyLists,
+} from "@/lib/reviewPidComments";
+
+export function prepareSourceMarkdown(text: string): string {
+  const repaired = repairEmptyPidListPairs(text);
+  const stripped = stripReviewPidComments(repaired);
+  return repairFragmentedInlineMath(normalizeGfmMarkdown(dropSpuriousDashListLines(stripped)));
+}
 
 /** 生成结束 / 从服务端载入时：优先保留 tiptap_json 结构，仅就地修补公式/表格。 */
 export function resolveChapterEditorContent(
   content: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> {
   const c = content ?? {};
-  const text = typeof c.text === "string" ? c.text : "";
+  const rawText = typeof c.text === "string" ? c.text : "";
+  const text = rawText.trim() ? prepareSourceMarkdown(rawText) : rawText;
   const tjObj =
     c.tiptap_json && typeof c.tiptap_json === "object"
       ? (c.tiptap_json as Record<string, unknown>)
@@ -37,6 +53,8 @@ export function resolveChapterEditorContent(
       (text.trim() && textHasMathDelimiters(text) && !tiptapDocHasMathNodes(tjObj)));
   const collapsedWall =
     Boolean(tjObj && text.trim() && tiptapDocCollapsedButTextStructured(text, tjObj));
+  const pidCorruption = rawText.trim() ? markdownHasReviewPidCorruption(rawText) : false;
+  const spuriousEmptyLists = tjObj ? tiptapHasSpuriousEmptyLists(tjObj) : false;
 
   const needsFigureRebuild =
     textHasAnnotations && (!tjHasFigures || tjFigureCount < annotationCount);
@@ -47,6 +65,8 @@ export function resolveChapterEditorContent(
     !tiptapIncomplete &&
     !needsMathMigration &&
     !collapsedWall &&
+    !pidCorruption &&
+    !spuriousEmptyLists &&
     (tjHasFigures || tjRich)
   ) {
     return migrateTiptapDoc(tjObj, { sourceText: text });
@@ -55,7 +75,14 @@ export function resolveChapterEditorContent(
   if (text.trim()) {
     const figBlocks = tjObj ? extractFigureBlocksFromDoc(tjObj) : [];
 
-    if (needsFigureRebuild || tiptapIncomplete || needsMathMigration || collapsedWall) {
+    if (
+      needsFigureRebuild ||
+      tiptapIncomplete ||
+      needsMathMigration ||
+      collapsedWall ||
+      pidCorruption ||
+      spuriousEmptyLists
+    ) {
       if (tjObj && tiptapDocHasRawMathText(tjObj) && !collapsedWall && !tiptapIncomplete) {
         return migrateTiptapDoc(tjObj, { sourceText: text });
       }

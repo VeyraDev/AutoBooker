@@ -40,6 +40,7 @@ from app.schemas.chapter import (
 from app.services import book_service
 from app.services.dedupe_service import DedupeService
 from app.services.figure_service import (
+    _collect_annotation_matches,
     extract_and_store_figures,
     renumber_figures,
     refresh_chapter_figures,
@@ -519,7 +520,7 @@ async def generate_chapter_stream(
                 db.commit()
                 try:
                     extract_and_store_figures(book_id, chapter_index, md_text, db)
-                    if md_text.strip():
+                    if md_text.strip() and _collect_annotation_matches(md_text):
                         tiptap_doc = sync_figures_to_tiptap(
                             book_id, chapter_index, md_text, db
                         )

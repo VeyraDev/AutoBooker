@@ -77,8 +77,9 @@ function blockToMd(node: unknown, depth = 0): string {
       if (!item || typeof item !== "object") continue;
       const it = item as Record<string, unknown>;
       if (it.type !== "listItem") continue;
-      const body = blocksToMd(it.content as unknown[], depth + 1);
-      for (const line of body.split("\n")) {
+      const itemLines = listItemBodyToMd(it.content as unknown[], depth + 1);
+      if (itemLines.length === 0) continue;
+      for (const line of itemLines) {
         if (t === "orderedList") {
           lines.push(`${idx}. ${line}`);
           idx += 1;
@@ -104,7 +105,14 @@ function blockToMd(node: unknown, depth = 0): string {
       const texts = cells.map((cell) => {
         const paras = (cell.content as unknown[]) ?? [];
         return paras
-          .map((p) => blockToMd(p, depth))
+          .map((p) => {
+            if (!p || typeof p !== "object") return "";
+            const para = p as Record<string, unknown>;
+            if (para.type === "paragraph") {
+              return inlineToMd(para.content as unknown[]);
+            }
+            return blockToMd(p, depth);
+          })
           .filter(Boolean)
           .join(" ")
           .trim();
@@ -125,6 +133,26 @@ function blockToMd(node: unknown, depth = 0): string {
     return `$${latex}$`;
   }
   return "";
+}
+
+/** 列表项内段落 pid 与正文同一行，避免导出成 `- <!-- pid -->\n- \n` 损坏对。 */
+function listItemBodyToMd(nodes: unknown[] | undefined, depth: number): string[] {
+  if (!Array.isArray(nodes)) return [];
+  const lines: string[] = [];
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") continue;
+    const n = node as Record<string, unknown>;
+    if (n.type === "paragraph") {
+      const pid = String((n.attrs as Record<string, unknown>)?.paragraphId ?? "").trim();
+      const body = inlineToMd(n.content as unknown[]);
+      if (!body.trim()) continue;
+      lines.push(pid ? `<!-- pid:${pid} -->${body}` : body);
+      continue;
+    }
+    const block = blockToMd(n, depth);
+    if (block.trim()) lines.push(...block.split("\n").filter(Boolean));
+  }
+  return lines;
 }
 
 function blocksToMd(nodes: unknown[] | undefined, depth = 0): string {

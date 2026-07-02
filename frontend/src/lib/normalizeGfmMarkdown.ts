@@ -1,5 +1,7 @@
 /** 将 LLM 输出的管道表格规范为 GFM（合并拆行表头、去除重复分隔行、统一列数） */
 
+import { stripReviewPidComments } from "@/lib/reviewPidComments";
+
 function isTableRow(line: string): boolean {
   const t = line.trim();
   return t.startsWith("|") && t.endsWith("|") && t.length > 2;
@@ -120,6 +122,15 @@ function repairTableBlock(rawLines: string[]): string {
   return out.join("\n");
 }
 
+function isOrphanPipeLine(line: string): boolean {
+  const t = line.trim();
+  return t === "|" || t === "- |";
+}
+
+function dropOrphanPipeLines(lines: string[]): string[] {
+  return lines.filter((line) => !isOrphanPipeLine(line));
+}
+
 function isTableRelatedLine(line: string): boolean {
   const t = line.trim();
   if (!t) return false;
@@ -154,7 +165,9 @@ function collectTableRegion(lines: string[], start: number): { end: number; bloc
 }
 
 export function normalizeGfmTables(markdown: string): string {
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const lines = dropOrphanPipeLines(
+    stripReviewPidComments(markdown).replace(/\r\n/g, "\n").split("\n"),
+  );
   const out: string[] = [];
   let i = 0;
 

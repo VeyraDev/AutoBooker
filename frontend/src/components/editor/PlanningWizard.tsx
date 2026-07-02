@@ -12,7 +12,8 @@ type Props = {
   book: Book;
   bookId: string;
   outline: OutlineBookResponse | undefined;
-  outlineBusy: boolean;
+  /** 当前页是否正在等待 POST /outline 响应 */
+  outlineRequestPending: boolean;
   outlineGeneratingUi: boolean;
   onPatchBook: (b: Book) => void;
   onGenerateOutline: (payload: {
@@ -56,7 +57,7 @@ export default function PlanningWizard({
   book,
   bookId,
   outline,
-  outlineBusy,
+  outlineRequestPending,
   outlineGeneratingUi,
   onPatchBook,
   onGenerateOutline,
@@ -118,7 +119,7 @@ export default function PlanningWizard({
             <Link
               to="/app/books"
               className="icon-button mt-0.5 h-10 w-10 shrink-0"
-              aria-label="返回图书管理"
+              aria-label="返回图书生成"
             >
               <ChevronLeft className="h-5 w-5" />
             </Link>
@@ -129,6 +130,12 @@ export default function PlanningWizard({
         </header>
 
         <StepIndicator step={wizardStep} />
+
+        {wizardStep === 1 && outlineGeneratingUi ? (
+          <div className="card mb-4 border border-amber-200/80 bg-amber-50/80 p-4 text-center text-sm text-amber-900">
+            大纲正在生成，通常需要 1–5 分钟，请勿关闭页面…
+          </div>
+        ) : null}
 
         {wizardStep === 1 && (
           <>
@@ -141,7 +148,7 @@ export default function PlanningWizard({
             <div className="mt-12 flex justify-end border-t border-slate-100/90 pt-10">
               <button
                 type="button"
-                disabled={outlineBusy}
+                disabled={outlineRequestPending}
                 onClick={() =>
                   step1SaveOnlyFab
                     ? void handleFabSaveOnly()
@@ -151,7 +158,7 @@ export default function PlanningWizard({
                 }
                 className="btn-primary shadow-md"
               >
-                {outlineBusy
+                {outlineGeneratingUi
                   ? "大纲生成中…"
                   : book.status === "outline_generating"
                     ? "重新生成大纲 →"
@@ -163,19 +170,20 @@ export default function PlanningWizard({
           </>
         )}
 
-        {wizardStep === 2 && !outline && outlineGeneratingUi ? (
+        {wizardStep === 2 && outlineGeneratingUi ? (
           <div className="card border border-slate-200/80 bg-white/85 p-10 text-center text-sm text-slate-600">
-            大纲生成中，请稍候…
+            <p className="font-medium text-ink">大纲生成中，请稍候…</p>
+            <p className="mt-2 text-xs text-slate-500">模型正在规划章节结构，完成后将自动显示大纲。</p>
           </div>
         ) : null}
 
-        {wizardStep === 2 && outline && (
+        {wizardStep === 2 && !outlineGeneratingUi && outline && outline.chapters.length > 0 && (
           <OutlineReviewPanel
             mode="planning"
             book={book}
             bookId={bookId}
             outline={outline}
-            outlineGeneratingUi={outlineBusy}
+            outlineGeneratingUi={false}
             onGenerateOutline={async () => {
               const ok = await onGenerateOutline({
                 topic_override: null,
@@ -232,7 +240,7 @@ export default function PlanningWizard({
           />
         )}
 
-        {wizardStep === 2 && outline && (
+        {wizardStep === 2 && !outlineGeneratingUi && outline && outline.chapters.length > 0 && (
           <div className="mt-10 flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 pb-12 pt-8 sm:pb-16">
             <button type="button" className="btn-primary text-sm" onClick={() => setWizardStep(3)}>
               确认大纲，进入下一步 →

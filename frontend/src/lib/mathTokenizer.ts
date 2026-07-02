@@ -116,9 +116,8 @@ export function tokenizeMathInMarkdown(markdown: string): MathSegment[] {
 
   const flushText = () => {
     if (!buf) return;
-    for (const seg of splitInlineMath(buf)) {
-      out.push(seg);
-    }
+    // 行内 $...$ 留给段落解析；此处只切 block 级公式。
+    out.push({ kind: "text", value: buf });
     buf = "";
   };
 

@@ -40,9 +40,46 @@ def _table_separator(col_count: int) -> str:
     return "| " + " | ".join(cols) + " |"
 
 
+_PID_COMMENT_RE = re.compile(r"<!--\s*pid:[^>]+-->\s*", re.I)
+_EMPTY_PID_LIST_PAIR_RE = re.compile(
+    r"- <!--\s*pid:[^>]+-->\s*\n- \s*\n",
+    re.I,
+)
+_SPURIOUS_DASH_LIST_LINE_RE = re.compile(r"^- -\s*$", re.M)
+
+
+def repair_empty_pid_list_pairs(markdown: str) -> str:
+    return _EMPTY_PID_LIST_PAIR_RE.sub("", markdown or "")
+
+
+def drop_spurious_dash_list_lines(markdown: str) -> str:
+    text = markdown or ""
+    if len(_SPURIOUS_DASH_LIST_LINE_RE.findall(text)) < 5:
+        return text
+    lines = [
+        line
+        for line in text.replace("\r\n", "\n").split("\n")
+        if not re.match(r"^- -\s*$", line.strip()) and line.strip() != "-"
+    ]
+    return "\n".join(lines)
+
+
+def strip_review_pid_comments(markdown: str) -> str:
+    return _PID_COMMENT_RE.sub("", markdown or "")
+
+
+def prepare_source_markdown(markdown: str) -> str:
+    from app.services.repair_inline_math import repair_fragmented_inline_math
+
+    repaired = repair_empty_pid_list_pairs(markdown)
+    stripped = strip_review_pid_comments(repaired)
+    normalized = normalize_gfm_tables(drop_spurious_dash_list_lines(stripped))
+    return repair_fragmented_inline_math(normalized)
+
+
 def normalize_gfm_tables(markdown: str) -> str:
     """补 GFM 表头分隔行，并合并被空行拆开的表格行。"""
-    lines = (markdown or "").replace("\r\n", "\n").split("\n")
+    lines = strip_review_pid_comments(markdown).replace("\r\n", "\n").split("\n")
     out: list[str] = []
     i = 0
     while i < len(lines):
@@ -131,12 +168,15 @@ def _parse_paragraph_inline(text: str) -> list[dict[str, Any]]:
 
 def markdown_body_to_tiptap_blocks(body: str) -> list[dict[str, Any]]:
     from app.services.math_tokenizer import tokenize_math_in_markdown
+    from app.services.repair_inline_math import repair_fragmented_inline_math
 
-    segments = tokenize_math_in_markdown(body or "")
+    segments = tokenize_math_in_markdown(repair_fragmented_inline_math(body or ""))
     blocks: list[dict[str, Any]] = []
     for seg in segments:
         if seg.kind == "block":
             blocks.append({"type": "mathBlock", "attrs": {"latex": seg.latex}})
+        elif seg.kind == "inline":
+            blocks.append({"type": "paragraph", "content": [{"type": "mathInline", "attrs": {"latex": seg.latex}}]})
         elif seg.kind == "text" and seg.value.strip():
             blocks.extend(_markdown_text_to_tiptap_blocks(seg.value))
     if not blocks:

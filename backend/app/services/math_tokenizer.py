@@ -94,8 +94,8 @@ def tokenize_math_in_markdown(markdown: str) -> list[MathSegment]:
         nonlocal buf
         if not buf:
             return
-        for seg in split_inline_math(buf):
-            out.append(seg)
+        # 行内 $...$ 留给段落解析（_parse_paragraph_inline）；此处只切 block 级公式。
+        out.append(MathSegment(kind="text", value=buf))
         buf = ""
 
     while i < len(src):

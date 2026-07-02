@@ -29,7 +29,7 @@ from app.models.user import User
 from app.routers.chapters import _ensure_narrative_constitution_thread
 from app.services.citation_grounding import build_citation_policy_block, merge_grounding_for_writer
 from app.services.citation_service import create_citation_from_paper, sync_bibliography_chapter
-from app.services.figure_service import extract_and_store_figures, sync_figures_to_tiptap
+from app.services.figure_service import _collect_annotation_matches, extract_and_store_figures, sync_figures_to_tiptap
 from app.services.literature_query_refiner import refine_literature_query
 from app.services.memory_service import build_book_memory, extract_chapter_memory
 from app.services.preface_service import get_preface, set_preface
@@ -170,7 +170,7 @@ async def _write_chapter_sync(book_id: UUID, chapter_index: int, chat_model: str
         db.commit()
         try:
             extract_and_store_figures(book_id, chapter_index, md_text, db)
-            if md_text.strip():
+            if md_text.strip() and _collect_annotation_matches(md_text):
                 tiptap_doc = sync_figures_to_tiptap(book_id, chapter_index, md_text, db)
                 meta["tiptap_json"] = tiptap_doc
                 ch.content = meta

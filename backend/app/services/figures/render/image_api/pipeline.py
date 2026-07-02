@@ -75,6 +75,26 @@ def _is_openai_transient(err: BaseException) -> bool:
     return "timeout" in msg or "timed out" in msg or "connect" in msg
 
 
+def _should_fallback_to_wanx(err: BaseException) -> bool:
+    """网络/超时/配额/欠费等不可恢复于同一 provider 的错误，尝试万相。"""
+    if _is_openai_transient(err):
+        return True
+    msg = str(err).lower()
+    return any(
+        token in msg
+        for token in (
+            "billing",
+            "hard limit",
+            "insufficient_quota",
+            "quota",
+            "exceeded your current quota",
+            "rate limit",
+            "余额不足",
+            "欠费",
+        )
+    )
+
+
 def generate_figure_image(
     description: str,
     output_path: Path,
@@ -108,7 +128,7 @@ def generate_figure_image(
                 prompt_mode=prompt_mode,
             )
         except Exception as e:
-            if _wanx_fallback_enabled() and _is_openai_transient(e):
+            if _wanx_fallback_enabled() and _should_fallback_to_wanx(e):
                 logger.warning("%s 插图失败，回退万相: %s", provider, e)
                 return generate_figure_image_wanx(
                     description,

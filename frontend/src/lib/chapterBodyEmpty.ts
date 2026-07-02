@@ -1,9 +1,9 @@
 /** 判断章节正文是否实质为空（仅剩 pid 占位或空白段落）。 */
 
-const PID_COMMENT_RE = /<!--\s*pid:[^>]+-->\s*/gi;
+import { stripReviewPidComments } from "@/lib/reviewPidComments";
 
 function stripPidComments(text: string): string {
-  return text.replace(PID_COMMENT_RE, "").trim();
+  return stripReviewPidComments(text).trim();
 }
 
 function tiptapPlainLen(node: unknown): number {

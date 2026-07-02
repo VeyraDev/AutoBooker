@@ -718,7 +718,7 @@ export default function SetupView({
               checked={shareToLibrary}
               onChange={(e) => setShareToLibrary(e.target.checked)}
             />
-            <span>同意将该文献元数据及摘要加入 AutoBooker 公共书库（默认不勾选）</span>
+            <span>同意将该文献元数据及摘要加入 AutoBook 公共书库（默认不勾选）</span>
           </label>
 
           <ul className="mt-4 space-y-2 text-left text-sm">

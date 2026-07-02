@@ -22,7 +22,7 @@ export default function LandingPage() {
             <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-brand text-sm font-medium text-white">
               A
             </span>
-            <span className="text-xl font-medium text-ink">AutoBooker</span>
+            <span className="text-xl font-medium text-ink">AutoBook</span>
           </div>
           <Link to="/login" className="btn-primary">
             登录
@@ -41,7 +41,7 @@ export default function LandingPage() {
               把灵感快速转成可交付书稿
             </h1>
             <p className="mt-5 max-w-xl text-lg text-slate-600">
-              借鉴行业成熟产品体验，AutoBooker 提供从规划、写作到导出的完整创作链路。
+              借鉴行业成熟产品体验，AutoBook 提供从规划、写作到导出的完整创作链路。
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link to="/login" className="btn-primary">

@@ -49,6 +49,18 @@ class OutlineAgent:
         self._client = LLMClient()
 
     @staticmethod
+    def _outline_max_tokens(cfg: dict[str, Any]) -> int:
+        """大书/多章大纲 JSON 较长，按章数估算 completion 预算。"""
+        target = int(cfg.get("target_words") or 80000)
+        primary = cfg.get("primary_outline")
+        if isinstance(primary, list) and primary:
+            chapter_hint = len(primary)
+        else:
+            chapter_hint = max(8, min(40, target // 8000))
+        budget = chapter_hint * 1800 + 6000
+        return max(16384, min(budget, 32768))
+
+    @staticmethod
     def build_system_prompt(style_type: str | None) -> str:
         frag = get_outline_style_prompt(style_type or "")
         if not frag.strip():
@@ -61,21 +73,24 @@ class OutlineAgent:
         last_err: str | None = None
         system = self.build_system_prompt(book_config.get("style_type"))
 
+        max_tokens = self._outline_max_tokens(book_config)
+
         for attempt in range(3):
             extra = ""
             if last_err:
-                extra = f"\n\n上次输出无法通过校验（{last_err}）。请严格只输出符合要求的 JSON，不要附加说明。"
+                extra = (
+                    f"\n\n上次输出无法通过校验（{last_err}）。"
+                    "请严格只输出符合要求的 JSON，不要附加说明；"
+                    "字符串内的换行请写成 \\n，不要写未转义的双引号；"
+                    "使用紧凑 JSON（不要缩进换行）；"
+                    "每章 sections 控制在 3-5 节，summary 不超过 50 字。"
+                )
 
             messages = [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_msg + extra},
             ]
-            raw = self._client.chat_completion(
-                messages,
-                max_tokens=12288,
-                temperature=0.6,
-                model=model,
-            )
+            raw = self._call_outline_llm(messages, model=model, max_tokens=max_tokens)
             try:
                 data = parse_llm_json(raw)
                 jsonschema.validate(instance=data, schema=OUTLINE_JSON_SCHEMA)
@@ -103,6 +118,32 @@ class OutlineAgent:
             "H3",
         )
         raise ValueError(f"Outline generation failed after retries: {last_err}")
+
+    def _call_outline_llm(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None,
+        max_tokens: int = 16384,
+    ) -> str:
+        kwargs = {
+            "max_tokens": max_tokens,
+            "temperature": 0.6,
+            "model": model,
+            "disable_thinking": True,
+        }
+        try:
+            return self._client.chat_completion(
+                messages,
+                response_format={"type": "json_object"},
+                **kwargs,
+            )
+        except Exception as exc:
+            msg = str(exc).lower()
+            if any(token in msg for token in ("response_format", "json_object", "unsupported", "invalid parameter")):
+                logger.warning("outline json_object mode unsupported, falling back: %s", exc)
+                return self._client.chat_completion(messages, **kwargs)
+            raise
 
     def _build_user_message(self, cfg: dict[str, Any], snippets: list[str]) -> str:
         parts = [

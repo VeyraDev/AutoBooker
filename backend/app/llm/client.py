@@ -181,6 +181,7 @@ class LLMClient:
         max_tokens: int,
         temperature: float,
         disable_thinking: bool = False,
+        response_format: dict[str, Any] | None = None,
     ) -> tuple[str, str | None]:
         kwargs: dict[str, Any] = {
             "model": model_name,
@@ -192,6 +193,8 @@ class LLMClient:
             kwargs["max_completion_tokens"] = max_tokens
         else:
             kwargs["max_tokens"] = max_tokens
+        if response_format:
+            kwargs["response_format"] = response_format
         if disable_thinking and self._is_deepseek_v4_model(model_name):
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         resp = client.chat.completions.create(**kwargs)
@@ -242,6 +245,7 @@ class LLMClient:
         max_tokens: int = 4096,
         temperature: float = 0.7,
         disable_thinking: bool = False,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         primary_provider, _ = parse_ai_model(model)
         specs = _fallback_targets(primary_provider, model)
@@ -271,6 +275,7 @@ class LLMClient:
                             max_tokens=effective_max,
                             temperature=temperature,
                             disable_thinking=use_disable_thinking,
+                            response_format=response_format,
                         )
                         if text:
                             return text

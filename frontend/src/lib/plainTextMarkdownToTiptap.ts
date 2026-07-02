@@ -2,6 +2,7 @@
  * 将常见 Markdown 纯文本转为 TipTap JSON：标题 #～###、无序列表 - / *、**加粗**、行内 $…$ 公式。
  */
 
+import { repairFragmentedInlineMath } from "@/lib/repairInlineMath";
 import { splitInlineMath, type MathSegment } from "@/lib/mathTokenizer";
 
 export function shouldParseAsMarkdown(text: string): boolean {
@@ -61,7 +62,7 @@ function isOrderedLine(line: string): boolean {
 }
 
 export function plainTextMarkdownToTiptapDoc(text: string): Record<string, unknown> {
-  const normalized = text.replace(/\r\n/g, "\n");
+  const normalized = repairFragmentedInlineMath(text.replace(/\r\n/g, "\n"));
   const lines = normalized.split("\n");
   const blocks: Record<string, unknown>[] = [];
   const paraLines: string[] = [];

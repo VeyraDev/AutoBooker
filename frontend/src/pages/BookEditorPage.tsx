@@ -201,6 +201,18 @@ export default function BookEditorPage() {
   const outline = outlineQuery.data;
   const chapters = useMemo(() => outline?.chapters ?? EMPTY_OUTLINE_CHAPTERS, [outline]);
 
+  /** 后端同步生成大纲时，刷新页面后 outlineBusy 会丢失；轮询直到状态离开 outline_generating。 */
+  useEffect(() => {
+    if (!bookId || !book || book.status !== "outline_generating" || outlineBusy) return;
+    const tick = () => {
+      void qc.invalidateQueries({ queryKey: ["book", bookId] });
+      void qc.invalidateQueries({ queryKey: ["outline", bookId] });
+    };
+    tick();
+    const id = window.setInterval(tick, 4000);
+    return () => window.clearInterval(id);
+  }, [bookId, book?.status, outlineBusy, qc]);
+
   const phase = book ? phaseOf(book) : "SETUP";
 
   const chapterIndex = useMemo(
@@ -1179,7 +1191,7 @@ export default function BookEditorPage() {
       <div className="surface-panel">
         <p className="text-sm text-slate-600">未找到该书稿。</p>
         <Link to="/app/books" className="mt-3 inline-flex text-sm text-brand hover:underline">
-          返回图书管理
+          返回图书生成
         </Link>
       </div>
     );
@@ -1208,7 +1220,7 @@ export default function BookEditorPage() {
           book={book}
           bookId={bookId}
           outline={outline}
-          outlineBusy={outlineBusy}
+          outlineRequestPending={outlineBusy}
           outlineGeneratingUi={outlineGeneratingUi}
           onPatchBook={(b) => qc.setQueryData(["book", bookId], b)}
           onGenerateOutline={handleGenerateOutline}
