@@ -26,6 +26,7 @@ class BookJobStep(str, enum.Enum):
     outline = "outline"
     preface = "preface"
     writing = "writing"
+    figures = "figures"
     bibliography = "bibliography"
     done = "done"
 

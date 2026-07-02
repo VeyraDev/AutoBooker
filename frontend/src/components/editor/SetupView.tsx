@@ -2,6 +2,7 @@ import { Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
+import { useNavigate } from "react-router-dom";
 
 import { setupRecommend, updateBook } from "@/api/books";
 import { startAutoGenerateForBook } from "@/api/bookJobs";
@@ -67,8 +68,6 @@ type Props = {
   book: Book;
   onBookPatched: (b: Book) => void;
   onRegisterActions?: (actions: SetupViewActions) => void;
-  /** 从新建对话框带入：进入设定页后提示一键生成 */
-  pendingAutoGenerate?: boolean;
 };
 
 const FILE_ACCEPT =
@@ -89,9 +88,9 @@ export default function SetupView({
   book,
   onBookPatched,
   onRegisterActions,
-  pendingAutoGenerate,
 }: Props) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [targetAudience, setTargetAudience] = useState("");
   const [disciplines, setDisciplines] = useState<string[]>([]);
   const [disciplineInput, setDisciplineInput] = useState("");
@@ -345,21 +344,16 @@ export default function SetupView({
     try {
       await saveMeta();
       await startAutoGenerateForBook(book.id);
-      toast.success("已开始一键生成，完成后将通知您");
+      toast.success("已开始一键成书");
       void qc.invalidateQueries({ queryKey: ["book", book.id] });
       void qc.invalidateQueries({ queryKey: ["bookJob", book.id] });
+      navigate(`/app/books/${book.id}/auto-progress`);
     } catch {
-      toast.error("启动一键生成失败");
+      toast.error("启动一键成书失败");
     } finally {
       setAutoJobStarting(false);
     }
   }
-
-  useEffect(() => {
-    if (pendingAutoGenerate && book.status === "setup") {
-      toast("可在保存设定后点击「开始一键生成」", { icon: "ℹ️" });
-    }
-  }, [pendingAutoGenerate, book.status]);
 
   const availableRecommended = recommendedTags.filter((t) => !topicTags.includes(t));
 
@@ -630,14 +624,14 @@ export default function SetupView({
             <button type="button" className="btn-secondary" onClick={() => void saveMeta()}>
               保存设定
             </button>
-            {(pendingAutoGenerate || book.status === "setup") && (
+            {book.status === "setup" && (
               <button
                 type="button"
                 className="btn-primary"
                 disabled={autoJobStarting}
                 onClick={() => void handleStartAutoGenerate()}
               >
-                {autoJobStarting ? "启动中…" : "开始一键生成"}
+                {autoJobStarting ? "启动中…" : "开始一键成书"}
               </button>
             )}
           </div>

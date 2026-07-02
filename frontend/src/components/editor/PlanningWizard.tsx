@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import OutlineReviewPanel from "@/components/editor/OutlineReviewPanel";
 import SetupView, { type SetupViewActions } from "@/components/editor/SetupView";
-import { consumePendingAutoGenerate } from "@/components/common/NewBookDialog";
 import { setChapterGenMode, type ChapterGenMode } from "@/lib/chapterGenMode";
 import type { Book } from "@/types/book";
 import type { OutlineBookResponse } from "@/types/outline";
@@ -71,12 +70,7 @@ export default function PlanningWizard({
   /** 从 Step2「返回书稿设定」回到 Step1 时，右下角 FAB 仅为「保存设定」 */
   const [step1SaveOnlyFab, setStep1SaveOnlyFab] = useState(false);
   const [startMenuOpen, setStartMenuOpen] = useState(false);
-  const [pendingAuto, setPendingAuto] = useState(false);
   const setupActionsRef = useRef<SetupViewActions | null>(null);
-
-  useEffect(() => {
-    setPendingAuto(consumePendingAutoGenerate(bookId));
-  }, [bookId]);
 
   useEffect(() => {
     if (outline && outline.chapters.length > 0) {
@@ -143,7 +137,6 @@ export default function PlanningWizard({
               book={book}
               onBookPatched={onPatchBook}
               onRegisterActions={(a) => (setupActionsRef.current = a)}
-              pendingAutoGenerate={pendingAuto}
             />
             <div className="mt-12 flex justify-end border-t border-slate-100/90 pt-10">
               <button

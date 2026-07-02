@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import ProtectedRoute from "@/components/common/ProtectedRoute";
 import AppShell from "@/components/layout/AppShell";
+import AutoBookProgressPage from "@/pages/AutoBookProgressPage";
 import BookEditorPage from "@/pages/BookEditorPage";
 import BooksPage from "@/pages/BooksPage";
 import HomePage from "@/pages/HomePage";
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="home" element={<HomePage />} />
           <Route path="books" element={<BooksPage />} />
           <Route path="library" element={<LibraryPage />} />
+          <Route path="books/:bookId/auto-progress" element={<AutoBookProgressPage />} />
           <Route path="books/:bookId" element={<BookEditorPage />} />
         </Route>
       </Route>

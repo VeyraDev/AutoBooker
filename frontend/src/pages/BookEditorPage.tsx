@@ -7,6 +7,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { patchUserAiModels } from "@/api/auth";
 import { EXPORT_EXT, exportBook, getBook, updateBook, duplicateBook, type ExportFormat } from "@/api/books";
+import { fetchBookJob } from "@/api/bookJobs";
 import {
   cancelChapterGeneration,
   createChapter,
@@ -44,6 +45,7 @@ import { useLlmModels } from "@/hooks/useLlmModels";
 import { useDailyWordDelta } from "@/hooks/useDailyWordDelta";
 import { resolveUserSceneModel } from "@/lib/bookAiModels";
 import { phaseOf, type Phase } from "@/lib/bookStatus";
+import { shouldEnterEditor } from "@/lib/autoBookProgress";
 import { useAuthStore } from "@/stores/authStore";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import type { Chapter } from "@/types/chapter";
@@ -183,6 +185,27 @@ export default function BookEditorPage() {
     enabled: !!bookId,
   });
 
+  const bookJobQuery = useQuery({
+    queryKey: ["bookJob", bookId],
+    queryFn: () => fetchBookJob(bookId!),
+    enabled: !!bookId,
+    refetchInterval: (q) => {
+      const job = q.state.data;
+      if (!job || job.status === "completed" || job.status === "failed") return false;
+      return 4000;
+    },
+  });
+
+  const backendAutoJobRunning = bookJobQuery.data?.status === "running";
+
+  useEffect(() => {
+    if (!bookId || bookJobQuery.isLoading) return;
+    const job = bookJobQuery.data;
+    if (job && (job.status === "pending" || job.status === "running") && !shouldEnterEditor(job)) {
+      navigate(`/app/books/${bookId}/auto-progress`, { replace: true });
+    }
+  }, [bookId, bookJobQuery.data, bookJobQuery.isLoading, navigate]);
+
   const outlineQuery = useQuery({
     queryKey: ["outline", bookId],
     queryFn: () => getOutline(bookId!),
@@ -228,6 +251,21 @@ export default function BookEditorPage() {
   });
 
   const chapterDetail = chapterDetailQuery.data;
+
+  useEffect(() => {
+    if (!bookId || !backendAutoJobRunning) return;
+    const tick = () => {
+      void qc.invalidateQueries({ queryKey: ["outline", bookId] });
+      void qc.invalidateQueries({ queryKey: ["book", bookId] });
+      void qc.invalidateQueries({ queryKey: ["figures", bookId] });
+      if (chapterIndex != null) {
+        void qc.invalidateQueries({ queryKey: ["chapter", bookId, chapterIndex] });
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 4000);
+    return () => window.clearInterval(id);
+  }, [bookId, backendAutoJobRunning, chapterIndex, qc]);
 
   const [liveChapterChars, setLiveChapterChars] = useState<number | null>(null);
 
@@ -1252,7 +1290,7 @@ export default function BookEditorPage() {
             savedAt={savedAt}
             onBack={() => navigate("/app/books")}
             onExport={handleExport}
-            autoGenerating={autoGenerating}
+            autoGenerating={autoGenerating || backendAutoJobRunning}
             onPauseGeneration={() => {
               autoGenAbortRef.current = true;
             }}
@@ -1322,7 +1360,7 @@ export default function BookEditorPage() {
                         streamingChapterIndex={streamingIndex}
                         onOpenGlobalOutline={() => setOutlineDrawerOpen(true)}
                         chapterGenMode={chapterGenMode}
-                        autoGenerating={autoGenerating}
+                        autoGenerating={autoGenerating || backendAutoJobRunning}
                         prefaceEnabled={prefaceQuery.data?.enabled !== false}
                         prefaceHasBody={prefaceHasBody}
                         prefaceStatus={prefaceQuery.data?.status ?? "empty"}

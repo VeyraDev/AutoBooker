@@ -5,6 +5,7 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
 import { createBook } from "@/api/books";
+import { startAutoGenerateForBook } from "@/api/bookJobs";
 import { DEFAULT_TARGET_WORDS, styleOptionsFor } from "@/lib/styleTypes";
 import type { BookType, StyleType } from "@/types/book";
 
@@ -52,17 +53,7 @@ export default function NewBookDialog({ open, onClose }: Props) {
       });
       return { book_id: book.id, mode: generateMode };
     },
-    onSuccess: (result) => {
-      if (result.mode === "auto") {
-        try {
-          sessionStorage.setItem(PENDING_AUTO_KEY, result.book_id);
-        } catch {
-          /* ignore */
-        }
-        toast.success("已创建，请在设定页确认后一键生成");
-      } else {
-        toast.success("已创建");
-      }
+    onSuccess: async (result) => {
       qc.invalidateQueries({ queryKey: ["books"] });
       setTitle("");
       setBookType("nonfiction");
@@ -70,7 +61,19 @@ export default function NewBookDialog({ open, onClose }: Props) {
       setBookKind("generate");
       setGenerateMode("manual");
       onClose();
-      navigate(`/app/books/${result.book_id}`);
+      if (result.mode === "auto") {
+        try {
+          await startAutoGenerateForBook(result.book_id);
+          toast.success("已开始一键成书，请查看进度");
+          navigate(`/app/books/${result.book_id}/auto-progress`);
+        } catch {
+          toast.error("启动一键成书失败");
+          navigate(`/app/books/${result.book_id}`);
+        }
+      } else {
+        toast.success("已创建");
+        navigate(`/app/books/${result.book_id}`);
+      }
     },
     onError: (err) => {
       const msg =
