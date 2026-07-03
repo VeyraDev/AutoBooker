@@ -14,7 +14,7 @@ class CitationSourceOut(str, Enum):
 class CitationPaperIn(BaseModel):
     title: str = ""
     year: int | None = None
-    authors: list[str] = []
+    authors: list[str] = Field(default_factory=list)
     journal: str = ""
     doi: str = ""
     citations: int = 0
@@ -25,6 +25,12 @@ class CitationPaperIn(BaseModel):
     semantic_scholar_id: str | None = None
     external_id: str | None = None
     abstract_preview: str | None = None
+    document_type: str | None = None
+    publisher: str | None = None
+    volume: str | None = None
+    issue: str | None = None
+    pages: str | None = None
+    quotable_snippet: str | None = None
 
 
 class CitationCreateIn(BaseModel):
@@ -46,6 +52,12 @@ class CitationOut(BaseModel):
     authors: list[str]
     year: int | None
     journal: str | None
+    document_type: str | None = None
+    publisher: str | None = None
+    volume: str | None = None
+    issue: str | None = None
+    pages: str | None = None
+    metadata_status: str = "complete"
     format_cache: dict[str, str] | None
     source: CitationSourceOut
     source_file_id: UUID | None
@@ -53,6 +65,8 @@ class CitationOut(BaseModel):
     external_source: str | None = None
     external_id: str | None = None
     quotable_snippet: str | None = None
+    abstract_preview: str | None = None
+    url: str | None = None
     list_index: int | None
     formatted: str | None = None
     created_at: datetime
@@ -87,6 +101,48 @@ class CitationWeaveIn(BaseModel):
 class CitationWeaveOut(BaseModel):
     sentence: str
     citation_id: UUID
+    node: dict
+
+
+class CitationNodeIn(BaseModel):
+    evidence_id: UUID | None = None
+    mode: str = "parenthetical"
+    locator: str | None = None
+    prefix: str = ""
+    suffix: str = ""
+
+
+class CitationOccurrenceOut(BaseModel):
+    id: UUID
+    citation_id: UUID
+    evidence_id: UUID | None
+    chapter_id: UUID
+    chapter_index: int
+    chapter_title: str
+    node_id: UUID
+    cite_mode: str
+    locator: str | None
+    context_before: str | None
+    context_after: str | None
+    complete: bool
+    citation: CitationOut
+
+
+class CitationEvidenceOut(BaseModel):
+    id: UUID
+    citation_id: UUID
+    source_file_id: UUID | None
+    chunk_id: UUID | None
+    page_number: int | None
+    paragraph_locator: str | None
+    heading_path: list[str] | None
+    quote_text: str
+    directly_quotable: bool
+
+
+class CitationReplaceIn(BaseModel):
+    citation_id: UUID
+    evidence_id: UUID | None = None
 
 
 class CitationApplyBibliographyOut(BaseModel):

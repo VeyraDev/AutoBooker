@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Circle, Loader2, AlertCircle } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import toast from "react-hot-toast";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { fetchBookJob } from "@/api/bookJobs";
+import { fetchBookJob, startAutoGenerateForBook } from "@/api/bookJobs";
 import { getBook } from "@/api/books";
 import {
   AUTO_BOOK_STAGES,
@@ -23,6 +24,7 @@ function StageIcon({ state }: { state: "pending" | "active" | "done" }) {
 export default function AutoBookProgressPage() {
   const { bookId } = useParams();
   const navigate = useNavigate();
+  const [starting, setStarting] = useState(false);
 
   const bookQuery = useQuery({
     queryKey: ["book", bookId],
@@ -46,6 +48,20 @@ export default function AutoBookProgressPage() {
   const bookTitle = job?.detail?.book_title || bookQuery.data?.title || "书稿";
   const pct = estimateProgressPct(job);
 
+  async function retryStart() {
+    if (!bookId || starting) return;
+    setStarting(true);
+    try {
+      await startAutoGenerateForBook(bookId);
+      toast.success("一键成书已重新启动");
+      await Promise.all([bookQuery.refetch(), jobQuery.refetch()]);
+    } catch {
+      toast.error("未能启动一键成书，请检查网络后重试");
+    } finally {
+      setStarting(false);
+    }
+  }
+
   useEffect(() => {
     if (!bookId || !job) return;
     if (shouldEnterEditor(job)) {
@@ -57,7 +73,7 @@ export default function AutoBookProgressPage() {
   if (!bookId) {
     return (
       <div className="mx-auto max-w-2xl px-6 py-16 text-center text-sm text-slate-500">
-        无效的书稿 ID
+        未找到该书稿
       </div>
     );
   }
@@ -72,12 +88,12 @@ export default function AutoBookProgressPage() {
 
       <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
         <p className="text-xs font-medium uppercase tracking-wide text-indigo-600">一键成书</p>
-        <h1 className="mt-2 text-xl font-semibold text-ink">正在准备《{bookTitle}》</h1>
-        <p className="mt-2 text-sm text-slate-500">完成叙事宪法后将进入写作页，并自动开始全书章节生成。</p>
+        <h1 className="mt-2 text-xl font-semibold text-ink">正在生成《{bookTitle}》</h1>
+        <p className="mt-2 text-sm text-slate-500">完成前期准备后将进入写作页，正文和配图会继续自动生成。</p>
 
         <div className="mt-6">
           <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
-            <span>前置进度</span>
+            <span>当前进度</span>
             <span>{pct}%</span>
           </div>
           <div className="h-2 overflow-hidden rounded-full bg-slate-100">
@@ -118,32 +134,56 @@ export default function AutoBookProgressPage() {
           })}
         </ul>
 
-        {job?.detail?.stage_message ? (
-          <p className="mt-4 text-sm text-slate-600">{job.detail.stage_message}</p>
-        ) : null}
-
         {jobQuery.isLoading ? (
           <p className="mt-6 flex items-center gap-2 text-sm text-slate-500">
             <Loader2 className="h-4 w-4 animate-spin" />
-            正在连接任务状态…
+            正在获取进度…
           </p>
+        ) : null}
+
+        {!jobQuery.isLoading && !jobQuery.isError && !job ? (
+          <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-medium">生成任务尚未启动</p>
+            <p className="mt-1 text-xs">书稿已经保留，可以在这里重新启动，不会返回设定页。</p>
+            <button
+              type="button"
+              className="btn-primary mt-3 text-xs"
+              disabled={starting}
+              onClick={() => void retryStart()}
+            >
+              {starting ? "正在启动…" : "重新开始一键成书"}
+            </button>
+          </div>
+        ) : null}
+
+        {jobQuery.isError ? (
+          <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <p className="font-medium">暂时无法获取生成进度</p>
+            <button
+              type="button"
+              className="btn-secondary mt-3 text-xs"
+              onClick={() => void jobQuery.refetch()}
+            >
+              重新获取进度
+            </button>
+          </div>
         ) : null}
 
         {job?.status === "failed" ? (
           <div className="mt-6 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              <p className="font-medium">准备失败</p>
-              <p className="mt-1 text-xs">{job.error_message || "未知错误"}</p>
+              <p className="font-medium">生成未能继续</p>
+              <p className="mt-1 text-xs">暂时无法继续，请稍后重试</p>
               <Link to={`/app/books/${bookId}`} className="mt-3 inline-block text-xs text-red-700 underline">
-                进入书稿设定页排查
+                返回书稿设定
               </Link>
             </div>
           </div>
         ) : null}
 
         {shouldEnterEditor(job) ? (
-          <p className="mt-6 text-center text-xs text-slate-400">即将进入写作页并开始自动生成…</p>
+          <p className="mt-6 text-center text-xs text-slate-400">即将进入写作页…</p>
         ) : null}
       </div>
     </div>

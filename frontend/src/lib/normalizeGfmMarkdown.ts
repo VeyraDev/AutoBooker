@@ -47,7 +47,7 @@ function isPartialSeparatorLine(line: string): boolean {
   const t = line.trim();
   if (!t) return false;
   if (isTableSeparator(t)) return true;
-  if (/^[-—:\s|]+$/.test(t) && t.includes("-")) return true;
+  if (/^(?:-|\u2014|:|\s|\|)+$/.test(t) && t.includes("-")) return true;
   if (/^---\s*\|?\s*$/.test(t)) return true;
   return false;
 }
@@ -65,7 +65,7 @@ function fragmentToCells(line: string): string[] {
 
 function isDataRow(cells: string[]): boolean {
   if (cells.length === 0) return false;
-  if (cells.every((c) => /^[-:\s—]+$/.test(c) || c === "---")) return false;
+  if (cells.every((c) => /^(?:-|:|\s|\u2014)+$/.test(c) || c === "---")) return false;
   if (cells.length >= 2) return true;
   return /^\d+[\d.]*$/.test(cells[0]) || cells[0].length > 12;
 }
@@ -246,7 +246,11 @@ function extractParagraphText(node: Record<string, unknown>): string {
 
 function rowLooksLikeSeparator(cells: Record<string, unknown>[]): boolean {
   if (cells.length === 0) return false;
-  return cells.every((cell) => /^[-:\s—]+$/.test(extractCellText(cell)) || extractCellText(cell) === "---");
+  return cells.every(
+    (cell) =>
+      /^(?:-|:|\s|\u2014)+$/.test(extractCellText(cell)) ||
+      extractCellText(cell) === "---",
+  );
 }
 
 export function tiptapHasBrokenTable(doc: Record<string, unknown>): boolean {

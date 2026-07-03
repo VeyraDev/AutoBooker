@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -13,7 +14,17 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, get_db
-from app.models.reference import OutlineUsage, ParseStatus, ReferenceChunk, ReferenceFile
+from app.models.material import MaterialConflict, MaterialTerm, OutlineConstraint, WritingRequirement
+from app.models.citation import CitationEvidence
+from app.models.reference import (
+    FileLifecycleStatus,
+    FilePurpose,
+    OutlineUsage,
+    ParseStatus,
+    ReferenceChunk,
+    ReferenceFile,
+    ReferenceFilePurpose,
+)
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.reference import (
@@ -22,6 +33,7 @@ from app.schemas.reference import (
     ReferenceSearchHit,
     ReferenceSearchIn,
     ReferenceSearchOut,
+    ReferenceConfirmIn,
     ReferenceUploadOut,
 )
 from app.services import book_service
@@ -91,7 +103,13 @@ async def upload_reference(
         try:
             raw = json.loads(file_purposes)
             if isinstance(raw, list):
-                parsed_purposes = [str(p) for p in raw if str(p) in ("outline", "writing_requirements", "reference")]
+                aliases = {"reference": "reference_material"}
+                valid = {p.value for p in FilePurpose}
+                parsed_purposes = []
+                for p in raw:
+                    value = aliases.get(str(p), str(p))
+                    if value in valid and value not in parsed_purposes:
+                        parsed_purposes.append(value)
         except json.JSONDecodeError:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "file_purposes must be JSON array")
 
@@ -114,6 +132,12 @@ async def upload_reference(
     dest = base / new_name
 
     content = await file.read()
+
+    parsed_purposes = parsed_purposes or ["reference_material"]
+    if "source_manuscript" in parsed_purposes and len(parsed_purposes) > 1:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "原始书稿必须单独上传")
+    if share_to_library and "bibliography" not in parsed_purposes:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "只有参考文献可授权用于公共书库")
     dest.write_bytes(content)
 
     ref = ReferenceFile(
@@ -126,8 +150,20 @@ async def upload_reference(
         file_purposes=parsed_purposes,
         outline_usage=ou,
         user_note=(user_note or "").strip() or None,
+        lifecycle_status=FileLifecycleStatus.processing,
     )
     db.add(ref)
+    db.flush()
+    for purpose in parsed_purposes:
+        db.add(
+            ReferenceFilePurpose(
+                file_id=ref.id,
+                purpose=FilePurpose(purpose),
+                confidence=100,
+                user_confirmed=True,
+                is_primary=purpose == "outline" and ou == OutlineUsage.primary,
+            )
+        )
     db.commit()
     db.refresh(ref)
 
@@ -147,6 +183,7 @@ async def upload_reference(
         ingest_kind=ref.ingest_kind or "reference",
         parse_status=ParseStatusOut(ref.parse_status.value),
         message="uploaded, parsing in background",
+        lifecycle_status=ref.lifecycle_status.value,
     )
 
 
@@ -170,9 +207,31 @@ def list_references(
         .all()
     )
     cmap = {fid: int(n) for fid, n in pairs}
+    conflicts = db.query(MaterialConflict).filter(
+        MaterialConflict.book_id == book_id,
+        MaterialConflict.status == "pending",
+    ).all()
+    by_file: dict[str, list[dict]] = {}
+    for conflict in conflicts:
+        payload = {
+            "id": str(conflict.id),
+            "type": conflict.conflict_type,
+            "message": conflict.message,
+            "details": conflict.details,
+        }
+        for fid in conflict.file_ids or []:
+            by_file.setdefault(str(fid), []).append(payload)
     return [
-        ReferenceFileOut.model_validate(r).model_copy(update={"chunk_count": cmap.get(r.id, 0)})
+        ReferenceFileOut.model_validate(r).model_copy(
+            update={
+                "chunk_count": cmap.get(r.id, 0),
+                "lifecycle_status": r.lifecycle_status.value,
+                "parse_artifacts": r.parse_artifacts if isinstance(r.parse_artifacts, dict) else None,
+                "conflicts": by_file.get(str(r.id), []),
+            }
+        )
         for r in rows
+        if r.lifecycle_status != FileLifecycleStatus.disabled
     ]
 
 
@@ -188,21 +247,31 @@ def delete_reference(
     if not ref:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Reference not found")
 
+    from app.models.optimization import OptimizationProject
+    protected = db.query(OptimizationProject).filter(OptimizationProject.source_file_id == ref.id).first()
+    if protected and protected.baseline_confirmed_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "原稿基线已建立，不能删除原始书稿")
+
     if ref.parse_artifacts and isinstance(ref.parse_artifacts, dict):
         art = dict(ref.parse_artifacts)
         art["status"] = "disabled"
         ref.parse_artifacts = art
 
-    if ref.ingest_kind == "material" and (book.user_material or "").strip() and not ref.file_purposes:
-        try:
-            agent = DocumentParserAgent(db, book_id)
-            snippet = agent.extract_text(ref.storage_path, ref.file_type)[:5000].strip()
-            if snippet:
-                blocks = [b.strip() for b in book.user_material.split("\n\n---\n\n") if b.strip()]
-                blocks = [b for b in blocks if b != snippet]
-                book.user_material = "\n\n---\n\n".join(blocks) if blocks else None
-        except Exception:
-            logger.warning("could not remove material snippet for file=%s", file_id, exc_info=True)
+    now = datetime.now(timezone.utc)
+    ref.lifecycle_status = FileLifecycleStatus.disabled
+    ref.disabled_at = now
+    db.query(ReferenceFilePurpose).filter(ReferenceFilePurpose.file_id == ref.id).update({"active": False})
+    db.query(ReferenceChunk).filter(ReferenceChunk.file_id == ref.id).update({"active": False})
+    db.query(CitationEvidence).filter(CitationEvidence.source_file_id == ref.id).update({"active": False})
+    db.query(WritingRequirement).filter(WritingRequirement.source_file_id == ref.id).update({"active": False})
+    db.query(MaterialTerm).filter(MaterialTerm.source_file_id == ref.id).update({"active": False})
+    db.query(OutlineConstraint).filter(OutlineConstraint.source_file_id == ref.id).update({"active": False})
+    db.query(MaterialConflict).filter(
+        MaterialConflict.book_id == book_id,
+        MaterialConflict.file_ids.contains([str(ref.id)]),
+    ).update({"status": "disabled"}, synchronize_session=False)
+    if ref.outline_usage == OutlineUsage.primary or (ref.file_purposes and "writing_requirements" in ref.file_purposes):
+        book.constitution_stale = True
 
     storage = Path(ref.storage_path)
     if storage.is_file():
@@ -211,7 +280,6 @@ def delete_reference(
         except OSError:
             logger.warning("failed to delete reference file on disk: %s", storage, exc_info=True)
 
-    db.delete(ref)
     db.commit()
 
 
@@ -231,7 +299,132 @@ def reference_status(
         .filter(ReferenceChunk.file_id == file_id, ReferenceChunk.book_id == book_id)
         .scalar()
     )
-    return ReferenceFileOut.model_validate(ref).model_copy(update={"chunk_count": int(cnt or 0)})
+    conflicts = db.query(MaterialConflict).filter(
+        MaterialConflict.book_id == book_id,
+        MaterialConflict.status == "pending",
+        MaterialConflict.file_ids.contains([str(file_id)]),
+    ).all()
+    return ReferenceFileOut.model_validate(ref).model_copy(
+        update={
+            "chunk_count": int(cnt or 0),
+            "lifecycle_status": ref.lifecycle_status.value,
+            "parse_artifacts": ref.parse_artifacts if isinstance(ref.parse_artifacts, dict) else None,
+            "conflicts": [
+                {"id": str(c.id), "type": c.conflict_type, "message": c.message, "details": c.details}
+                for c in conflicts
+            ],
+        }
+    )
+
+
+@router.patch("/{book_id}/references/{file_id}/confirm", response_model=ReferenceFileOut)
+def confirm_reference(
+    book_id: UUID,
+    file_id: UUID,
+    body: ReferenceConfirmIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book_service.get_book_or_404(book_id, user, db)
+    ref = db.query(ReferenceFile).filter(
+        ReferenceFile.id == file_id,
+        ReferenceFile.book_id == book_id,
+        ReferenceFile.lifecycle_status != FileLifecycleStatus.disabled,
+    ).first()
+    if not ref:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
+    if body.purposes is not None:
+        aliases = {"reference": "reference_material"}
+        wanted = {aliases.get(p, p) for p in body.purposes}
+        valid = {p.value for p in FilePurpose}
+        if not wanted or not wanted <= valid:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid purposes")
+        db.query(ReferenceFilePurpose).filter(ReferenceFilePurpose.file_id == file_id).delete()
+        for purpose in sorted(wanted):
+            db.add(
+                ReferenceFilePurpose(
+                    file_id=file_id,
+                    purpose=FilePurpose(purpose),
+                    user_confirmed=True,
+                    confidence=100,
+                    is_primary=purpose == "outline" and bool(body.primary_outline),
+                )
+            )
+        ref.file_purposes = sorted(wanted)
+    if body.primary_outline is not None and "outline" in (ref.file_purposes or []):
+        ref.outline_usage = OutlineUsage.primary if body.primary_outline else OutlineUsage.reference
+        db.query(ReferenceFilePurpose).filter(
+            ReferenceFilePurpose.file_id == file_id,
+            ReferenceFilePurpose.purpose == FilePurpose.outline,
+        ).update({"is_primary": bool(body.primary_outline)})
+        db.query(OutlineConstraint).filter(
+            OutlineConstraint.source_file_id == file_id,
+        ).update({"active": bool(body.primary_outline)})
+    affected_file_ids: set[UUID] = {file_id}
+    for conflict_id, resolution in body.conflict_resolutions.items():
+        try:
+            cid = UUID(conflict_id)
+        except ValueError:
+            continue
+        conflict = db.query(MaterialConflict).filter(
+            MaterialConflict.id == cid,
+            MaterialConflict.book_id == book_id,
+        ).first()
+        if conflict:
+            affected_file_ids.update(
+                UUID(value)
+                for value in (conflict.file_ids or [])
+                if value
+            )
+            conflict.status = "resolved"
+            conflict.resolution = {"choice": resolution}
+            conflict.resolved_at = datetime.now(timezone.utc)
+            if conflict.conflict_type == "multiple_primary_outlines":
+                try:
+                    selected_id = UUID(resolution)
+                except ValueError:
+                    selected_id = None
+                if selected_id and str(selected_id) in (conflict.file_ids or []):
+                    affected = db.query(ReferenceFile).filter(
+                        ReferenceFile.book_id == book_id,
+                        ReferenceFile.id.in_([UUID(value) for value in conflict.file_ids]),
+                    ).all()
+                    for candidate in affected:
+                        selected = candidate.id == selected_id
+                        candidate.outline_usage = (
+                            OutlineUsage.primary if selected else OutlineUsage.reference
+                        )
+                        db.query(ReferenceFilePurpose).filter(
+                            ReferenceFilePurpose.file_id == candidate.id,
+                            ReferenceFilePurpose.purpose == FilePurpose.outline,
+                        ).update({"is_primary": selected})
+                        db.query(OutlineConstraint).filter(
+                            OutlineConstraint.source_file_id == candidate.id,
+                        ).update({"active": selected})
+    for affected_id in affected_file_ids:
+        pending = db.query(MaterialConflict).filter(
+            MaterialConflict.book_id == book_id,
+            MaterialConflict.status == "pending",
+            MaterialConflict.file_ids.contains([str(affected_id)]),
+        ).count()
+        affected_file = db.get(ReferenceFile, affected_id)
+        if affected_file and affected_file.lifecycle_status != FileLifecycleStatus.disabled:
+            affected_file.lifecycle_status = (
+                FileLifecycleStatus.pending_confirmation
+                if pending
+                else FileLifecycleStatus.effective
+            )
+    db.commit()
+    db.refresh(ref)
+    cnt = db.query(func.count(ReferenceChunk.id)).filter(ReferenceChunk.file_id == file_id, ReferenceChunk.active.is_(True)).scalar()
+    return ReferenceFileOut.model_validate(ref).model_copy(
+        update={
+            "chunk_count": int(cnt or 0),
+            "lifecycle_status": ref.lifecycle_status.value,
+            "parse_artifacts": ref.parse_artifacts if isinstance(ref.parse_artifacts, dict) else None,
+            "conflicts": [],
+        }
+    )
 
 
 @router.post("/{book_id}/references/search", response_model=ReferenceSearchOut)

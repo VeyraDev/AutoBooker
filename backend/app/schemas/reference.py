@@ -26,6 +26,9 @@ class ReferenceFileOut(BaseModel):
     parsed_at: datetime | None
     created_at: datetime
     chunk_count: int = 0
+    lifecycle_status: str = "processing"
+    parse_artifacts: dict | None = None
+    conflicts: list[dict] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -38,6 +41,13 @@ class ReferenceUploadOut(BaseModel):
     ingest_kind: str = "reference"
     parse_status: ParseStatusOut
     message: str = "uploaded, parsing in background"
+    lifecycle_status: str = "processing"
+
+
+class ReferenceConfirmIn(BaseModel):
+    purposes: list[str] | None = None
+    primary_outline: bool | None = None
+    conflict_resolutions: dict[str, str] = Field(default_factory=dict)
 
 
 class ReferenceSearchIn(BaseModel):
@@ -52,4 +62,4 @@ class ReferenceSearchHit(BaseModel):
 
 class ReferenceSearchOut(BaseModel):
     snippets: list[str]
-    hits: list[ReferenceSearchHit] = []
+    hits: list[ReferenceSearchHit] = Field(default_factory=list)

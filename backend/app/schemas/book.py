@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.models.book import BookStatus, BookType, CitationStyle
+from app.models.book import BookStatus, BookType, BookWorkflowMode, CitationStyle
 from app.constants.style_types import StyleType
 
 
@@ -16,6 +16,7 @@ class BookCreate(BaseModel):
     target_words: int | None = Field(default=None, ge=1000, le=500000)
     style_type: StyleType | str | None = None
     topic_tags: list[str] | None = None
+    workflow_mode: BookWorkflowMode = BookWorkflowMode.from_scratch
 
     @field_validator("topic_tags")
     @classmethod
@@ -42,7 +43,6 @@ class BookUpdate(BaseModel):
     topic_tags: list[str] | None = None
     topic_brief: str | None = Field(default=None, max_length=20_000)
     allow_title_optimization: bool | None = None
-    user_material: str | None = Field(default=None, max_length=100_000)
 
     @field_validator("topic_tags")
     @classmethod
@@ -73,6 +73,7 @@ class BookOut(BaseModel):
     id: UUID
     user_id: UUID
     title: str
+    workflow_mode: BookWorkflowMode = BookWorkflowMode.from_scratch
     original_title: str | None = None
     allow_title_optimization: bool = False
     book_type: BookType

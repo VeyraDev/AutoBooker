@@ -122,6 +122,53 @@ export async function generateFigure(
   return data;
 }
 
+export type FigureBatch = {
+  id: string;
+  book_id: string;
+  chapter_index: number | null;
+  trigger: string;
+  status: "pending" | "running" | "paused" | "completed" | "completed_with_errors";
+  total: number;
+  completed: number;
+  failed: number;
+};
+
+export async function startFigureBatch(bookId: string, chapterIndex?: number): Promise<FigureBatch> {
+  const { data } = await client.post<FigureBatch>(
+    `/books/${bookId}/figures/batches`,
+    undefined,
+    { params: chapterIndex == null ? undefined : { chapter_index: chapterIndex } },
+  );
+  return data;
+}
+
+export async function getFigureBatch(bookId: string, runId: string): Promise<FigureBatch> {
+  const { data } = await client.get<FigureBatch>(`/books/${bookId}/figures/batches/${runId}`);
+  return data;
+}
+
+export async function getActiveFigureBatch(bookId: string, chapterIndex?: number): Promise<FigureBatch | null> {
+  const { data } = await client.get<FigureBatch | null>(
+    `/books/${bookId}/figures/batches/active`,
+    { params: chapterIndex == null ? undefined : { chapter_index: chapterIndex } },
+  );
+  return data;
+}
+
+export async function pauseFigureBatch(bookId: string, runId: string): Promise<FigureBatch> {
+  const { data } = await client.post<FigureBatch>(`/books/${bookId}/figures/batches/${runId}/pause`);
+  return data;
+}
+
+export async function waitFigureBatch(bookId: string, run: FigureBatch): Promise<FigureBatch> {
+  let current = run;
+  for (let i = 0; i < 240 && ["pending", "running"].includes(current.status); i += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    current = await getFigureBatch(bookId, run.id);
+  }
+  return current;
+}
+
 export async function uploadFigure(bookId: string, figureId: string, file: File) {
   const form = new FormData();
   form.append("file", file);

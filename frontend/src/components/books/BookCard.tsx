@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
 import { deleteBook, updateBook } from "@/api/books";
+import { bookDestination } from "@/lib/bookRoutes";
 import { statusLabel, statusTone, typeLabel } from "@/pages/bookView";
 import type { Book } from "@/types/book";
 
@@ -110,7 +111,7 @@ export function BookCard({
   return (
     <div className={`book-card-wrapper relative${isHero ? " book-card-wrapper--hero" : ""}`}>
       <Link
-        to={`/app/books/${book.id}`}
+        to={bookDestination(book)}
         className={`book-card-link block${isHero ? " book-card-link--hero" : ""}`}
         aria-label={`打开书稿 ${book.title}`}
         title={book.title}

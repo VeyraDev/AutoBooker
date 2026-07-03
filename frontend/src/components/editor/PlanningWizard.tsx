@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
 import OutlineReviewPanel from "@/components/editor/OutlineReviewPanel";
 import SetupView, { type SetupViewActions } from "@/components/editor/SetupView";
@@ -70,6 +71,7 @@ export default function PlanningWizard({
   /** 从 Step2「返回书稿设定」回到 Step1 时，右下角 FAB 仅为「保存设定」 */
   const [step1SaveOnlyFab, setStep1SaveOnlyFab] = useState(false);
   const [startMenuOpen, setStartMenuOpen] = useState(false);
+  const [preparingOutline, setPreparingOutline] = useState(false);
   const setupActionsRef = useRef<SetupViewActions | null>(null);
 
   useEffect(() => {
@@ -79,17 +81,24 @@ export default function PlanningWizard({
   }, [outline?.chapters.length]);
 
   async function handleFabGenerate() {
+    setPreparingOutline(true);
     try {
-      await setupActionsRef.current?.saveMeta();
-    } catch {
-      return;
-    }
-    const target_audience = book.target_audience?.trim() || null;
-    const topic_brief = book.topic_brief?.trim() || null;
-    const ok = await onGenerateOutline({ topic_override: null, target_audience, topic_brief });
-    if (ok) {
-      setStep1SaveOnlyFab(false);
-      setWizardStep(2);
+      if (!setupActionsRef.current) {
+        toast.error("书稿设定尚未准备好，请刷新页面后重试");
+        return;
+      }
+      const savedBook = await setupActionsRef.current.saveMeta();
+      const ok = await onGenerateOutline({
+        topic_override: null,
+        target_audience: savedBook.target_audience?.trim() || null,
+        topic_brief: savedBook.topic_brief?.trim() || null,
+      });
+      if (ok) {
+        setStep1SaveOnlyFab(false);
+        setWizardStep(2);
+      }
+    } finally {
+      setPreparingOutline(false);
     }
   }
 
@@ -113,7 +122,7 @@ export default function PlanningWizard({
             <Link
               to="/app/books"
               className="icon-button mt-0.5 h-10 w-10 shrink-0"
-              aria-label="返回图书生成"
+              aria-label="返回我的书稿"
             >
               <ChevronLeft className="h-5 w-5" />
             </Link>
@@ -127,7 +136,7 @@ export default function PlanningWizard({
 
         {wizardStep === 1 && outlineGeneratingUi ? (
           <div className="card mb-4 border border-amber-200/80 bg-amber-50/80 p-4 text-center text-sm text-amber-900">
-            大纲正在生成，通常需要 1–5 分钟，请勿关闭页面…
+            正在生成大纲，完成后会自动显示。
           </div>
         ) : null}
 
@@ -141,23 +150,27 @@ export default function PlanningWizard({
             <div className="mt-12 flex justify-end border-t border-slate-100/90 pt-10">
               <button
                 type="button"
-                disabled={outlineRequestPending}
-                onClick={() =>
-                  step1SaveOnlyFab
-                    ? void handleFabSaveOnly()
-                    : void handleFabGenerate().catch(() => {
-                        /* handled in parent */
-                      })
-                }
+                disabled={outlineRequestPending || preparingOutline}
+                onClick={() => {
+                  if (step1SaveOnlyFab) {
+                    void handleFabSaveOnly();
+                  } else {
+                    void handleFabGenerate().catch(() => {
+                      /* SetupView 与父组件负责错误提示 */
+                    });
+                  }
+                }}
                 className="btn-primary shadow-md"
               >
                 {outlineGeneratingUi
-                  ? "大纲生成中…"
+                  ? "正在生成大纲…"
+                  : preparingOutline
+                    ? "正在保存设定…"
                   : book.status === "outline_generating"
                     ? "重新生成大纲 →"
                     : step1SaveOnlyFab
                       ? "保存设定"
-                      : "保存并生成大纲 →"}
+                      : "生成大纲"}
               </button>
             </div>
           </>
@@ -165,8 +178,8 @@ export default function PlanningWizard({
 
         {wizardStep === 2 && outlineGeneratingUi ? (
           <div className="card border border-slate-200/80 bg-white/85 p-10 text-center text-sm text-slate-600">
-            <p className="font-medium text-ink">大纲生成中，请稍候…</p>
-            <p className="mt-2 text-xs text-slate-500">模型正在规划章节结构，完成后将自动显示大纲。</p>
+            <p className="font-medium text-ink">正在生成大纲…</p>
+            <p className="mt-2 text-xs text-slate-500">正在规划章节结构。</p>
           </div>
         ) : null}
 
@@ -236,16 +249,16 @@ export default function PlanningWizard({
         {wizardStep === 2 && !outlineGeneratingUi && outline && outline.chapters.length > 0 && (
           <div className="mt-10 flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 pb-12 pt-8 sm:pb-16">
             <button type="button" className="btn-primary text-sm" onClick={() => setWizardStep(3)}>
-              确认大纲，进入下一步 →
+              确认大纲
             </button>
           </div>
         )}
 
         {wizardStep === 3 && (
           <div className="card mx-auto max-w-lg border border-slate-200/80 bg-white/85 p-8 text-center shadow-sm">
-            <h2 className="text-lg font-semibold text-ink">准备进入写作</h2>
+            <h2 className="text-lg font-semibold text-ink">选择写作方式</h2>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">
-              确认后将进入写作工作台，系统将按章节顺序自动调用 AI 生成正文。您可随时在目录中查看进度或停止生成。
+              系统将按章节顺序生成正文，你可以随时查看或暂停。
             </p>
             {outline ? (
               <p className="mt-4 text-xs text-slate-500">
@@ -266,7 +279,7 @@ export default function PlanningWizard({
                       void onStartWriting("auto");
                     }}
                   >
-                    ▶ 全部自动生成
+                    自动生成全书
                   </button>
                   <button
                     type="button"
@@ -295,7 +308,7 @@ export default function PlanningWizard({
                           void onStartWriting("auto");
                         }}
                       >
-                        ▶ 全部自动生成
+                        自动生成全书
                       </button>
                       <button
                         type="button"
@@ -306,7 +319,7 @@ export default function PlanningWizard({
                           void onStartWriting("manual");
                         }}
                       >
-                        ≡ 逐章手动生成
+                        逐章生成
                       </button>
                     </div>
                   </>

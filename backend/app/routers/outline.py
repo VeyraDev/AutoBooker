@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import time
-from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,6 +12,7 @@ from app.agents.document_parser import DocumentParserAgent
 from app.agents.outline_agent import OutlineAgent
 from app.database import get_db
 from app.models.book import BookStatus
+from app.models.book_job import BookJob, BookJobStatus
 from app.models.chapter import Chapter, ChapterStatus
 from app.models.user import User
 from app.routers.auth import get_current_user
@@ -33,27 +31,6 @@ from app.services.material_parse_service import get_book_level_writing_rules, ge
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/books", tags=["outline"])
-
-_DEBUG_LOG = Path(__file__).resolve().parents[4] / "debug-7c6f39.log"
-
-
-def _agent_ndjson(location: str, message: str, data: dict, hypothesis_id: str) -> None:
-    # #region agent log
-    try:
-        payload = {
-            "sessionId": "7c6f39",
-            "timestamp": int(time.time() * 1000),
-            "location": location,
-            "message": message,
-            "data": data,
-            "hypothesisId": hypothesis_id,
-        }
-        with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-
 
 def _chapter_to_outline(ch: Chapter) -> OutlineChapterOut:
     meta = ch.content if isinstance(ch.content, dict) else {}
@@ -111,6 +88,25 @@ def _restore_outline_book_status(db: Session, book, previous_status: BookStatus)
     db.commit()
 
 
+def _mark_auto_job_writing_started(db: Session, book_id: UUID) -> None:
+    auto_job = (
+        db.query(BookJob)
+        .filter(
+            BookJob.book_id == book_id,
+            BookJob.status == BookJobStatus.completed,
+        )
+        .order_by(BookJob.created_at.desc())
+        .first()
+    )
+    if not auto_job:
+        return
+    checkpoint = dict(auto_job.checkpoint_json or {})
+    if not checkpoint.get("ready_for_editor"):
+        return
+    checkpoint["writing_started"] = True
+    auto_job.checkpoint_json = checkpoint
+
+
 @router.post("/{book_id}/outline", response_model=OutlineBookResponse)
 def generate_outline(
     book_id: UUID,
@@ -119,12 +115,6 @@ def generate_outline(
     db: Session = Depends(get_db),
 ):
     book = book_service.get_book_or_404(book_id, user, db)
-    _agent_ndjson(
-        "outline.py:generate_outline",
-        "after get_book",
-        {"book_id": str(book_id), "status": str(book.status)},
-        "H4",
-    )
     if book.status == BookStatus.outline_generating:
         has_chapters = (
             db.query(Chapter.id).filter(Chapter.book_id == book.id).limit(1).first() is not None
@@ -146,12 +136,6 @@ def generate_outline(
         query = (body.topic_override or book.title) + " " + (book.discipline or "")
         parser = DocumentParserAgent(db, book.id)
         snippets = parser.retrieve(query.strip() or book.title, top_k=5)
-        _agent_ndjson(
-            "outline.py:generate_outline",
-            "after retrieve",
-            {"snippet_count": len(snippets)},
-            "H2",
-        )
 
         cfg = {
             "book_type": book.book_type.value,
@@ -170,6 +154,12 @@ def generate_outline(
         agent = OutlineAgent()
         chat_model = resolve_book_outline_model(book, user)
         outline = agent.generate(cfg, snippets, model=chat_model)
+        from app.services.material_parse_service import get_primary_outline_for_book, merge_outline_with_primary
+
+        outline = merge_outline_with_primary(
+            outline,
+            get_primary_outline_for_book(db, book.id),
+        )
 
         db.query(Chapter).filter(Chapter.book_id == book.id).delete()
 
@@ -219,12 +209,6 @@ def generate_outline(
         )
         outs = [_chapter_to_outline(c) for c in chapters]
         total_est = int(outline.get("estimated_words") or sum(o.estimated_words for o in outs))
-        _agent_ndjson(
-            "outline.py:generate_outline",
-            "success",
-            {"total_chapters": len(outs), "estimated_words": total_est},
-            "H3",
-        )
         return OutlineBookResponse(
             title=book.title,
             total_chapters=len(outs),
@@ -235,18 +219,12 @@ def generate_outline(
         _restore_outline_book_status(db, book, previous_status)
         raise
     except Exception as e:
-        _agent_ndjson(
-            "outline.py:generate_outline",
-            "exception",
-            {"exc_type": type(e).__name__, "exc_msg": str(e)[:800]},
-            "H1-H5",
-        )
         logger.exception("outline generation failed")
         _restore_outline_book_status(db, book, previous_status)
-        detail = f"{type(e).__name__}: {str(e)}"
-        if len(detail) > 2000:
-            detail = detail[:2000] + "…"
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=detail) from e
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="大纲生成未能完成，请稍后重试。书稿设定已保留。",
+        ) from e
 
 
 @router.put("/{book_id}/outline", response_model=OutlineBookResponse)
@@ -278,6 +256,7 @@ def update_outline(
 
     if body.confirm_start_writing:
         book.status = BookStatus.writing
+        _mark_auto_job_writing_started(db, book.id)
     else:
         book.constitution_stale = True
 

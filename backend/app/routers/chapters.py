@@ -94,7 +94,8 @@ def _safe_llm_error_message(exc: Exception, *, model: str) -> str:
     msg = _SECRET_RE.sub("sk-***", msg).replace("\r", " ").replace("\n", " ")
     if len(msg) > 500:
         msg = msg[:500].rstrip() + "..."
-    return f"叙事宪法生成失败（模型：{model}）：{msg}"
+    logger.error("writing rules generation failed model=%s detail=%s", model, msg)
+    return "未能准备写作规则，请稍后重试"
 
 
 def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> None:
@@ -187,7 +188,7 @@ def ensure_narrative_constitution(
     if not book_fresh or not (book_fresh.narrative_constitution or "").strip():
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            detail=f"叙事宪法生成失败（模型：{chat_model}）：模型返回空结果",
+            detail="未能准备写作规则，请稍后重试",
         )
     return NarrativeEnsureOut(ok=True, generated=True)
 
@@ -227,8 +228,19 @@ def get_chapter(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    book_service.get_book_or_404(book_id, user, db)
+    book = book_service.get_book_or_404(book_id, user, db)
     ch = _get_chapter(book_id, chapter_index, db)
+    from app.services.citation_nodes import (
+        has_internal_citation_markers,
+        normalize_chapter_citations,
+    )
+
+    meta = ch.content if isinstance(ch.content, dict) else {}
+    doc = meta.get("tiptap_json")
+    if isinstance(doc, dict) and has_internal_citation_markers(doc):
+        normalize_chapter_citations(db, book, ch)
+        db.commit()
+        db.refresh(ch)
     return ch
 
 
@@ -240,7 +252,7 @@ def update_chapter(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    book_service.get_book_or_404(book_id, user, db)
+    book = book_service.get_book_or_404(book_id, user, db)
     ch = _get_chapter(book_id, chapter_index, db)
     if body.title is not None:
         ch.title = body.title
@@ -253,6 +265,10 @@ def update_chapter(
             ch.content = {**old, **incoming}
         else:
             ch.content = body.content
+    if body.content is not None:
+        from app.services.citation_nodes import normalize_chapter_citations
+
+        normalize_chapter_citations(db, book, ch)
     db.commit()
     db.refresh(ch)
     return ch
@@ -517,6 +533,9 @@ async def generate_chapter_stream(
                 row.content = meta
                 row.word_count = wc
                 row.status = ChapterStatus.done
+                from app.services.citation_nodes import normalize_chapter_citations
+
+                normalize_chapter_citations(db, book_live, row)
                 db.commit()
                 try:
                     extract_and_store_figures(book_id, chapter_index, md_text, db)
@@ -526,6 +545,7 @@ async def generate_chapter_stream(
                         )
                         meta["tiptap_json"] = tiptap_doc
                         row.content = meta
+                        normalize_chapter_citations(db, book_live, row, doc=tiptap_doc)
                         db.commit()
                     elif tiptap_doc:
                         refresh_chapter_figures(book_id, chapter_index, tiptap_doc, db)
@@ -533,6 +553,23 @@ async def generate_chapter_stream(
                     logger.exception(
                         "extract figures failed book=%s ch=%s", book_id, chapter_index
                     )
+                try:
+                    from app.models.book_job import BookJob
+                    from app.services.figure_batch_service import enqueue_auto_chapter_figures, run_figure_batch
+
+                    auto_job = (
+                        db.query(BookJob)
+                        .filter(BookJob.book_id == book_id)
+                        .order_by(BookJob.created_at.desc())
+                        .first()
+                    )
+                    checkpoint = auto_job.checkpoint_json if auto_job and isinstance(auto_job.checkpoint_json, dict) else {}
+                    if checkpoint.get("ready_for_editor"):
+                        batch_id = enqueue_auto_chapter_figures(book_id, chapter_index)
+                        if batch_id:
+                            asyncio.create_task(asyncio.to_thread(run_figure_batch, batch_id))
+                except Exception:
+                    logger.exception("enqueue automatic chapter figures failed book=%s ch=%s", book_id, chapter_index)
             asyncio.create_task(
                 asyncio.to_thread(_memory_background, book_id, chapter_index, md_text)
             )

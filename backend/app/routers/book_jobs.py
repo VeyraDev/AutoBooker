@@ -68,6 +68,7 @@ def start_auto_generate(
             "discipline": body.discipline,
         },
         db,
+        commit=False,
     )
     job = BookJob(book_id=book.id, user_id=user.id, status=BookJobStatus.pending, progress_pct=0)
     db.add(job)
@@ -115,7 +116,8 @@ def start_auto_generate_for_book(
     if existing:
         _reconcile_job_worker(db, existing)
         db.refresh(existing)
-        return _job_to_out(existing, db)
+        if existing.status in (BookJobStatus.pending, BookJobStatus.running):
+            return _job_to_out(existing, db)
     job = BookJob(book_id=book.id, user_id=user.id, status=BookJobStatus.pending, progress_pct=0)
     db.add(job)
     book.status = BookStatus.auto_generating

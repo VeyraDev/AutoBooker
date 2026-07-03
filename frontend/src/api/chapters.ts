@@ -1,7 +1,7 @@
 import { client } from "@/api/client";
 import type { Chapter, ChapterCreatePayload, ChapterReorderItem } from "@/types/chapter";
 
-/** 叙事宪法生成可能较慢，与大纲生成同级超时 */
+/** 全书写作规则准备可能较慢，与大纲生成同级超时 */
 const NARRATIVE_ENSURE_TIMEOUT_MS = 180_000;
 
 export type NarrativeEnsureResult = { ok: boolean; generated: boolean };

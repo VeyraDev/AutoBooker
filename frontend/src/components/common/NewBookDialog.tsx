@@ -5,7 +5,9 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
 import { createBook } from "@/api/books";
-import { startAutoGenerateForBook } from "@/api/bookJobs";
+import { startAutoGenerate } from "@/api/bookJobs";
+import { createOptimizationProject } from "@/api/optimization";
+import { autoBookProgressPath } from "@/lib/bookRoutes";
 import { DEFAULT_TARGET_WORDS, styleOptionsFor } from "@/lib/styleTypes";
 import type { BookType, StyleType } from "@/types/book";
 
@@ -17,21 +19,6 @@ interface Props {
 type BookKind = "generate" | "optimize";
 type GenerateMode = "manual" | "auto";
 
-const PENDING_AUTO_KEY = "autobooker_pending_auto";
-
-export function consumePendingAutoGenerate(bookId: string): boolean {
-  try {
-    const raw = sessionStorage.getItem(PENDING_AUTO_KEY);
-    if (raw === bookId) {
-      sessionStorage.removeItem(PENDING_AUTO_KEY);
-      return true;
-    }
-  } catch {
-    /* ignore */
-  }
-  return false;
-}
-
 export default function NewBookDialog({ open, onClose }: Props) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -40,20 +27,32 @@ export default function NewBookDialog({ open, onClose }: Props) {
   const [styleType, setStyleType] = useState<StyleType>("popular_science");
   const [bookKind, setBookKind] = useState<BookKind>("generate");
   const [generateMode, setGenerateMode] = useState<GenerateMode>("manual");
+  const [sourceManuscript, setSourceManuscript] = useState<File | null>(null);
+  const [optimizationGoals, setOptimizationGoals] = useState("");
+  const [allowStructureChanges, setAllowStructureChanges] = useState(false);
 
   const styleOpts = styleOptionsFor(bookType);
 
   const mutation = useMutation({
     mutationFn: async () => {
+      if (generateMode === "auto") {
+        const job = await startAutoGenerate({
+          title: title.trim(),
+          book_type: bookType,
+          style_type: styleType,
+        });
+        return { book_id: job.book_id, mode: "auto" as const };
+      }
       const book = await createBook({
         title: title.trim(),
         book_type: bookType,
         target_words: DEFAULT_TARGET_WORDS[bookType],
         style_type: styleType,
+        workflow_mode: "from_scratch",
       });
-      return { book_id: book.id, mode: generateMode };
+      return { book_id: book.id, mode: "manual" as const };
     },
-    onSuccess: async (result) => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["books"] });
       setTitle("");
       setBookType("nonfiction");
@@ -62,16 +61,11 @@ export default function NewBookDialog({ open, onClose }: Props) {
       setGenerateMode("manual");
       onClose();
       if (result.mode === "auto") {
-        try {
-          await startAutoGenerateForBook(result.book_id);
-          toast.success("已开始一键成书，请查看进度");
-          navigate(`/app/books/${result.book_id}/auto-progress`);
-        } catch {
-          toast.error("启动一键成书失败");
-          navigate(`/app/books/${result.book_id}`);
-        }
+        toast.success("一键成书已开始");
+        void qc.invalidateQueries({ queryKey: ["bookJob", result.book_id] });
+        navigate(autoBookProgressPath(result.book_id));
       } else {
-        toast.success("已创建");
+        toast.success("书稿已创建");
         navigate(`/app/books/${result.book_id}`);
       }
     },
@@ -79,8 +73,34 @@ export default function NewBookDialog({ open, onClose }: Props) {
       const msg =
         axios.isAxiosError(err) && err.response?.data?.detail
           ? String(err.response.data.detail)
-          : "创建失败";
+          : generateMode === "auto"
+            ? "未能开始一键成书，请稍后重试"
+            : "创建失败";
       toast.error(msg);
+    },
+  });
+
+  const optimizeMutation = useMutation({
+    mutationFn: async () => {
+      if (!sourceManuscript) throw new Error("missing_source");
+      return createOptimizationProject(
+        sourceManuscript,
+        optimizationGoals.split(/\n|；|;/).map((x) => x.trim()).filter(Boolean),
+        allowStructureChanges,
+      );
+    },
+    onSuccess: (project) => {
+      qc.invalidateQueries({ queryKey: ["books"] });
+      setSourceManuscript(null);
+      setOptimizationGoals("");
+      setAllowStructureChanges(false);
+      setBookKind("generate");
+      onClose();
+      toast.success("原始书稿已上传，正在分析");
+      navigate(`/app/books/${project.book_id}/optimize`);
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error && err.message === "missing_source" ? "请选择原始书稿" : "未能创建优化项目，请稍后重试");
     },
   });
 
@@ -110,23 +130,58 @@ export default function NewBookDialog({ open, onClose }: Props) {
             className={`flex-1 rounded-lg border px-3 py-2 text-xs ${bookKind === "generate" ? "border-indigo-500 bg-indigo-50 text-indigo-800" : "border-slate-200 text-slate-600"}`}
             onClick={() => setBookKind("generate")}
           >
-            生成新书
+            从零创作
           </button>
           <button
             type="button"
             className={`flex-1 rounded-lg border px-3 py-2 text-xs ${bookKind === "optimize" ? "border-indigo-500 bg-indigo-50 text-indigo-800" : "border-slate-200 text-slate-600"}`}
             onClick={() => setBookKind("optimize")}
           >
-            优化新书
+            优化已有书稿
           </button>
         </div>
 
         {bookKind === "optimize" ? (
-          <div className="py-8 text-center">
-            <p className="text-sm text-slate-500">优化新书功能开发中，敬请期待。</p>
-            <button type="button" onClick={resetAndClose} className="btn-secondary mt-6">
-              关闭
-            </button>
+          <div className="space-y-4 py-2">
+            <div>
+              <label className="block text-sm text-slate-600 mb-1">原始书稿</label>
+              <input
+                type="file"
+                accept=".pdf,.docx,.txt"
+                className="input text-sm"
+                onChange={(e) => setSourceManuscript(e.target.files?.[0] ?? null)}
+              />
+              <p className="mt-1 text-xs text-slate-500">原稿将保存为不可覆盖的基线版本。</p>
+            </div>
+            <label className="block text-sm">
+              <span className="text-slate-600">优化目标</span>
+              <textarea
+                className="input mt-1 min-h-[90px]"
+                value={optimizationGoals}
+                onChange={(e) => setOptimizationGoals(e.target.value)}
+                placeholder="例如：改善章节逻辑；减少重复；统一术语"
+              />
+            </label>
+            <label className="flex items-start gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={allowStructureChanges}
+                onChange={(e) => setAllowStructureChanges(e.target.checked)}
+              />
+              允许调整章节结构（默认关闭）
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={resetAndClose} className="btn-secondary">取消</button>
+              <button
+                type="button"
+                disabled={optimizeMutation.isPending}
+                onClick={() => optimizeMutation.mutate()}
+                className="btn-primary"
+              >
+                {optimizeMutation.isPending ? "正在上传…" : "开始分析"}
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -136,19 +191,19 @@ export default function NewBookDialog({ open, onClose }: Props) {
                 className={`flex-1 rounded-lg border px-3 py-2 text-xs ${generateMode === "manual" ? "border-slate-300 bg-slate-50 text-slate-800" : "border-slate-200 text-slate-600"}`}
                 onClick={() => setGenerateMode("manual")}
               >
-                手动创建
+                分步创作
               </button>
               <button
                 type="button"
                 className={`flex-1 rounded-lg border px-3 py-2 text-xs ${generateMode === "auto" ? "border-slate-300 bg-slate-50 text-slate-800" : "border-slate-200 text-slate-600"}`}
                 onClick={() => setGenerateMode("auto")}
               >
-                一键出书
+                一键成书
               </button>
             </div>
             {generateMode === "auto" ? (
               <p className="mb-3 text-[11px] leading-relaxed text-slate-500">
-                先进入书稿设定页补充或确认设定，再开始自动完成：文献检索 → 大纲 → 叙事宪法 → 逐章写作。
+                系统将自动完成书稿设定、大纲、写作和配图，可在进度页查看。
               </p>
             ) : null}
             <form onSubmit={onSubmit} className="space-y-4">
@@ -194,7 +249,7 @@ export default function NewBookDialog({ open, onClose }: Props) {
                   取消
                 </button>
                 <button type="submit" disabled={mutation.isPending} className="btn-primary">
-                  {mutation.isPending ? "创建中..." : generateMode === "auto" ? "创建并进入设定" : "创建"}
+                  {mutation.isPending ? "创建中..." : generateMode === "auto" ? "开始一键成书" : "创建书稿"}
                 </button>
               </div>
             </form>

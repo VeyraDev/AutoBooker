@@ -31,7 +31,8 @@ type Props = {
   /** 参考资料插入到编辑器 */
   onInsertReference?: (plain: string, filename: string) => void;
   /** 文献叙述句预览插入（光标处） */
-  onPreviewCitationInsert?: (sentence: string) => void;
+  onPreviewCitationInsert?: (payload: { sentence: string; node: Record<string, unknown> }) => void;
+  onJumpToCitation?: (chapterIndex: number, nodeId: string) => void;
   chapterIndex?: number | null;
   editorSelectionText?: string;
   chapterContext?: string;
@@ -81,6 +82,7 @@ export default function RightPanel({
   citationStyle = null,
   onInsertReference: _onInsertReference,
   onPreviewCitationInsert,
+  onJumpToCitation,
   chapterIndex = null,
   editorSelectionText = "",
   chapterContext = "",
@@ -119,7 +121,7 @@ export default function RightPanel({
     <aside className="right-panel" aria-label="辅助面板">
       <div className="right-panel-tab-bar">
         {tabBtn("detail", <ClipboardList className="h-4 w-4" aria-hidden />, "章节细则")}
-        {tabBtn("refs", <ImageIcon className="h-4 w-4" aria-hidden />, "图表速查")}
+        {tabBtn("refs", <ImageIcon className="h-4 w-4" aria-hidden />, "图表速览")}
         {tabBtn("literature", <GraduationCap className="h-4 w-4" aria-hidden />, "文献搜索")}
         {tabBtn("ai", <MessageSquareText className="h-4 w-4" aria-hidden />, "AI 助手")}
         {tabBtn("review", <ShieldCheck className="h-4 w-4" aria-hidden />, "审阅")}
@@ -197,6 +199,7 @@ export default function RightPanel({
             mode="editor"
             chapterContext={chapterContext}
             onPreviewInsert={onPreviewCitationInsert}
+            onJumpToCitation={onJumpToCitation}
           />
         </div>
 

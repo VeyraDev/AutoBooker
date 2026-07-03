@@ -14,6 +14,7 @@ import { AiInlinePreview } from "@/lib/tiptap/AiInlinePreview";
 import { FigureBlock } from "@/lib/tiptap/FigureBlock";
 import { HeadingWithId } from "@/lib/tiptap/HeadingWithId";
 import { ParagraphWithId } from "@/lib/tiptap/ParagraphWithId";
+import { CitationNode } from "@/lib/tiptap/CitationNode";
 
 /** 与 generateJSON 共用：仅含可序列化进文档的节点，不含 Placeholder / CharacterCount */
 export const chapterEditorSchemaExtensions = [
@@ -24,6 +25,7 @@ export const chapterEditorSchemaExtensions = [
   HeadingWithId.configure({ levels: [1, 2, 3, 4, 5, 6] }),
   ParagraphWithId,
   FigureBlock,
+  CitationNode,
   MathInline,
   MathBlock,
   Table.configure({

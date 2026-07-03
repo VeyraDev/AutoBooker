@@ -12,7 +12,7 @@ import { getBook } from "@/api/books";
 
 const SCENES: { key: UserAiScene; label: string }[] = [
   { key: "outline", label: "大纲" },
-  { key: "constitution", label: "叙事宪法" },
+  { key: "constitution", label: "写作规则" },
   { key: "writing", label: "写作" },
   { key: "assistant", label: "AI 助手" },
 ];
@@ -87,7 +87,7 @@ export default function UserModelMenu({ open, onClose }: Props) {
   const menuHint = book
     ? visibleScenes.length <= 2
       ? "与写作页顶栏一致；各场景独立生效，改哪项只影响哪项。"
-      : "大纲与叙事宪法用于本书生成流程；写作与助手见对应入口。"
+      : "大纲与写作规则用于本书生成流程；写作与助手见对应入口。"
     : "未单独设置时使用系统默认。新建书稿与每次生成均按当前选择调用。";
 
   if (!open) return null;

@@ -30,13 +30,48 @@ export async function weaveCitation(
   bookId: string,
   citationId: string,
   context: string,
-): Promise<{ sentence: string; citation_id: string }> {
-  const { data } = await client.post<{ sentence: string; citation_id: string }>(
+): Promise<{ sentence: string; citation_id: string; node: Record<string, unknown> }> {
+  const { data } = await client.post<{ sentence: string; citation_id: string; node: Record<string, unknown> }>(
     `/books/${bookId}/citations/${citationId}/weave`,
     { context },
     { timeout: 90000 },
   );
   return data;
+}
+
+export type CitationOccurrence = {
+  id: string;
+  citation_id: string;
+  evidence_id: string | null;
+  chapter_id: string;
+  chapter_index: number;
+  chapter_title: string;
+  node_id: string;
+  cite_mode: string;
+  locator: string | null;
+  context_before: string | null;
+  context_after: string | null;
+  complete: boolean;
+  citation: CitationRecord;
+};
+
+export async function listCitationOccurrences(bookId: string): Promise<CitationOccurrence[]> {
+  const { data } = await client.get<CitationOccurrence[]>(`/books/${bookId}/citation-occurrences`);
+  return data;
+}
+
+export async function deleteCitationOccurrence(bookId: string, occurrenceId: string): Promise<void> {
+  await client.delete(`/books/${bookId}/citation-occurrences/${occurrenceId}`);
+}
+
+export async function replaceCitationOccurrence(
+  bookId: string,
+  occurrenceId: string,
+  citationId: string,
+): Promise<void> {
+  await client.post(`/books/${bookId}/citation-occurrences/${occurrenceId}/replace`, {
+    citation_id: citationId,
+  });
 }
 
 export async function syncBibliographyChapter(bookId: string): Promise<{

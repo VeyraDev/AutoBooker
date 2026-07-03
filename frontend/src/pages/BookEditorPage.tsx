@@ -21,7 +21,12 @@ import {
 import { generateOutline, getOutline, putOutline } from "@/api/outline";
 import { getPreface, openPrefaceGenerateStream, putPreface, type PrefaceData } from "@/api/preface";
 import {
+  getActiveFigureBatch,
+  pauseFigureBatch,
   rebuildChapterBodyFromFigures,
+  startFigureBatch,
+  waitFigureBatch,
+  type FigureBatch,
   type FigureListItem,
   type FigureOut,
   type FigureTableOverviewItem,
@@ -46,7 +51,13 @@ import { useLlmModels } from "@/hooks/useLlmModels";
 import { useDailyWordDelta } from "@/hooks/useDailyWordDelta";
 import { resolveUserSceneModel } from "@/lib/bookAiModels";
 import { phaseOf, type Phase } from "@/lib/bookStatus";
-import { consumePendingAutoWrite, peekPendingAutoWrite } from "@/lib/autoBookWrite";
+import {
+  consumePendingAutoWrite,
+  markPendingAutoWrite,
+  peekPendingAutoWrite,
+} from "@/lib/autoBookWrite";
+import { autoBookProgressPath } from "@/lib/bookRoutes";
+import { shouldEnterEditor } from "@/lib/autoBookProgress";
 import { useAuthStore } from "@/stores/authStore";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import type { Chapter } from "@/types/chapter";
@@ -149,6 +160,10 @@ export default function BookEditorPage() {
   const [streamingIndex, setStreamingIndex] = useState<number | null>(null);
   const [streamingPreface, setStreamingPreface] = useState(false);
   const [autoGenerating, setAutoGenerating] = useState(false);
+  const [activeFigureBatch, setActiveFigureBatch] = useState<FigureBatch | null>(null);
+  const figureBatchGenerating = Boolean(
+    activeFigureBatch && ["pending", "running"].includes(activeFigureBatch.status),
+  );
   const [outlineDrawerOpen, setOutlineDrawerOpen] = useState(false);
   const [dailyWordsTick, setDailyWordsTick] = useState(0);
   const [panelTab, setPanelTab] = useState<RightPanelTab>("detail");
@@ -167,6 +182,7 @@ export default function BookEditorPage() {
   const streamPreviewRafRef = useRef<number | null>(null);
   const [streamPreviewMd, setStreamPreviewMd] = useState<string | null>(null);
   const autoGenAbortRef = useRef(false);
+  const locallyPolledFigureBatchRef = useRef<string | null>(null);
   const forceGenerateCitationsRef = useRef(false);
   const chapterIndexRef = useRef<number | null>(null);
   const streamingIndexRef = useRef<number | null>(null);
@@ -181,6 +197,9 @@ export default function BookEditorPage() {
   const setAuthUser = useAuthStore((s) => s.setUser);
 
   const autoWriteStartedRef = useRef(false);
+  const [autoWriteRequested, setAutoWriteRequested] = useState(() =>
+    Boolean(bookId && peekPendingAutoWrite(bookId)),
+  );
   const [autoWriteBooting, setAutoWriteBooting] = useState(() =>
     Boolean(bookId && peekPendingAutoWrite(bookId)),
   );
@@ -190,6 +209,25 @@ export default function BookEditorPage() {
     queryFn: () => getBook(bookId!),
     enabled: !!bookId,
   });
+
+  useEffect(() => {
+    if (!bookId) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const active = await getActiveFigureBatch(bookId);
+        if (!cancelled) setActiveFigureBatch(active);
+      } catch {
+        // 顶栏状态恢复失败不阻塞正文编辑；下一轮会自动重试。
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [bookId]);
 
   const outlineQuery = useQuery({
     queryKey: ["outline", bookId],
@@ -212,13 +250,37 @@ export default function BookEditorPage() {
   /** 一键成书前置未完成时留在进度页 */
   useEffect(() => {
     if (!bookId || !book) return;
-    if (book.status !== "auto_generating" && book.status !== "outline_generating") return;
-    void fetchBookJob(bookId).then((job) => {
-      if (job && (job.status === "pending" || job.status === "running")) {
-        navigate(`/app/books/${bookId}/auto-progress`, { replace: true });
-      }
-    });
+    if (book.status === "auto_generating") {
+      navigate(autoBookProgressPath(bookId), { replace: true });
+      return;
+    }
+    if (book.status !== "outline_generating") return;
+    void fetchBookJob(bookId)
+      .then((job) => {
+        if (job && (job.status === "pending" || job.status === "running")) {
+          navigate(autoBookProgressPath(bookId), { replace: true });
+        }
+      })
+      .catch(() => {
+        /* 普通大纲生成不要求存在一键成书任务 */
+      });
   }, [bookId, book?.status, navigate]);
+
+  /** 用户离开进度页后再回来时，从持久化 Job 恢复一次自动写作。 */
+  useEffect(() => {
+    if (!bookId || !book || book.status !== "outline_ready") return;
+    if (autoWriteStartedRef.current || peekPendingAutoWrite(bookId)) return;
+    void fetchBookJob(bookId)
+      .then((job) => {
+        if (!job || job.detail?.writing_started || !shouldEnterEditor(job)) return;
+        markPendingAutoWrite(bookId);
+        setAutoWriteRequested(true);
+        setAutoWriteBooting(true);
+      })
+      .catch(() => {
+        /* 没有一键成书任务时保持普通大纲流程 */
+      });
+  }, [bookId, book?.status]);
 
   /** 后端同步生成大纲时，刷新页面后 outlineBusy 会丢失；轮询直到状态离开 outline_generating。 */
   useEffect(() => {
@@ -961,21 +1023,56 @@ export default function BookEditorPage() {
     await startAutoGenerate(nextOutline.chapters);
   }
 
+  async function generateBookFigures() {
+    if (!bookId) return;
+    if (figureBatchGenerating && activeFigureBatch) {
+      const runId = activeFigureBatch.id;
+      try {
+        await pauseFigureBatch(bookId, runId);
+        setActiveFigureBatch((current) => current?.id === runId ? null : current);
+        if (locallyPolledFigureBatchRef.current !== runId) {
+          toast.success("已暂停全书图片生成");
+        }
+      } catch {
+        toast.error("未能暂停全书图片生成，请稍后重试");
+      }
+      return;
+    }
+    const loading = toast.loading("正在生成全书图片…");
+    let runId: string | null = null;
+    try {
+      const run = await startFigureBatch(bookId);
+      runId = run.id;
+      setActiveFigureBatch(run);
+      locallyPolledFigureBatchRef.current = run.id;
+      const done = await waitFigureBatch(bookId, run);
+      await qc.invalidateQueries({ queryKey: ["figures", bookId] });
+      if (done.status === "paused") {
+        toast.success("已暂停全书图片生成", { id: loading });
+      } else if (done.failed) {
+        toast(`已生成 ${done.completed}/${done.total} 张，${done.failed} 张可稍后重试`, { id: loading, icon: "⚠️" });
+      } else {
+        toast.success(done.total ? `全书图片已生成 ${done.completed}/${done.total} 张` : "暂无待生成图片", { id: loading });
+      }
+    } catch {
+      toast.error("未能生成全书图片，请稍后重试", { id: loading });
+    } finally {
+      if (locallyPolledFigureBatchRef.current === runId) {
+        locallyPolledFigureBatchRef.current = null;
+      }
+      setActiveFigureBatch((current) => current?.id === runId ? null : current);
+    }
+  }
+
   async function handleStartWriting(mode: ChapterGenMode = "auto") {
     if (!bookId) return;
     setChapterGenMode(bookId, mode);
     const prepToast = toast.loading("正在生成全书内容，请稍候…");
     try {
       await ensureNarrativeConstitution(bookId);
-    } catch (e) {
+    } catch {
       toast.dismiss(prepToast);
-      const msg =
-        axios.isAxiosError(e) && typeof e.response?.data?.detail === "string"
-          ? e.response.data.detail
-          : e instanceof Error
-            ? e.message
-            : "叙事宪法生成失败";
-      toast.error(msg);
+      toast.error("未能准备写作规则，请稍后重试");
       return;
     }
     toast.dismiss(prepToast);
@@ -1021,15 +1118,16 @@ export default function BookEditorPage() {
   /** 一键成书：前置完成后进入写作页，复用正常「全部自动生成」流程（含前言 SSE） */
   useEffect(() => {
     if (!bookId) return;
-    if (!peekPendingAutoWrite(bookId)) return;
+    if (!autoWriteRequested || !peekPendingAutoWrite(bookId)) return;
     if (autoWriteStartedRef.current) return;
     if (!outlineQuery.isFetched || chapters.length === 0) return;
     if (!consumePendingAutoWrite(bookId)) return;
     autoWriteStartedRef.current = true;
+    setAutoWriteRequested(false);
     setAutoWriteBooting(true);
     setChapterGenMode(bookId, "auto");
     void handleStartWriting("auto").finally(() => setAutoWriteBooting(false));
-  }, [bookId, outlineQuery.isFetched, chapters.length]);
+  }, [bookId, outlineQuery.isFetched, chapters.length, autoWriteRequested]);
 
   async function handleReorder(items: { chapter_id: string; new_index: number }[]) {
     if (!bookId) return;
@@ -1063,8 +1161,8 @@ export default function BookEditorPage() {
     if (!bookId) return;
     const ok =
       mode === "regenerate"
-        ? window.confirm("将调用 AI 重新生成该章正文，确定？")
-        : window.confirm("调用 AI 生成本章正文？");
+        ? window.confirm("将重新生成该章正文，确定吗？")
+        : window.confirm("开始生成本章正文？");
     if (!ok) return;
     setSelection({ type: "chapter", index: idx });
     setStreamingIndex(idx);
@@ -1223,7 +1321,7 @@ export default function BookEditorPage() {
       <div className="surface-panel">
         <p className="text-sm text-slate-600">未找到该书稿。</p>
         <Link to="/app/books" className="mt-3 inline-flex text-sm text-brand hover:underline">
-          返回图书生成
+            返回我的书稿
         </Link>
       </div>
     );
@@ -1298,6 +1396,8 @@ export default function BookEditorPage() {
               setAutoGenerating(false);
             }}
             onStartBatchGeneration={() => void resumeAutoGenerate()}
+            figureBatchGenerating={figureBatchGenerating}
+            onGenerateBookFigures={() => void generateBookFigures()}
           />
         </header>
 
@@ -1671,17 +1771,25 @@ export default function BookEditorPage() {
                       editorRef.current?.insertReferenceQuote(plain, fn);
                       editorRef.current?.focusEditor();
                     }}
-                    onPreviewCitationInsert={(sentence) => {
-                      const ok = editorRef.current?.showAiPreview({
-                        quote: "",
-                        suggestion: sentence,
-                        kind: "insert",
-                      });
-                      if (!ok) {
-                        toast.error("无法在光标处预览，请先将光标置于正文");
-                        return;
-                      }
+                    onPreviewCitationInsert={({ sentence, node }) => {
+                      editorRef.current?.insertCitationContent(sentence, node);
                       editorRef.current?.focusEditor();
+                    }}
+                    onJumpToCitation={(targetChapterIndex, nodeId) => {
+                      setSelection({ type: "chapter", index: targetChapterIndex });
+                      let attempts = 0;
+                      const focusNode = () => {
+                        const node = document.querySelector(
+                          `[data-citation-node-id="${CSS.escape(nodeId)}"]`,
+                        );
+                        if (node) {
+                          node.scrollIntoView({ behavior: "smooth", block: "center" });
+                          return;
+                        }
+                        attempts += 1;
+                        if (attempts < 8) window.setTimeout(focusNode, 250);
+                      };
+                      window.setTimeout(focusNode, 100);
                     }}
                     chapterIndex={chapterIndex}
                     editorSelectionText={editorSelectionText}

@@ -4,7 +4,7 @@ export const statusLabel: Record<BookStatus, string> = {
   setup: "设定中",
   outline_generating: "大纲生成中",
   outline_ready: "大纲就绪",
-  auto_generating: "一键生成中",
+    auto_generating: "一键成书进行中",
   writing: "写作中",
   review_ready: "待审校",
   completed: "已完成",

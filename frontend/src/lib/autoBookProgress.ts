@@ -14,7 +14,7 @@ export const AUTO_BOOK_STAGES: AutoBookStage[] = [
   { id: "setting", label: "书稿设定" },
   { id: "literature", label: "文献规划" },
   { id: "outline", label: "大纲生成" },
-  { id: "narrative", label: "叙事宪法" },
+  { id: "narrative", label: "写作规则" },
 ];
 
 const STEP_ORDER: Record<string, number> = {
@@ -64,7 +64,7 @@ export function stageState(stageId: AutoBookStageId, job: BookJob | null | undef
   return "pending";
 }
 
-/** 叙事宪法完成后进入写作页（章节由前端 SSE 批量生成） */
+/** 全书写作规则完成后进入写作页（章节由前端流式批量生成） */
 export function shouldEnterEditor(job: BookJob | null | undefined): boolean {
   if (!job || job.status !== "completed") return false;
   const d = job.detail;

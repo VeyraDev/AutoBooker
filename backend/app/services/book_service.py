@@ -9,7 +9,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.constants.style_types import DEFAULT_TARGET_WORDS, coerce_style
-from app.models.book import Book, BookStatus
+from app.models.book import Book, BookStatus, CitationStyle
 from app.models.chapter import Chapter, ChapterStatus
 from app.models.reference import ReferenceFile
 from app.models.user import User
@@ -45,7 +45,13 @@ def _sync_discipline_field(book: Book) -> None:
         book.disciplines = [book.discipline]
 
 
-def create_book(user: User, payload: dict, db: Session) -> Book:
+def create_book(
+    user: User,
+    payload: dict,
+    db: Session,
+    *,
+    commit: bool = True,
+) -> Book:
     data = dict(payload)
     bt = data["book_type"]
     bt_val = bt.value if hasattr(bt, "value") else str(bt)
@@ -62,17 +68,32 @@ def create_book(user: User, payload: dict, db: Session) -> Book:
     book = Book(user_id=user.id, **data)
     _sync_discipline_field(book)
     db.add(book)
-    db.commit()
-    db.refresh(book)
+    if commit:
+        db.commit()
+        db.refresh(book)
+    else:
+        db.flush()
     return book
 
 
 def update_book(book: Book, payload: dict, db: Session) -> Book:
+    previous_citation_style = book.citation_style
     for key, value in payload.items():
         if key == "style_type" and value is not None:
             value = coerce_style(book.book_type.value, value).value
+        elif key == "citation_style" and value is not None:
+            value = CitationStyle(value)
+        elif key == "status" and value is not None:
+            value = BookStatus(value)
         setattr(book, key, value)
     _sync_discipline_field(book)
+    if "citation_style" in payload and book.citation_style != previous_citation_style:
+        from app.services.citation_nodes import refresh_book_citation_rendering
+        from app.services.citation_service import sync_bibliography_chapter
+
+        db.flush()
+        refresh_book_citation_rendering(db, book)
+        sync_bibliography_chapter(db, book)
     db.commit()
     db.refresh(book)
     return book

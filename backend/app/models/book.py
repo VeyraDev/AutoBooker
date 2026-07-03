@@ -30,12 +30,23 @@ class CitationStyle(str, enum.Enum):
     gb_t7714 = "gb_t7714"
 
 
+class BookWorkflowMode(str, enum.Enum):
+    from_scratch = "from_scratch"
+    optimize_existing = "optimize_existing"
+
+
 class Book(Base):
     __tablename__ = "books"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(500), nullable=False)
+    workflow_mode = Column(
+        Enum(BookWorkflowMode, name="book_workflow_mode"),
+        nullable=False,
+        default=BookWorkflowMode.from_scratch,
+        server_default=BookWorkflowMode.from_scratch.value,
+    )
     original_title = Column(String(500), nullable=True)
     allow_title_optimization = Column(Boolean, nullable=False, default=False, server_default="false")
     book_type = Column(Enum(BookType, name="book_type"), nullable=False)
@@ -43,6 +54,7 @@ class Book(Base):
     disciplines = Column(JSONB, nullable=True)
     target_audience = Column(String(500))
     citation_style = Column(Enum(CitationStyle, name="citation_style"))
+    structured_citations = Column(Boolean, nullable=False, default=False, server_default="false")
     target_words = Column(Integer, default=80000)
     style_type = Column(String(50), nullable=True)
     topic_tags = Column(JSONB, nullable=True)

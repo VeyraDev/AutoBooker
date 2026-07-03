@@ -13,6 +13,7 @@ from app.services.publication.publication_renderer_pdf import render_ast_to_pdf
 
 def _minimal_ast() -> BookAst:
     return BookAst(
+        title="测试书名",
         blocks=[
             AstBlock(role="book_title", text="测试书名"),
             AstBlock(role="body", text="第一段正文。"),
@@ -21,9 +22,14 @@ def _minimal_ast() -> BookAst:
     )
 
 
+def _document_and_footer_xml(doc: Document) -> str:
+    footer_xml = "\n".join(section.footer._element.xml for section in doc.sections)
+    return f"{doc._element.xml}\n{footer_xml}"
+
+
 def test_docx_export_has_page_number_field():
     doc = Document(BytesIO(render_ast_to_docx(_minimal_ast())))
-    xml = doc._element.xml
+    xml = _document_and_footer_xml(doc)
     assert "fldChar" in xml
     assert " PAGE " in xml
 
@@ -57,4 +63,4 @@ def test_add_docx_page_numbers():
     doc = Document()
     doc.add_paragraph("content")
     add_docx_page_numbers(doc)
-    assert " PAGE " in doc._element.xml
+    assert " PAGE " in _document_and_footer_xml(doc)

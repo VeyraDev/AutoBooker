@@ -18,6 +18,7 @@ from app.routers import library as library_router
 from app.routers import book_jobs as book_jobs_router
 from app.routers import notifications as notifications_router
 from app.routers import feedback as feedback_router
+from app.routers import optimization as optimization_router
 
 app = FastAPI(title="AutoBooker API", version="0.1.0")
 
@@ -45,6 +46,7 @@ app.include_router(library_router.router)
 app.include_router(book_jobs_router.router)
 app.include_router(notifications_router.router)
 app.include_router(feedback_router.router)
+app.include_router(optimization_router.router)
 
 settings.figures_path.mkdir(parents=True, exist_ok=True)
 app.mount(

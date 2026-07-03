@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import time
-from pathlib import Path
 from typing import Any
 
 import jsonschema
@@ -22,27 +20,6 @@ from app.prompts.style_prompts import get_outline_style_prompt
 from app.utils.json_llm import parse_llm_json
 
 logger = logging.getLogger(__name__)
-
-_DEBUG_LOG = Path(__file__).resolve().parents[4] / "debug-7c6f39.log"
-
-
-def _agent_ndjson(location: str, message: str, data: dict, hypothesis_id: str) -> None:
-    # #region agent log
-    try:
-        payload = {
-            "sessionId": "7c6f39",
-            "timestamp": int(time.time() * 1000),
-            "location": location,
-            "message": message,
-            "data": data,
-            "hypothesisId": hypothesis_id,
-        }
-        with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-
 
 class OutlineAgent:
     def __init__(self) -> None:
@@ -94,29 +71,11 @@ class OutlineAgent:
             try:
                 data = parse_llm_json(raw)
                 jsonschema.validate(instance=data, schema=OUTLINE_JSON_SCHEMA)
-                _agent_ndjson(
-                    "outline_agent.py:generate",
-                    "validate_ok",
-                    {"attempt": attempt + 1, "raw_len": len(raw), "chapters_n": len(data.get("chapters") or [])},
-                    "H3",
-                )
                 return data
             except (json.JSONDecodeError, ValidationError, ValueError) as e:
                 last_err = str(e)
-                _agent_ndjson(
-                    "outline_agent.py:generate",
-                    "parse_validate_fail",
-                    {"attempt": attempt + 1, "raw_len": len(raw), "err": str(e)[:400]},
-                    "H3",
-                )
                 logger.warning("outline parse/validate attempt %s failed: %s", attempt + 1, e)
 
-        _agent_ndjson(
-            "outline_agent.py:generate",
-            "all_retries_failed",
-            {"last_err": (last_err or "")[:500]},
-            "H3",
-        )
         raise ValueError(f"Outline generation failed after retries: {last_err}")
 
     def _call_outline_llm(

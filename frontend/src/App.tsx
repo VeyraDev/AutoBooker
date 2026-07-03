@@ -9,6 +9,7 @@ import HomePage from "@/pages/HomePage";
 import LandingPage from "@/pages/LandingPage";
 import LibraryPage from "@/pages/LibraryPage";
 import LoginPage from "@/pages/LoginPage";
+import OptimizationPage from "@/pages/OptimizationPage";
 import RegisterPage from "@/pages/RegisterPage";
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="books" element={<BooksPage />} />
           <Route path="library" element={<LibraryPage />} />
           <Route path="books/:bookId/auto-progress" element={<AutoBookProgressPage />} />
+          <Route path="books/:bookId/optimize" element={<OptimizationPage />} />
           <Route path="books/:bookId" element={<BookEditorPage />} />
         </Route>
       </Route>

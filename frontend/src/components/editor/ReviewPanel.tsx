@@ -186,7 +186,7 @@ export default function ReviewPanel({
       const { text: out, original_text: original } = await dedupeChapter(bookId, chapterIndex);
       const cleaned = cleanSuggestionText(out);
       if (!cleaned.trim()) {
-        toast.error("改写结果为空");
+        toast.error("未生成有效修改，请重试");
         return;
       }
       setDedupePreview({ original: original.trim(), suggestion: cleaned });
@@ -205,7 +205,7 @@ export default function ReviewPanel({
       setDedupePreview(null);
       toast.success("已应用改写，请检查后保存");
     } else {
-      toast.error("无法写入编辑器");
+      toast.error("未能应用修改，请重试");
     }
   }
 
@@ -218,13 +218,13 @@ export default function ReviewPanel({
   return (
     <div className="space-y-5 text-sm">
       <section>
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">降 AI 率</p>
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">表达自然度</p>
         <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-          优先处理审校标出的高风险片段；整章降 AI 仅作为最后兜底。生成后先预览，确认后再替换正文。
+          优先处理审校标出的表达生硬或模式化片段。修改会先生成预览，确认后再替换正文。
         </p>
         {aiOpenIssueCount > 0 ? (
           <p className="mt-2 rounded border border-teal-100 bg-teal-50 px-2 py-1 text-[11px] leading-relaxed text-teal-800">
-            审校已定位 {aiOpenIssueCount} 个 AI 风险片段，建议在下方逐条使用“局部降 AI”。
+            审校已定位 {aiOpenIssueCount} 个表达生硬或模式化的片段，建议逐条优化所选片段。
           </p>
         ) : null}
         <button
@@ -234,7 +234,7 @@ export default function ReviewPanel({
           onClick={() => void runDedupeChapter()}
         >
           {dedupeBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-          整章降 AI（兜底）
+          优化整章表达
         </button>
         {dedupePreview ? (
           <div className="mt-3 space-y-2 rounded-lg border border-teal-200 bg-teal-50/60 p-3">
@@ -353,7 +353,7 @@ export default function ReviewPanel({
           {visibleIssues.length === 0 ? (
             <p className="flex items-center gap-1 text-xs text-emerald-700">
               <ShieldCheck className="h-3.5 w-3.5" />
-              当前筛选下没有 issue
+              当前筛选下没有问题
             </p>
           ) : (
             <ul className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
@@ -429,13 +429,13 @@ function IssueCard({
       }
       const report = res.warning?.dedupe_report as { before_ai_risk?: number; after_ai_risk?: number } | undefined;
       if (aiSignature && report?.before_ai_risk != null && report?.after_ai_risk != null) {
-        toast.success(`已生成局部降 AI 预览：${Math.round(report.before_ai_risk * 100)}% → ${Math.round(report.after_ai_risk * 100)}%`);
+        toast.success("已生成所选片段的优化预览");
       } else {
         toast.success(res.preview_required ? "已生成预览，确认后应用" : "已定位并生成预览");
       }
       if (res.warning?.message) toast.error(String(res.warning.message));
     } catch {
-      toast.error(aiSignature ? "生成局部降 AI 预览失败" : "生成修改预览失败");
+      toast.error(aiSignature ? "未能生成所选片段的优化预览" : "生成修改预览失败");
     } finally {
       setBusy(null);
     }
@@ -490,7 +490,7 @@ function IssueCard({
         {canPreview ? (
           <button type="button" className="flex items-center gap-1 text-[10px] font-medium text-teal-800 hover:underline disabled:opacity-50" disabled={busy != null} onClick={() => void tryPreview()}>
             {busy === "preview" ? <Loader2 className="h-3 w-3 animate-spin" /> : aiSignature ? <Wand2 className="h-3 w-3" /> : <MapPin className="h-3 w-3" />}
-            {aiSignature ? "局部降 AI" : "定位并预览"}
+            {aiSignature ? "优化所选片段" : "定位并预览"}
           </button>
         ) : null}
         {status === "open" ? (

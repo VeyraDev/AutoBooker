@@ -12,7 +12,8 @@ from app.agents.literature_agent import format_paper_citation
 from app.services.citation_formats import format_in_text_by_source
 from app.models.book import Book, CitationStyle
 from app.models.chapter import Chapter
-from app.models.citation import Citation, CitationSource
+from app.models.citation import Citation, CitationEvidence, CitationSource
+from app.models.reference import ReferenceChunk
 
 _BIB_CHAPTER_TITLES = ("参考文献", "References", "参考书目", "引用文献")
 
@@ -41,6 +42,12 @@ def paper_to_dict(paper: dict[str, Any]) -> dict[str, Any]:
         "semantic_scholar_id": (paper.get("semantic_scholar_id") or "").strip() or None,
         "abstract_preview": (paper.get("abstract_preview") or "").strip() or None,
         "url": (paper.get("url") or "").strip() or None,
+        "document_type": (paper.get("document_type") or paper.get("type") or "").strip() or None,
+        "publisher": (paper.get("publisher") or "").strip() or None,
+        "volume": (paper.get("volume") or "").strip() or None,
+        "issue": (paper.get("issue") or "").strip() or None,
+        "pages": (paper.get("pages") or "").strip() or None,
+        "quotable_snippet": (paper.get("quotable_snippet") or "").strip() or None,
     }
 
 
@@ -63,7 +70,49 @@ def create_citation_from_paper(
     doi = data["doi"] or None
     ext_src = data.get("source")
     ext_id = data.get("external_id")
-    snippet = (paper.get("quotable_snippet") or "").strip() or None
+    snippet = data.get("quotable_snippet")
+
+    def ensure_evidence(citation: Citation) -> None:
+        quote = snippet or (raw_text or "").strip() or None
+        if not quote:
+            return
+        exists = db.query(CitationEvidence).filter(
+            CitationEvidence.citation_id == citation.id,
+            CitationEvidence.quote_text == quote,
+            CitationEvidence.active.is_(True),
+        ).first()
+        if not exists:
+            source_chunk = None
+            if source_file_id:
+                candidates = db.query(ReferenceChunk).filter(
+                    ReferenceChunk.file_id == source_file_id,
+                    ReferenceChunk.active.is_(True),
+                ).all()
+                needle = re.sub(r"\s+", "", quote)[:60]
+                source_chunk = next(
+                    (
+                        chunk
+                        for chunk in candidates
+                        if needle and needle in re.sub(r"\s+", "", chunk.content or "")
+                    ),
+                    None,
+                )
+            db.add(
+                CitationEvidence(
+                    citation_id=citation.id,
+                    source_file_id=source_file_id,
+                    chunk_id=source_chunk.id if source_chunk else None,
+                    page_number=source_chunk.page_number if source_chunk else None,
+                    paragraph_locator=(
+                        str(source_chunk.paragraph_index)
+                        if source_chunk and source_chunk.paragraph_index is not None
+                        else None
+                    ),
+                    heading_path=source_chunk.heading_path if source_chunk else None,
+                    quote_text=quote,
+                    directly_quotable=bool(snippet),
+                )
+            )
 
     if doi:
         existing = (
@@ -79,6 +128,7 @@ def create_citation_from_paper(
                 existing.abstract_preview = ab
             if data.get("url") and not getattr(existing, "url", None):
                 existing.url = data.get("url")
+            ensure_evidence(existing)
             db.commit()
             db.refresh(existing)
             return existing
@@ -100,6 +150,7 @@ def create_citation_from_paper(
                 existing.abstract_preview = ab
             if data.get("url") and not getattr(existing, "url", None):
                 existing.url = data.get("url")
+            ensure_evidence(existing)
             db.commit()
             db.refresh(existing)
             return existing
@@ -113,6 +164,16 @@ def create_citation_from_paper(
         authors=data["authors"],
         year=data["year"],
         journal=data["journal"] or None,
+        document_type=data.get("document_type"),
+        publisher=data.get("publisher"),
+        volume=data.get("volume"),
+        issue=data.get("issue"),
+        pages=data.get("pages"),
+        metadata_status=(
+            "complete"
+            if data["title"] and data["authors"] and (data["year"] or doi or data.get("url"))
+            else "needs_completion"
+        ),
         format_cache=cache,
         source=source,
         source_file_id=source_file_id,
@@ -125,6 +186,7 @@ def create_citation_from_paper(
     )
     db.add(row)
     db.flush()
+    ensure_evidence(row)
     _reindex_citations(db, book.id, style)
     db.commit()
     db.refresh(row)
@@ -158,7 +220,7 @@ def _reindex_citations(db: Session, book_id: uuid.UUID, style: str) -> None:
 
 def formatted_line(citation: Citation, style: str) -> str:
     cache = citation.format_cache or {}
-    if style in cache:
+    if style in cache and style != "gb_t7714":
         return cache[style]
     paper = {
         "title": citation.title,
@@ -169,6 +231,11 @@ def formatted_line(citation: Citation, style: str) -> str:
         "source": citation.external_source or "",
         "external_id": citation.external_id or "",
         "url": getattr(citation, "url", None),
+        "document_type": citation.document_type,
+        "publisher": citation.publisher,
+        "volume": citation.volume,
+        "issue": citation.issue,
+        "pages": citation.pages,
     }
     idx = citation.list_index if style == "gb_t7714" else None
     return format_paper_citation(paper, style, index=idx)
@@ -219,16 +286,41 @@ def find_bibliography_chapter(db: Session, book_id: uuid.UUID) -> Chapter | None
 
 def build_bibliography_text(db: Session, book: Book) -> str:
     style = book.citation_style.value if book.citation_style else "apa"
-    rows = list_citations_sorted(db, book.id)
+    from app.models.citation import CitationOccurrence
+
+    used_ids = [
+        row[0]
+        for row in db.query(CitationOccurrence.citation_id)
+        .filter(CitationOccurrence.book_id == book.id)
+        .distinct()
+        .all()
+    ]
+    if used_ids:
+        rows = db.query(Citation).filter(Citation.id.in_(used_ids)).all()
+        rows.sort(key=lambda c: c.list_index or 10**9)
+    elif getattr(book, "structured_citations", False):
+        rows = []
+    else:
+        # Legacy books have no structured occurrences; retain their current bibliography behavior.
+        rows = list_citations_sorted(db, book.id)
     if not rows:
         return ""
     lines = [formatted_line(r, style) for r in rows]
     return "\n\n".join(lines)
 
 
-def sync_bibliography_chapter(db: Session, book: Book) -> Chapter | None:
+def sync_bibliography_chapter(
+    db: Session,
+    book: Book,
+    *,
+    commit: bool = True,
+) -> Chapter | None:
     text = build_bibliography_text(db, book)
     if not text:
+        ch = find_bibliography_chapter(db, book.id)
+        if ch:
+            db.delete(ch)
+            db.commit() if commit else db.flush()
         return None
     ch = find_bibliography_chapter(db, book.id)
     if not ch:
@@ -286,8 +378,9 @@ def sync_bibliography_chapter(db: Session, book: Book) -> Chapter | None:
             },
         }
         ch.word_count = len(text)
-    db.commit()
-    db.refresh(ch)
+    db.commit() if commit else db.flush()
+    if commit:
+        db.refresh(ch)
     return ch
 
 

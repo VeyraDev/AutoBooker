@@ -75,7 +75,7 @@ export default function DashboardPage() {
 
         {isError && (
           <div className="card text-center py-10">
-            <p className="text-slate-500 mb-3">加载失败，请检查后端是否启动或网络连接</p>
+        <p className="text-slate-500 mb-3">加载失败，请检查网络后重试</p>
             <button type="button" onClick={() => refetch()} className="btn-secondary">
               重试
             </button>

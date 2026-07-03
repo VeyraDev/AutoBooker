@@ -9,10 +9,9 @@ import UserModelMenu from "@/components/layout/UserModelMenu";
 import { listNotifications, markNotificationRead } from "@/api/notifications";
 import { useAuthStore } from "@/stores/authStore";
 
-const navItems = [
+const navItems: Array<{ to: string; label: string; badge?: string }> = [
   { to: "/app/home", label: "主页" },
-  { to: "/app/books", label: "图书生成" },
-  { to: "/app/library", label: "系统书库", badge: "待开发" as const },
+  { to: "/app/books", label: "我的书稿" },
 ];
 
 export default function AppShellHeader() {
@@ -76,18 +75,20 @@ export default function AppShellHeader() {
       <header className={`app-header ${isScrolled ? "app-header-scrolled" : ""}`}>
         <div className="mx-auto flex w-full max-w-[92rem] items-center justify-between gap-5 px-6 py-4 sm:px-8">
           <div className="flex shrink-0 items-center gap-2">
-            <NavLink to="/app/home" className="flex items-start gap-2" aria-label="前往主页">
+            <NavLink to="/app/home" className="shrink-0" aria-label="前往主页">
               <span className="app-brand-mark shrink-0">A</span>
-              <div className="flex min-w-0 flex-col gap-0.5">
-                <span className="app-brand-title">AutoBook</span>
-                <span className="app-brand-feedback">
-                  意见反馈：
-                  <a href="mailto:13523099777@163.com" className="hover:text-brand">
-                    13523099777@163.com
-                  </a>
-                </span>
-              </div>
             </NavLink>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <NavLink to="/app/home" aria-label="前往主页">
+                <span className="app-brand-title">AutoBook</span>
+              </NavLink>
+              <span className="app-brand-feedback">
+                意见反馈：
+                <a href="mailto:13523099777@163.com" className="hover:text-brand">
+                  13523099777@163.com
+                </a>
+              </span>
+            </div>
           </div>
 
           <nav className="hidden min-w-0 flex-1 items-center justify-center gap-2 md:flex lg:gap-3" aria-label="主导航">

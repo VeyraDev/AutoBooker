@@ -59,6 +59,7 @@ export type ChapterEditorHandle = {
   getSerialized: () => { json: Record<string, unknown>; text: string } | null;
   insertReferenceQuote: (body: string, filename: string) => void;
   insertCitationMarks: (marks: string[]) => void;
+  insertCitationContent: (sentence: string, node: Record<string, unknown>) => void;
   insertLiteratureQuotes: (quotes: { quote_body: string; bibliography_line?: string }[]) => void;
   replaceQuoteWithSuggestion: (quote: string, suggestion: string) => boolean;
   getSelectionPlain: () => string;
@@ -668,6 +669,13 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
         if (!editor || !marks.length) return;
         const text = marks.join(" ") + " ";
         editor.chain().focus().insertContent(text).run();
+      },
+      insertCitationContent: (sentence, node) => {
+        if (!editor) return;
+        const content: Record<string, unknown>[] = [];
+        if (sentence.trim()) content.push({ type: "text", text: `${sentence.trim()} ` });
+        content.push(node);
+        editor.chain().focus().insertContent(content).run();
       },
       insertLiteratureQuotes: (quotes) => {
         if (!editor || !quotes.length) return;

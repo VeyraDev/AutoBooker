@@ -49,7 +49,7 @@ export default function DuplicateBookDialog({
 
         <p className="mt-2 text-xs text-slate-500">原书：{bookTitle || "未命名"}</p>
         <p className="mt-3 text-sm leading-relaxed text-slate-600">
-          将复制书稿设定与用户资料，原书不会改变。章节正文、叙事宪法、审校结果与图表不会复制。
+          将复制书稿设定与用户资料，原书不会改变。章节正文、写作规则、审校结果与图表不会复制。
         </p>
 
         <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-3 text-sm">

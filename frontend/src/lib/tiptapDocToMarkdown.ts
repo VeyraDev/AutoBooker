@@ -22,6 +22,8 @@ function inlineToMd(nodes: unknown[] | undefined): string {
     } else if (node.type === "mathInline") {
       const latex = String(((node as Record<string, unknown>).attrs as Record<string, unknown> | undefined)?.latex ?? "");
       out += `$${latex}$`;
+    } else if (node.type === "citation") {
+      out += String((node.attrs as Record<string, unknown> | undefined)?.renderedText ?? "（引用）");
     }
   }
   return out;

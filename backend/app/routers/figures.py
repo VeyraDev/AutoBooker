@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -48,12 +48,108 @@ from app.services.figure_service import (
     repair_figure_file,
     sync_figures_to_tiptap,
 )
+from app.models.figure_batch import FigureBatchRun
+from app.services.figure_batch_service import create_figure_batch, pause_figure_batch, run_figure_batch
+from app.services.citation_nodes import normalize_chapter_citations
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/books", tags=["figures"])
 
 ALLOWED_IMAGE = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+def _batch_out(run: FigureBatchRun) -> dict:
+    return {
+        "id": str(run.id),
+        "book_id": str(run.book_id),
+        "chapter_index": run.chapter_index,
+        "trigger": run.trigger,
+        "status": run.status,
+        "total": run.total,
+        "completed": run.completed,
+        "failed": run.failed,
+    }
+
+
+@router.post("/{book_id}/figures/batches", response_model=dict, status_code=status.HTTP_201_CREATED)
+def start_figure_batch(
+    book_id: UUID,
+    background_tasks: BackgroundTasks,
+    chapter_index: int | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book_service.get_book_or_404(book_id, user, db)
+    active_query = db.query(FigureBatchRun).filter(
+        FigureBatchRun.book_id == book_id,
+        FigureBatchRun.status.in_(("pending", "running")),
+    )
+    if chapter_index is None:
+        active_query = active_query.filter(FigureBatchRun.chapter_index.is_(None))
+    else:
+        active_query = active_query.filter(FigureBatchRun.chapter_index == chapter_index)
+    active = active_query.order_by(FigureBatchRun.created_at.desc()).first()
+    if active:
+        return _batch_out(active)
+    run = create_figure_batch(db, book_id, chapter_index=chapter_index, trigger="manual")
+    if run.total:
+        background_tasks.add_task(run_figure_batch, run.id)
+    return _batch_out(run)
+
+
+@router.get("/{book_id}/figures/batches/active", response_model=dict | None)
+def get_active_figure_batch(
+    book_id: UUID,
+    chapter_index: int | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book_service.get_book_or_404(book_id, user, db)
+    query = db.query(FigureBatchRun).filter(
+        FigureBatchRun.book_id == book_id,
+        FigureBatchRun.status.in_(("pending", "running")),
+    )
+    if chapter_index is None:
+        query = query.filter(FigureBatchRun.chapter_index.is_(None))
+    else:
+        query = query.filter(FigureBatchRun.chapter_index == chapter_index)
+    run = query.order_by(FigureBatchRun.created_at.desc()).first()
+    return _batch_out(run) if run else None
+
+
+@router.get("/{book_id}/figures/batches/{run_id}", response_model=dict)
+def get_figure_batch(
+    book_id: UUID,
+    run_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book_service.get_book_or_404(book_id, user, db)
+    run = db.query(FigureBatchRun).filter(
+        FigureBatchRun.id == run_id,
+        FigureBatchRun.book_id == book_id,
+    ).first()
+    if not run:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "图片任务不存在")
+    return _batch_out(run)
+
+
+@router.post("/{book_id}/figures/batches/{run_id}/pause", response_model=dict)
+def pause_book_figure_batch(
+    book_id: UUID,
+    run_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book_service.get_book_or_404(book_id, user, db)
+    run = db.query(FigureBatchRun).filter(
+        FigureBatchRun.id == run_id,
+        FigureBatchRun.book_id == book_id,
+    ).first()
+    if not run:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "图片任务不存在")
+    return _batch_out(pause_figure_batch(db, run))
 
 
 def _figure_out(fig) -> FigureOut:
@@ -236,7 +332,7 @@ def sync_chapter_figures(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    book_service.get_book_or_404(book_id, user, db)
+    book = book_service.get_book_or_404(book_id, user, db)
     ch = (
         db.query(Chapter)
         .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
@@ -252,7 +348,12 @@ def sync_chapter_figures(
     for attempt in range(3):
         try:
             doc = sync_figures_to_tiptap(book_id, chapter_index, text, db)
-            return FigureSyncOut(tiptap_json=doc)
+            meta = dict(meta)
+            meta["tiptap_json"] = doc
+            ch.content = meta
+            normalized, _ = normalize_chapter_citations(db, book, ch, doc=doc)
+            db.commit()
+            return FigureSyncOut(tiptap_json=normalized or doc)
         except OperationalError as e:
             last_err = e
             orig = getattr(e, "orig", None)
@@ -348,9 +449,10 @@ def normalize_chapter_figures_tables_route(
     meta["text"] = result["text"]
     meta["figure_table_overview"] = result["overview"]
     ch.content = meta
+    normalized, _ = normalize_chapter_citations(db, book, ch, doc=result["tiptap_json"])
     db.commit()
     return FigureTableNormalizeOut(
-        tiptap_json=result["tiptap_json"],
+        tiptap_json=normalized or result["tiptap_json"],
         text=result["text"],
         overview=overview,
     )
@@ -368,7 +470,7 @@ def patch_chapter_overview_captions(
     db: Session = Depends(get_db),
 ):
     """更新图表总览题注并写回章节正文。"""
-    book_service.get_book_or_404(book_id, user, db)
+    book = book_service.get_book_or_404(book_id, user, db)
     ch = (
         db.query(Chapter)
         .filter(Chapter.book_id == book_id, Chapter.index == chapter_index)
@@ -396,9 +498,10 @@ def patch_chapter_overview_captions(
     meta["text"] = text
     meta["figure_table_overview"] = overview
     ch.content = meta
+    normalized, _ = normalize_chapter_citations(db, book, ch, doc=doc)
     db.commit()
     return FigureTableNormalizeOut(
-        tiptap_json=doc,
+        tiptap_json=normalized or doc,
         text=text,
         overview=[FigureTableOverviewItem(**row) for row in overview],
     )

@@ -32,5 +32,5 @@ def run_start_writing_pipeline(
         "chapters_total": 0,
         "chapters_completed": 0,
         "current_chapter_index": None,
-        "message": "已进入写作阶段：首次生成章节前将自动生成叙事宪法并写入数据库。",
+        "message": "已进入写作阶段：首次生成章节前将自动准备全书写作规则。",
     }

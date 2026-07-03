@@ -2,11 +2,9 @@ import { Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { useNavigate } from "react-router-dom";
 
 import { setupRecommend, updateBook } from "@/api/books";
-import { startAutoGenerateForBook } from "@/api/bookJobs";
-import { deleteReference, listReferences, uploadReference } from "@/api/references";
+import { confirmReference, deleteReference, listReferences, uploadReference } from "@/api/references";
 import LiteraturePanel from "@/components/editor/LiteraturePanel";
 import { styleOptionsFor } from "@/lib/styleTypes";
 import type { Book, BookType, CitationStyle, StyleType } from "@/types/book";
@@ -27,7 +25,9 @@ const BOOK_TYPE_LABEL: Record<BookType, string> = {
 const PURPOSE_LABELS: Record<FilePurpose, string> = {
   outline: "大纲",
   writing_requirements: "写作要求",
-  reference: "参考资料",
+  reference_material: "参考资料",
+  bibliography: "参考文献",
+  source_manuscript: "原始书稿",
 };
 
 function defaultCitationFor(bookType: BookType): CitationStyle | "" {
@@ -61,7 +61,7 @@ export const topicKey = (bookId: string) => `autobooker_topic_brief_${bookId}`;
 export const audienceKey = (bookId: string) => `autobooker_target_audience_${bookId}`;
 
 export type SetupViewActions = {
-  saveMeta: () => Promise<void>;
+  saveMeta: () => Promise<Book>;
 };
 
 type Props = {
@@ -90,7 +90,6 @@ export default function SetupView({
   onRegisterActions,
 }: Props) {
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const [targetAudience, setTargetAudience] = useState("");
   const [disciplines, setDisciplines] = useState<string[]>([]);
   const [disciplineInput, setDisciplineInput] = useState("");
@@ -102,6 +101,7 @@ export default function SetupView({
   const [customTagInput, setCustomTagInput] = useState("");
   const [allowTitleOptimization, setAllowTitleOptimization] = useState(false);
   const [shareToLibrary, setShareToLibrary] = useState(false);
+  const [savingMeta, setSavingMeta] = useState(false);
 
   const [recommendedTags, setRecommendedTags] = useState<string[]>([]);
   const [recommendLoading, setRecommendLoading] = useState(false);
@@ -242,25 +242,34 @@ export default function SetupView({
     setTargetWords(String(Math.max(TARGET_WORDS_MIN, base + delta)));
   }
 
-  async function saveMeta() {
+  async function saveMeta(): Promise<Book> {
     const tw = parseInt(targetWords, 10);
     if (Number.isNaN(tw) || tw < 1000) {
       toast.error("目标字数需为 ≥1000 的数字");
       throw new Error("invalid_target_words");
     }
-    const next = await updateBook(book.id, {
-      disciplines: disciplines.length ? disciplines : null,
-      discipline: disciplines[0]?.trim() || null,
-      target_audience: targetAudience.trim() || null,
-      citation_style: citation || null,
-      target_words: tw,
-      style_type: styleType,
-      topic_tags: topicTags.length ? topicTags : null,
-      topic_brief: topicBrief.trim() || null,
-      allow_title_optimization: allowTitleOptimization,
-    });
-    onBookPatched(next);
-    toast.success("书稿设定已保存");
+    setSavingMeta(true);
+    try {
+      const next = await updateBook(book.id, {
+        disciplines: disciplines.length ? disciplines : null,
+        discipline: disciplines[0]?.trim() || null,
+        target_audience: targetAudience.trim() || null,
+        citation_style: citation || null,
+        target_words: tw,
+        style_type: styleType,
+        topic_tags: topicTags.length ? topicTags : null,
+        topic_brief: topicBrief.trim() || null,
+        allow_title_optimization: allowTitleOptimization,
+      });
+      onBookPatched(next);
+      toast.success("书稿设定已保存");
+      return next;
+    } catch (error) {
+      toast.error("书稿设定保存失败，请检查网络后重试");
+      throw error;
+    } finally {
+      setSavingMeta(false);
+    }
   }
 
   const saveMetaRef = useRef(saveMeta);
@@ -268,16 +277,15 @@ export default function SetupView({
   useEffect(() => {
     onRegisterActions?.({
       saveMeta: async () => {
-        await saveMetaRef.current();
+        return saveMetaRef.current();
       },
     });
   }, [book.id, onRegisterActions]);
 
   const [files, setFiles] = useState<ReferenceFile[]>([]);
-  const [uploadPurposes, setUploadPurposes] = useState<FilePurpose[]>(["reference"]);
+  const [uploadPurposes, setUploadPurposes] = useState<FilePurpose[]>(["reference_material"]);
   const [uploadOutlineUsage, setUploadOutlineUsage] = useState<"primary" | "reference">("reference");
   const [uploadNote, setUploadNote] = useState("");
-  const [autoJobStarting, setAutoJobStarting] = useState(false);
 
   async function refreshRefs() {
     const list = await listReferences(book.id);
@@ -323,7 +331,7 @@ export default function SetupView({
   }
 
   async function onDeleteFile(file: ReferenceFile) {
-    if (!window.confirm(`确定删除「${file.filename}」？相关解析结果将一并失效。`)) return;
+    if (!window.confirm(`确定删除「${file.filename}」？该文件提供的大纲、要求和资料也将停用。`)) return;
     try {
       await deleteReference(book.id, file.id);
       toast.success("已删除");
@@ -334,25 +342,28 @@ export default function SetupView({
     }
   }
 
+  async function onConfirmFile(file: ReferenceFile) {
+    try {
+      await confirmReference(book.id, file.id, {
+        purposes: file.file_purposes ?? undefined,
+        primary_outline: file.outline_usage === "primary",
+        conflict_resolutions: Object.fromEntries(
+          (file.conflicts ?? []).map((conflict) => [
+            conflict.id,
+            conflict.type === "multiple_primary_outlines" ? file.id : "accept_current",
+          ]),
+        ),
+      });
+      toast.success("文件内容已确认并生效");
+      await refreshRefs();
+    } catch {
+      toast.error("未能确认文件，请检查待处理问题");
+    }
+  }
+
   function applyPreset(text: string) {
     touchedRef.current.topicBrief = true;
     setTopicBrief((prev) => (prev.trim() ? `${prev.trim()}\n\n${text}` : text));
-  }
-
-  async function handleStartAutoGenerate() {
-    setAutoJobStarting(true);
-    try {
-      await saveMeta();
-      await startAutoGenerateForBook(book.id);
-      toast.success("已开始一键成书");
-      void qc.invalidateQueries({ queryKey: ["book", book.id] });
-      void qc.invalidateQueries({ queryKey: ["bookJob", book.id] });
-      navigate(`/app/books/${book.id}/auto-progress`);
-    } catch {
-      toast.error("启动一键成书失败");
-    } finally {
-      setAutoJobStarting(false);
-    }
   }
 
   const availableRecommended = recommendedTags.filter((t) => !topicTags.includes(t));
@@ -390,7 +401,7 @@ export default function SetupView({
 
         <section className="p-5">
           <h3 className="text-sm font-semibold text-ink">体例风格</h3>
-          <p className="mt-1 text-xs text-slate-500">二级体裁决定大纲与章节专用 prompt；三级标签写入全书上下文。</p>
+          <p className="mt-1 text-xs text-slate-500">体裁决定全书的结构与表达方式；话题标签用于限定主题范围。</p>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <label className="block text-sm md:col-span-2">
               <span className="text-slate-600">二级体裁</span>
@@ -441,16 +452,16 @@ export default function SetupView({
               {recommendStale ? (
                 <p className="mt-1 text-[11px] text-amber-700">书名或分类已变更，推荐可能已过期。</p>
               ) : null}
-              <p className="mt-1 text-[11px] text-slate-400">自动生成，不满意可手动调整。</p>
+              <p className="mt-1 text-[11px] text-slate-400">根据书名与分类推荐，可随时调整。</p>
 
-              <p className="mt-3 text-xs font-medium text-slate-500">系统推荐标签（根据书名与分类自动生成）</p>
+              <p className="mt-3 text-xs font-medium text-slate-500">推荐标签</p>
               <div className="mt-2 flex min-h-[2rem] flex-wrap gap-2">
                 {recommendLoading && availableRecommended.length === 0 ? (
                   <span className="inline-flex items-center gap-1 text-xs text-slate-400">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> 生成中…
                   </span>
                 ) : availableRecommended.length === 0 ? (
-                  <span className="text-xs text-slate-400">暂无新推荐，可手动添加</span>
+                  <span className="text-xs text-slate-400">暂无推荐，可直接添加标签</span>
                 ) : (
                   availableRecommended.map((tag) => (
                     <button
@@ -589,7 +600,7 @@ export default function SetupView({
 
         <section className="p-5">
           <h3 className="text-sm font-semibold text-ink">文献检索</h3>
-          <p className="mt-1 text-xs text-slate-500">检索词生成较慢，仅在您点击「生成检索词」时调用，不阻塞本页加载。</p>
+          <p className="mt-1 text-xs text-slate-500">需要时先生成检索词，再选择文献加入引用库。</p>
           <div className="mt-4">
             <LiteraturePanel
               bookId={book.id}
@@ -603,7 +614,7 @@ export default function SetupView({
 
         <section className="p-5">
           <h3 className="text-sm font-semibold text-ink">主题说明</h3>
-          <p className="mt-1 text-xs text-slate-500">将用于生成大纲；可先保存设定再生成。</p>
+          <p className="mt-1 text-xs text-slate-500">将作为大纲和写作的主要依据。</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {TOPIC_INSPIRATION_PRESETS.map((p) => (
               <button key={p.id} type="button" className="btn-secondary h-8 px-3 text-xs" onClick={() => applyPreset(p.text)}>
@@ -621,19 +632,14 @@ export default function SetupView({
             placeholder="希望全书覆盖哪些论点、案例类型、语气风格等…"
           />
           <div className="mt-4 flex flex-wrap gap-2">
-            <button type="button" className="btn-secondary" onClick={() => void saveMeta()}>
-              保存设定
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={savingMeta}
+              onClick={() => void saveMeta()}
+            >
+              {savingMeta ? "保存中…" : "保存设定"}
             </button>
-            {book.status === "setup" && (
-              <button
-                type="button"
-                className="btn-primary"
-                disabled={autoJobStarting}
-                onClick={() => void handleStartAutoGenerate()}
-              >
-                {autoJobStarting ? "启动中…" : "开始一键成书"}
-              </button>
-            )}
           </div>
         </section>
 
@@ -641,12 +647,12 @@ export default function SetupView({
           <h3 className="text-sm font-semibold text-ink">
             资料上传 <span className="font-normal text-slate-500">（{files.length} 个）</span>
           </h3>
-          <p className="mt-2 text-xs text-slate-500">选择文件用途（可多选），可选备注说明特殊要求。支持 PDF、DOCX、TXT。</p>
+          <p className="mt-2 text-xs text-slate-500">上传后系统会解析内容；同一文件可以用于多个环节。</p>
 
           <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/60 p-4">
-            <p className="text-xs font-medium text-slate-600">文件用途（多选）</p>
+            <p className="text-xs font-medium text-slate-600">这份文件用于</p>
             <div className="mt-2 flex flex-wrap gap-3 text-xs">
-              {(Object.keys(PURPOSE_LABELS) as FilePurpose[]).map((p) => (
+              {(Object.keys(PURPOSE_LABELS) as FilePurpose[]).filter((p) => p !== "source_manuscript").map((p) => (
                 <label key={p} className="flex items-center gap-1.5">
                   <input
                     type="checkbox"
@@ -671,7 +677,7 @@ export default function SetupView({
                     checked={uploadOutlineUsage === "primary"}
                     onChange={() => setUploadOutlineUsage("primary")}
                   />
-                  作为本书主大纲
+                  作为主大纲
                 </label>
                 <label className="mt-1 flex items-center gap-2">
                   <input
@@ -680,12 +686,12 @@ export default function SetupView({
                     checked={uploadOutlineUsage === "reference"}
                     onChange={() => setUploadOutlineUsage("reference")}
                   />
-                  仅作为生成参考
+                  仅供大纲生成参考
                 </label>
               </div>
             ) : null}
             <label className="mt-3 block text-xs">
-              <span className="text-slate-600">文件备注（可选）</span>
+              <span className="text-slate-600">补充说明（可选）</span>
               <textarea
                 className="input mt-1 min-h-[60px] text-xs"
                 value={uploadNote}
@@ -705,15 +711,15 @@ export default function SetupView({
             </label>
           </div>
 
-          <label className="mt-3 flex items-start gap-2 text-xs text-slate-600">
+          {uploadPurposes.includes("bibliography") ? <label className="mt-3 flex items-start gap-2 text-xs text-slate-600">
             <input
               type="checkbox"
               className="mt-0.5"
               checked={shareToLibrary}
               onChange={(e) => setShareToLibrary(e.target.checked)}
             />
-            <span>同意将该文献元数据及摘要加入 AutoBook 公共书库（默认不勾选）</span>
-          </label>
+            <span>允许将该文献的题录和摘要用于公共书库</span>
+          </label> : null}
 
           <ul className="mt-4 space-y-2 text-left text-sm">
             {files.length === 0 ? (
@@ -737,13 +743,15 @@ export default function SetupView({
                     {f.parse_status === "pending" || f.parse_status === "processing" ? (
                       <>
                         <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-500" aria-hidden />
-                        <span className="text-slate-600">解析中…</span>
+                        <span className="text-slate-600">正在解析…</span>
                       </>
                     ) : f.parse_status === "done" ? (
-                      <span className="text-emerald-600">✓ 已解析</span>
+                      <span className={f.lifecycle_status === "pending_confirmation" ? "text-amber-700" : "text-emerald-600"}>
+                        {f.lifecycle_status === "pending_confirmation" ? "待确认" : "✓ 已生效"}
+                      </span>
                     ) : f.parse_status === "failed" ? (
                       <span className="text-red-600" title={f.error_message ?? ""}>
-                        ✗ 解析失败
+                        ✗ 解析失败，请重新上传
                       </span>
                     ) : null}
                     <button
@@ -756,6 +764,29 @@ export default function SetupView({
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </span>
+                  {f.parse_artifacts ? (
+                    <div className="w-full rounded bg-slate-50 p-2 text-[11px] text-slate-500">
+                      大纲 {f.parse_artifacts.outline_candidate?.length ?? 0} 章 ·
+                      写作要求 {f.parse_artifacts.writing_rules?.length ?? 0} 条 ·
+                      术语 {f.parse_artifacts.terminology?.length ?? 0} 条 ·
+                      资料分块 {f.parse_artifacts.reference_chunk_count ?? f.chunk_count ?? 0} 个
+                      {f.conflicts?.length ? ` · 待确认 ${f.conflicts.length} 项` : ""}
+                    </div>
+                  ) : null}
+                  {f.lifecycle_status === "pending_confirmation" ? (
+                    <div className="w-full rounded border border-amber-100 bg-amber-50 p-2 text-[11px] text-amber-800">
+                      {(f.conflicts ?? []).map((conflict) => (
+                        <p key={conflict.id}>{conflict.message}</p>
+                      ))}
+                      <button
+                        type="button"
+                        className="mt-2 rounded bg-amber-700 px-2 py-1 text-white"
+                        onClick={() => void onConfirmFile(f)}
+                      >
+                        确认并生效
+                      </button>
+                    </div>
+                  ) : null}
                 </li>
               ))
             )}

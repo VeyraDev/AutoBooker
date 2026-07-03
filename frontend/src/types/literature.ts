@@ -12,6 +12,12 @@ export interface LiteraturePaper {
   semantic_scholar_id?: string | null;
   external_id?: string | null;
   abstract_preview?: string | null;
+  document_type?: string | null;
+  publisher?: string | null;
+  volume?: string | null;
+  issue?: string | null;
+  pages?: string | null;
+  quotable_snippet?: string | null;
 }
 
 export interface LiteratureSearchResult {
@@ -87,6 +93,14 @@ export interface CitationRecord {
   source_file_id?: string | null;
   raw_text?: string | null;
   quotable_snippet?: string | null;
+  abstract_preview?: string | null;
+  url?: string | null;
+  document_type?: string | null;
+  publisher?: string | null;
+  volume?: string | null;
+  issue?: string | null;
+  pages?: string | null;
+  metadata_status?: "complete" | "needs_completion";
   external_source?: string | null;
   list_index?: number | null;
   formatted?: string | null;

@@ -119,6 +119,28 @@ def _table() -> dict:
 
 
 class _Db:
+    class _Query:
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def first(self):
+            return None
+
+        def order_by(self, *_args, **_kwargs):
+            return self
+
+        def all(self):
+            return []
+
+    def query(self, *_args, **_kwargs):
+        return self._Query()
+
+    def add(self, _row):
+        return None
+
+    def flush(self):
+        return None
+
     def commit(self):
         return None
 

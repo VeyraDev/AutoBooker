@@ -47,6 +47,8 @@ def _inline_to_markdown(nodes: list[dict[str, Any]] | None) -> str:
         elif t == "mathInline":
             latex = str((node.get("attrs") or {}).get("latex") or "")
             parts.append(f"${latex}$")
+        elif t == "citation":
+            parts.append(str((node.get("attrs") or {}).get("renderedText") or "（引用）"))
     return "".join(parts)
 
 
@@ -282,6 +284,10 @@ def _add_inline_to_paragraph(paragraph, nodes: list[dict[str, Any]] | None, *, s
         t = node.get("type")
         if t == "mathInline":
             _docx_inline_math(paragraph, str((node.get("attrs") or {}).get("latex") or ""))
+            continue
+        if t == "citation":
+            run = paragraph.add_run(str((node.get("attrs") or {}).get("renderedText") or "（引用）"))
+            _style_run(run, size_pt=size_pt)
             continue
         if t == "text":
             run = paragraph.add_run(str(node.get("text") or ""))

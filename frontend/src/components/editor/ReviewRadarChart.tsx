@@ -103,9 +103,7 @@ export default function ReviewRadarChart({ dimensions, size = 210, activeKey, on
             >
               <span className="font-medium">{row.label || REVIEW_DIMENSION_LABEL[key as ReviewDimensionKey] || key}</span>
               <span className="ml-1">{scoreOf(row)}</span>
-              <span className="ml-1 text-slate-400">w{row.weight ?? 0}</span>
               {(row.issue_count ?? 0) > 0 ? <span className="ml-1 text-amber-700">{row.issue_count}项</span> : null}
-              {row.status && row.status !== "completed" ? <span className="ml-1 text-slate-400">{row.status}</span> : null}
             </button>
           );
         })}
@@ -121,7 +119,7 @@ function normalizeRows(input: Record<string, ReviewDimension> | ReviewDimension[
   return ORDER.map((key) => ({
     ...map[key],
     key,
-    label: map[key]?.label ?? REVIEW_DIMENSION_LABEL[key],
+    label: REVIEW_DIMENSION_LABEL[key],
     score: map[key]?.score ?? map[key]?.effective_score ?? map[key]?.raw_score ?? 0,
   }));
 }

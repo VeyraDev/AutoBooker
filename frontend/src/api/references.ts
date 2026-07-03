@@ -52,6 +52,22 @@ export async function deleteReference(bookId: string, fileId: string): Promise<v
   await client.delete(`/books/${bookId}/references/${fileId}`);
 }
 
+export async function confirmReference(
+  bookId: string,
+  fileId: string,
+  payload: {
+    purposes?: string[];
+    primary_outline?: boolean;
+    conflict_resolutions?: Record<string, string>;
+  },
+): Promise<ReferenceFile> {
+  const { data } = await client.patch<ReferenceFile>(
+    `/books/${bookId}/references/${fileId}/confirm`,
+    payload,
+  );
+  return data;
+}
+
 export async function searchReferences(
   bookId: string,
   payload: ReferenceSearchPayload,

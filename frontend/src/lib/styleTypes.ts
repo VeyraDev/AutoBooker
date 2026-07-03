@@ -43,6 +43,6 @@ export const TOPIC_TAG_PRESETS: string[] = [
   "AI哲学",
   "短视频",
   "Coze",
-  "RAG",
+  "知识库应用",
   "MCP",
 ];

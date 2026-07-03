@@ -9,10 +9,11 @@ import {
   generateFigure,
   listFigures,
   normalizeChapterFiguresTables,
-  rebuildChapterBodyFromFigures,
   patchChapterOverviewCaptions,
   resolveFigureUrl,
+  startFigureBatch,
   uploadFigure,
+  waitFigureBatch,
   type FigureListItem,
   type FigureOut,
   type FigureTableOverviewItem,
@@ -45,6 +46,15 @@ function figureError(e: unknown, fallback: string): string {
 
 function overviewKindLabel(kind: string): string {
   return kind === "table" ? "表格" : "插图";
+}
+
+function figureStatusLabel(status: FigureListItem["status"]): string {
+  return {
+    pending: "待生成",
+    generated: "已生成",
+    uploaded: "已替换",
+    approved: "已确认",
+  }[status];
 }
 
 function FigureThumbnail({ fig }: { fig: FigureListItem }) {
@@ -93,7 +103,6 @@ export default function FigureQuickPanel({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
   const [sortBusy, setSortBusy] = useState(false);
-  const [rebuildBusy, setRebuildBusy] = useState(false);
   const [captionBusy, setCaptionBusy] = useState(false);
   const [overview, setOverview] = useState<FigureTableOverviewItem[]>(initialOverview);
 
@@ -157,44 +166,24 @@ export default function FigureQuickPanel({
   async function handleBatchGenerate() {
     const pending = chapterFigures.filter((f) => f.status === "pending" || !f.file_url);
     if (pending.length === 0) {
-      toast("本章暂无待生成图表");
+      toast("本章暂无待生成图片");
       return;
     }
     setBatchBusy(true);
-    const loading = toast.loading(`一键生成 ${pending.length} 个图表…`);
-    let ok = 0;
-    for (const fig of pending) {
-      try {
-        const result = await generateFigure(bookId, fig.id);
-        applyFigureToEditor(result);
-        ok += 1;
-      } catch {
-        /* continue */
-      }
-    }
-    await invalidate();
-    setBatchBusy(false);
-    toast.success(`已完成 ${ok}/${pending.length} 个`, { id: loading });
-  }
-
-  async function handleRebuildBody() {
-    if (chapterIndex == null) return;
-    setRebuildBusy(true);
-    const loading = toast.loading("正在从图表恢复正文…");
+    const loading = toast.loading("正在生成本章图片…");
     try {
-      const res = await rebuildChapterBodyFromFigures(bookId, chapterIndex);
-      setOverview(res.overview);
-      onApplyChapterContent?.({
-        tiptap_json: res.tiptap_json,
-        text: res.text,
-        overview: res.overview,
-      });
+      const run = await startFigureBatch(bookId, chapterIndex ?? undefined);
+      const done = await waitFigureBatch(bookId, run);
       await invalidate();
-      toast.success(`已从 ${res.overview.length} 张图恢复正文`, { id: loading });
-    } catch (e) {
-      toast.error(figureError(e, "恢复失败"), { id: loading });
+      if (done.failed) {
+        toast(`本章图片已生成 ${done.completed}/${done.total} 张`, { id: loading, icon: "⚠️" });
+      } else {
+        toast.success(`本章图片已生成 ${done.completed}/${done.total} 张`, { id: loading });
+      }
+    } catch {
+      toast.error("生成本章图片失败，请重试", { id: loading });
     } finally {
-      setRebuildBusy(false);
+      setBatchBusy(false);
     }
   }
 
@@ -259,7 +248,7 @@ export default function FigureQuickPanel({
   return (
     <div className="space-y-4 text-sm">
       <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">图表速查</p>
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">图表速览</p>
         {chapterIndex == null ? (
           <p className="mt-2 text-xs text-slate-500">请选择章节后查看本章插图与图表。</p>
         ) : isLoading ? (
@@ -269,7 +258,7 @@ export default function FigureQuickPanel({
           </p>
         ) : chapterFigures.length === 0 ? (
           <p className="mt-2 text-xs text-slate-500">
-            本章暂无插图占位。生成正文后系统会自动提取 [DIAGRAM] 等标记；表格在正文中以 GFM 表格呈现。
+            本章暂无待生成图片。生成或编辑正文后，系统会识别其中的配图需求。
           </p>
         ) : (
           <ul className="mt-2 space-y-2">
@@ -284,7 +273,7 @@ export default function FigureQuickPanel({
                     <FigureThumbnail fig={fig} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium text-slate-800">{label}</p>
-                      <p className="mt-0.5 text-[10px] text-slate-400">{fig.status}</p>
+                      <p className="mt-0.5 text-[10px] text-slate-400">{figureStatusLabel(fig.status)}</p>
                       <div className="mt-2 flex flex-wrap gap-2">
                         <button
                           type="button"
@@ -305,7 +294,7 @@ export default function FigureQuickPanel({
                           }}
                         >
                           <Upload className="h-3.5 w-3.5" aria-hidden />
-                          上传覆盖
+                          替换图片
                         </button>
                       </div>
                     </div>
@@ -368,26 +357,11 @@ export default function FigureQuickPanel({
             <button
               type="button"
               className="btn-secondary mt-2 inline-flex w-full items-center justify-center gap-1.5 text-xs"
-              disabled={rebuildBusy || batchBusy || busyId != null || sortBusy}
-              onClick={() => void handleRebuildBody()}
-            >
-              {rebuildBusy ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-              )}
-              从图表恢复正文
-            </button>
-          ) : null}
-          {chapterFigures.length > 0 ? (
-            <button
-              type="button"
-              className="btn-secondary mt-2 inline-flex w-full items-center justify-center gap-1.5 text-xs"
-              disabled={batchBusy || busyId != null || sortBusy || rebuildBusy}
+              disabled={batchBusy || busyId != null || sortBusy}
               onClick={() => void handleBatchGenerate()}
             >
               {batchBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Zap className="h-3.5 w-3.5" aria-hidden />}
-              一键生成本章待生成图表
+              生成本章图片
             </button>
           ) : null}
           <button

@@ -27,6 +27,8 @@ export type EditorTopBarProps = {
   autoGenerating?: boolean;
   onPauseGeneration?: () => void;
   onStartBatchGeneration?: () => void;
+  figureBatchGenerating?: boolean;
+  onGenerateBookFigures?: () => void;
 };
 
 export default function EditorTopBar({
@@ -45,6 +47,8 @@ export default function EditorTopBar({
   autoGenerating,
   onPauseGeneration,
   onStartBatchGeneration,
+  figureBatchGenerating,
+  onGenerateBookFigures,
 }: EditorTopBarProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
@@ -247,13 +251,23 @@ export default function EditorTopBar({
         <button
           type="button"
           className="shrink-0 rounded-lg border border-slate-200/90 bg-slate-50/90 px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-100"
-          title={autoGenerating ? "中止当前已连续生成" : "依次生成仍为待生成的章节"}
+          title={autoGenerating ? "暂停当前章节生成" : "生成所有尚未完成的章节"}
           onClick={() => {
             if (autoGenerating) onPauseGeneration?.();
             else onStartBatchGeneration?.();
           }}
         >
-          {autoGenerating ? "暂停生成" : "全部生成"}
+          {autoGenerating ? "暂停章节生成" : "生成全部章节"}
+        </button>
+      ) : null}
+      {onGenerateBookFigures ? (
+        <button
+          type="button"
+          className="shrink-0 rounded-lg border border-slate-200/90 bg-slate-50/90 px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-100"
+          title={figureBatchGenerating ? "暂停尚未开始的图片生成" : "生成全书尚未完成的图片"}
+          onClick={onGenerateBookFigures}
+        >
+          {figureBatchGenerating ? "暂停生成图片" : "生成全书图片"}
         </button>
       ) : null}
     </div>

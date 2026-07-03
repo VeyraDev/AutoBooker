@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 
 import { listBooks } from "@/api/books";
+import { bookDestination } from "@/lib/bookRoutes";
 import { statusLabel } from "@/pages/bookView";
 
 export default function HomePage() {
@@ -54,12 +55,12 @@ export default function HomePage() {
         </div>
         <div className="mt-5 space-y-3">
           {recentBooks.length === 0 ? (
-            <p className="text-sm text-slate-500">暂无书稿，去图书生成创建第一本书。</p>
+            <p className="text-sm text-slate-500">暂无书稿，去创建你的第一本书。</p>
           ) : (
             recentBooks.map((book) => (
               <Link
                 key={book.id}
-                to={`/app/books/${book.id}`}
+                to={bookDestination(book)}
                 className="list-row-link"
                 aria-label={`打开书稿 ${book.title}`}
                 title={book.title}

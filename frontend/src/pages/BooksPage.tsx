@@ -94,9 +94,8 @@ export default function BooksPage() {
     <section>
       <div className="dashboard-section-title">
         <div>
-          <p className="eyebrow">Library</p>
-          <h1 className="page-title mt-2">图书生成</h1>
-          <p className="page-subtitle">管理书稿全生命周期并直接进入编辑工作台。新建书稿请使用顶部导航栏「新建书稿」。</p>
+          <h1 className="page-title mt-2">我的书稿</h1>
+          <p className="page-subtitle">查看和管理你的书稿。</p>
         </div>
       </div>
 
@@ -114,7 +113,7 @@ export default function BooksPage() {
           <p className="mt-1 text-2xl font-medium text-emerald-600">{completedBooks}</p>
         </div>
         <div className="metric-card metric-card-trend">
-          <p className="text-xs text-slate-500">今日码字（本地）</p>
+          <p className="text-xs text-slate-500">今日写作字数</p>
           <p className="mt-1 text-2xl font-medium text-violet-700">{todayWordsTotal.toLocaleString()}</p>
           <p className="mt-2 h-6 overflow-hidden opacity-90">
             <span className="sparkline" aria-hidden />
@@ -183,7 +182,7 @@ export default function BooksPage() {
 
       {isError && (
         <div className="state-panel">
-          <p className="mb-3 text-slate-500">加载失败，请检查后端是否启动或网络连接</p>
+          <p className="mb-3 text-slate-500">加载失败，请检查网络后重试</p>
           <button type="button" onClick={() => refetch()} className="btn-secondary">
             重试
           </button>
@@ -192,8 +191,8 @@ export default function BooksPage() {
 
       {!isLoading && !isError && data && filteredBooks.length === 0 && (
         <div className="state-panel">
-          <p className="mb-1 text-slate-500">当前筛选下没有书稿</p>
-          <p className="mb-5 text-sm text-slate-400">请调整筛选条件，或使用顶部导航栏新建书稿。</p>
+          <p className="mb-1 text-slate-500">没有符合条件的书稿</p>
+          <p className="mb-5 text-sm text-slate-400">调整筛选条件，或新建一本书稿。</p>
         </div>
       )}
 

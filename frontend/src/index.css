@@ -2464,6 +2464,27 @@ body.theme-dark {
 }
 
 /* ── 数学公式（LaTeX 存库，KaTeX 仅渲染） ── */
+.tiptap-content .citation-node {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0.1em;
+  padding: 0.05em 0.3em;
+  border: 1px solid rgba(124, 58, 237, 0.22);
+  border-radius: 0.35rem;
+  background: rgba(124, 58, 237, 0.08);
+  color: #6d28d9;
+  font-size: 0.9em;
+  font-weight: 600;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.tiptap-content .citation-node:hover,
+.tiptap-content .citation-node.ProseMirror-selectednode {
+  border-color: rgba(124, 58, 237, 0.45);
+  background: rgba(124, 58, 237, 0.14);
+}
+
 .tiptap-content .math-inline {
   display: inline-block;
   vertical-align: baseline;

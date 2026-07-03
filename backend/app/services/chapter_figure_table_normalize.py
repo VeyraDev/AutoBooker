@@ -299,8 +299,8 @@ def normalize_chapter_figures_tables(
                 used=used_figure_ids,
             )
             fig_id = str(attrs.get("figureId") or "")
-            db_raw = str(fig_row.raw_annotation if fig_row else "").strip()
-            db_caption = str(fig_row.caption if fig_row else "").strip()
+            db_raw = str((fig_row.raw_annotation if fig_row else "") or "").strip()
+            db_caption = str((fig_row.caption if fig_row else "") or "").strip()
             attr_caption = str(attrs.get("caption") or "").strip()
             raw_ann = str(attrs.get("rawAnnotation") or db_raw or "").strip()
 

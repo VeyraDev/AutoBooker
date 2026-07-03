@@ -179,6 +179,9 @@ def run_auto_book_job(job_id: UUID) -> None:
             "writing_rules": get_book_level_writing_rules(db, book.id),
         }
         outline = OutlineAgent().generate(cfg, snippets, model=outline_model)
+        from app.services.material_parse_service import merge_outline_with_primary
+
+        outline = merge_outline_with_primary(outline, cfg.get("primary_outline"))
         db.query(Chapter).filter(Chapter.book_id == book.id).delete()
         for ch in outline.get("chapters", []):
             meta = {
@@ -215,7 +218,7 @@ def run_auto_book_job(job_id: UUID) -> None:
         db.commit()
 
         _update_job(db, job, step=BookJobStep.narrative, pct=75)
-        patch_job_checkpoint(db, job, stage_message="正在生成叙事宪法")
+        patch_job_checkpoint(db, job, stage_message="正在准备写作规则")
         _ensure_narrative_constitution_thread(book.id, constitution_model)
         db.expire_all()
         book = db.get(Book, job.book_id)
@@ -228,14 +231,14 @@ def run_auto_book_job(job_id: UUID) -> None:
             job,
             narrative_ready=True,
             ready_for_editor=True,
-            stage_message="叙事宪法已就绪，即将进入写作页",
+            stage_message="写作规则已就绪，即将进入写作页",
         )
         _update_job(db, job, step=BookJobStep.done, pct=100, status=BookJobStatus.completed)
         _notify(
             db,
             user.id,
             "前置准备完成",
-            f"《{book.title}》大纲与叙事宪法已就绪，将进入自动写作。",
+            f"《{book.title}》大纲与写作规则已就绪，将进入自动写作。",
             {"book_id": str(book.id), "job_id": str(job.id)},
         )
     except Exception as e:

@@ -215,6 +215,10 @@ def _inline_to_html(nodes: list[dict[str, Any]] | None) -> str:
             parts.append(text)
         elif t == "hardBreak":
             parts.append("<br/>")
+        elif t == "citation":
+            parts.append(
+                f"<span class='citation'>{html.escape(str((node.get('attrs') or {}).get('renderedText') or '（引用）'))}</span>"
+            )
     return "".join(parts)
 
 

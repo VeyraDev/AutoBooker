@@ -14,10 +14,10 @@ _GROUNDING_CHAR_BUDGET = 7500
 
 
 def _citation_to_block(citation, style: str) -> str:
-    mark = in_text_mark(citation, style)
+    marker = f"[[CITE:{citation.id}|parenthetical]]"
     authors = "; ".join((citation.authors or [])[:3])
     parts = [
-        f"[{mark}] {citation.title}",
+        f"{marker} {citation.title}",
         f"作者: {authors or '未知'}",
         f"年份: {citation.year or 'n.d.'}",
     ]
@@ -104,8 +104,8 @@ def build_citation_policy_block(has_citations: bool, has_rag: bool) -> str:
         "禁止引用未在清单中出现的论文、书籍或研究（包括训练语料中的经典论文）。",
         "若需提及某观点但清单中无对应来源，使用「（待补充来源）」或改为不具名的原理性表述。",
         "禁止写「研究表明」「有数据显示」「据报道」而不给出清单内对应标注。",
-        "正文采用叙述性援引（如「维基百科《标题》指出：…」「据某某记载：…」），"
-        "不要在正文插入 APA/GB/T 括号式文内标记；完整书目信息仅出现在书末「参考文献」章节。",
+        "引用时必须原样使用清单中以 [[CITE:...]] 开头的内部标记；系统会把它转换为规范引用。",
+        "不要自己生成 APA 括号、GB/T 编号或最终参考文献编号，也不要改写标记中的 UUID。",
     ]
     if not has_citations and not has_rag:
         lines.append(

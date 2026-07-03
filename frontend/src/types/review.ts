@@ -148,7 +148,7 @@ export const REVIEW_DIMENSION_LABEL: Record<ReviewDimensionKey, string> = {
   citation_sources: "引用来源",
   factual_support: "事实支撑",
   figure_quality: "图表质量",
-  ai_signature: "AI味风险",
+  ai_signature: "表达自然度",
 };
 
 export const REVIEW_CATEGORY_LABEL: Record<ReviewCategory, string> = {
@@ -168,7 +168,7 @@ export const REVIEW_ACTION_LABEL: Record<ReviewActionType, string> = {
   replace: "替换",
   delete: "删除",
   insert: "新增",
-  revise: "AI 改写",
+  revise: "改写",
 };
 
 export const REVIEW_SEVERITY_LABEL: Record<ReviewSeverity, string> = {

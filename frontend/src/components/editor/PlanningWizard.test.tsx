@@ -1,0 +1,112 @@
+// @vitest-environment jsdom
+
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+
+import PlanningWizard from "@/components/editor/PlanningWizard";
+import type { Book } from "@/types/book";
+
+const setup = vi.hoisted(() => ({
+  saveMeta: vi.fn(),
+}));
+
+vi.mock("@/components/editor/SetupView", async () => {
+  const React = await import("react");
+  return {
+    default: ({
+      onRegisterActions,
+    }: {
+      onRegisterActions?: (actions: { saveMeta: typeof setup.saveMeta }) => void;
+    }) => {
+      React.useEffect(() => {
+        onRegisterActions?.({ saveMeta: setup.saveMeta });
+      }, [onRegisterActions]);
+      return <div>书稿设定表单</div>;
+    },
+  };
+});
+
+vi.mock("@/components/editor/OutlineReviewPanel", () => ({
+  default: () => <div>大纲预览</div>,
+}));
+
+const initialBook: Book = {
+  id: "book-1",
+  user_id: "user-1",
+  title: "测试书稿",
+  workflow_mode: "from_scratch",
+  book_type: "nonfiction",
+  discipline: null,
+  citation_style: "apa",
+  target_words: 80000,
+  status: "setup",
+  style_type: "popular_science",
+  topic_tags: null,
+  topic_brief: null,
+  target_audience: null,
+  created_at: "2026-07-03T00:00:00Z",
+  updated_at: null,
+};
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+describe("PlanningWizard outline generation", () => {
+  it("shows immediate feedback and generates with the saved settings", async () => {
+    let resolveSave!: (book: Book) => void;
+    setup.saveMeta.mockReturnValue(
+      new Promise<Book>((resolve) => {
+        resolveSave = resolve;
+      }),
+    );
+    const onGenerateOutline = vi.fn().mockResolvedValue(true);
+
+    render(
+      <MemoryRouter
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <PlanningWizard
+          book={initialBook}
+          bookId={initialBook.id}
+          outline={undefined}
+          outlineRequestPending={false}
+          outlineGeneratingUi={false}
+          onPatchBook={() => undefined}
+          onGenerateOutline={onGenerateOutline}
+          onStartWriting={vi.fn()}
+          onOutlinePatched={() => undefined}
+          onReorder={() => undefined}
+          onDeleteChapter={() => undefined}
+          dragDisabled
+        />
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "生成大纲" }));
+    expect(
+      (screen.getByRole("button", { name: "正在保存设定…" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    await act(async () => {
+      resolveSave({
+        ...initialBook,
+        target_audience: "保存后的目标读者",
+        topic_brief: "保存后的主题说明",
+      });
+    });
+
+    await waitFor(() => {
+      expect(onGenerateOutline).toHaveBeenCalledWith({
+        topic_override: null,
+        target_audience: "保存后的目标读者",
+        topic_brief: "保存后的主题说明",
+      });
+    });
+  });
+});

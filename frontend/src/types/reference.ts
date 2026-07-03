@@ -1,6 +1,11 @@
 export type ParseStatus = "pending" | "processing" | "done" | "failed";
 
-export type FilePurpose = "outline" | "writing_requirements" | "reference";
+export type FilePurpose =
+  | "outline"
+  | "writing_requirements"
+  | "reference_material"
+  | "bibliography"
+  | "source_manuscript";
 
 export type OutlineUsage = "primary" | "reference";
 
@@ -18,6 +23,22 @@ export interface ReferenceFile {
   parsed_at: string | null;
   created_at: string;
   chunk_count?: number;
+  lifecycle_status?: "processing" | "pending_confirmation" | "effective" | "disabled" | "failed";
+  parse_artifacts?: {
+    purposes?: string[];
+    outline_candidate?: Array<{ title: string; sections?: unknown[] }>;
+    writing_rules?: Array<string | Record<string, unknown>>;
+    terminology?: Array<{ term: string; definition?: string }>;
+    reference_chunk_count?: number;
+    bibliography_count?: number;
+    pending_issues?: unknown[];
+  } | null;
+  conflicts?: Array<{
+    id: string;
+    type: string;
+    message: string;
+    details?: Record<string, unknown> | null;
+  }> | null;
 }
 
 export interface ReferenceSearchHit {
