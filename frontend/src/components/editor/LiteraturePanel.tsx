@@ -13,8 +13,6 @@ import {
   deleteCitationOccurrence,
   listCitationOccurrences,
   listCitations,
-  replaceCitationOccurrence,
-  syncBibliographyChapter,
   weaveCitation,
   type CitationOccurrence,
 } from "@/api/citations";
@@ -28,6 +26,10 @@ import {
   type LiteratureTab,
 } from "@/types/literature";
 import { mergeLiteratureSelection } from "@/lib/literatureSelection";
+import {
+  CITATION_MANAGEMENT_VIEWS,
+  citationSequenceLabel,
+} from "@/lib/citationManagement";
 
 function isShortEnglishQuery(text: string): boolean {
   const q = text.trim();
@@ -56,6 +58,7 @@ type Props = {
   /** 预览后插入正文（叙述句，非 APA 标记） */
   onPreviewInsert?: (payload: { sentence: string; node: Record<string, unknown> }) => void;
   onJumpToCitation?: (chapterIndex: number, nodeId: string) => void;
+  onCitationDeleted?: (chapterIndex: number) => void;
 };
 
 export default function LiteraturePanel({
@@ -68,6 +71,7 @@ export default function LiteraturePanel({
   chapterContext = "",
   onPreviewInsert,
   onJumpToCitation,
+  onCitationDeleted,
 }: Props) {
   const isSetup = mode === "setup";
   const persistMode = mode;
@@ -95,7 +99,7 @@ export default function LiteraturePanel({
   const [savedLoading, setSavedLoading] = useState(false);
   const [savedSelected, setSavedSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<"search" | "library" | "book">("search");
+  const [view, setView] = useState<"search" | "manage">("search");
   const [occurrences, setOccurrences] = useState<CitationOccurrence[]>([]);
 
   const refreshSaved = useCallback(async () => {
@@ -117,6 +121,10 @@ export default function LiteraturePanel({
   useEffect(() => {
     void refreshSaved();
   }, [refreshSaved]);
+
+  useEffect(() => {
+    if (view === "manage") void refreshSaved();
+  }, [view, refreshSaved]);
 
   useEffect(() => {
     if (defaultQuery.trim()) setQuery(defaultQuery.trim());
@@ -253,7 +261,7 @@ export default function LiteraturePanel({
   const allPapers = [...tabbed.papers, ...tabbed.github, ...tabbed.wiki, ...tabbed.official_docs];
   const selectedPapers = allPapers.filter((p) => selected.has(literaturePaperKey(p)));
 
-  async function handleAddToLibrary(syncBibliography = false) {
+  async function handleAddToBook() {
     if (!selectedPapers.length) {
       toast.error("请先勾选文献");
       return;
@@ -261,14 +269,9 @@ export default function LiteraturePanel({
     setBusy(true);
     try {
       await addSelectedLiterature(bookId, selectedPapers);
-      if (syncBibliography) {
-        await syncBibliographyChapter(bookId);
-      }
       await refreshSaved();
       setSelected(new Set());
-      const baseMsg = syncBibliography
-        ? `已加入引用库并更新参考文献（${selectedPapers.length} 条）`
-        : `已加入引用库（${selectedPapers.length} 条）`;
+      const baseMsg = `已加入本书（${selectedPapers.length} 条）`;
       if (!citationStyle) {
         toast.success(`${baseMsg}。尚未选择引用格式，请先在书稿设定中选择。`, {
           duration: 5000,
@@ -277,7 +280,7 @@ export default function LiteraturePanel({
         toast.success(baseMsg);
       }
     } catch {
-      toast.error("加入引用库失败");
+      toast.error("加入本书失败");
     } finally {
       setBusy(false);
     }
@@ -309,7 +312,7 @@ export default function LiteraturePanel({
     if (!isSetup && !onPreviewInsert) return;
     const ids = [...savedSelected];
     if (!ids.length) {
-      toast.error("请在下方引用库勾选要插入的文献");
+      toast.error("请在引用管理中勾选要插入的文献");
       return;
     }
     setBusy(true);
@@ -324,7 +327,7 @@ export default function LiteraturePanel({
         return;
       }
       inserts.forEach((payload) => onPreviewInsert?.(payload));
-      toast.success("已插入规范引用");
+      toast.success("已插入引用");
       setSavedSelected(new Set());
     } catch {
       toast.error("生成引用句失败");
@@ -334,23 +337,18 @@ export default function LiteraturePanel({
   }
 
   const hintText = sourceHint
-    ? `当前检索来源：${sourceHint}。选择需要的文献并加入本书引用库。`
+    ? `当前检索来源：${sourceHint}。选择需要的文献并加入本书。`
     : isSetup
-      ? "选择需要的文献并加入本书引用库。"
-      : "将文献加入引用库后，可以在正文中插入规范引用。";
+      ? "选择需要的文献并加入本书。"
+      : "将文献加入本书后，可在引用管理中插入引用或生成引用句。";
   const citationHint = !citationStyle
     ? "尚未选择引用格式，请先在书稿设定中选择。"
     : null;
 
   return (
     <div className="space-y-4 text-sm">
-      {!isSetup ? (
-        <div className="grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1 text-[11px]">
-          {([
-            ["search", "搜索文献"],
-            ["library", "引用库"],
-            ["book", "本书引用"],
-          ] as const).map(([id, label]) => (
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1 text-[11px]">
+          {CITATION_MANAGEMENT_VIEWS.map(([id, label]) => (
             <button
               key={id}
               type="button"
@@ -360,9 +358,8 @@ export default function LiteraturePanel({
               {label}
             </button>
           ))}
-        </div>
-      ) : null}
-      {(isSetup || view === "search") ? (
+      </div>
+      {view === "search" ? (
       <>
       <div className="space-y-2">
         {!embedded ? (
@@ -500,20 +497,10 @@ export default function LiteraturePanel({
                 type="button"
                 className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
                 disabled={busy || !selected.size}
-                onClick={() => void handleAddToLibrary(false)}
-              >
-                加入引用库
-              </button>
-              {isSetup ? (
-                <button
-                  type="button"
-                  className="btn-secondary h-8 px-3 text-xs disabled:opacity-50"
-                  disabled={busy || !selected.size}
-                  onClick={() => void handleAddToLibrary(true)}
+                  onClick={() => void handleAddToBook()}
                 >
-                  加入引用库并更新参考文献
+                  加入本书
                 </button>
-              ) : null}
             </div>
           </div>
           <ul
@@ -563,7 +550,7 @@ export default function LiteraturePanel({
                       {(p.authors?.slice(0, 3).join(", ") || "未知作者") +
                         (p.year ? ` · ${p.year}年` : "") +
                         (typeof p.citations === "number" && p.citations > 0
-                          ? ` · 被引/星标 ${p.citations.toLocaleString()}`
+                          ? ` · ${p.source === "github" ? "GitHub 星标" : "外部被引"} ${p.citations.toLocaleString()}`
                           : "")}
                       {p.journal ? ` · ${p.journal}` : ""}
                     </p>
@@ -593,139 +580,134 @@ export default function LiteraturePanel({
       </>
       ) : null}
 
-      {(isSetup || view === "library") ? <div className="border-t border-slate-100 pt-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">本书引用库</p>
-          {!isSetup && saved.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className="text-[10px] text-violet-700 hover:underline"
-                onClick={selectAllSaved}
-              >
-                全选
-              </button>
-              <button
-                type="button"
-                className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
-                disabled={busy || !savedSelected.size}
-                onClick={() => void handleInsertFromLibrary()}
-              >
-                插入引用
-              </button>
-            </div>
-          ) : isSetup && saved.length > 0 ? (
-            <button
-              type="button"
-              className="text-[10px] text-violet-700 hover:underline"
-              onClick={selectAllSaved}
-            >
-              全选
-            </button>
-          ) : null}
-        </div>
-        {savedLoading ? (
-          <p className="mt-2 text-xs text-slate-500">加载中…</p>
-        ) : saved.length === 0 ? (
-          <p className="mt-2 text-xs text-slate-500">
-            暂无已保存引用。搜索文献后可加入此处。
-          </p>
-        ) : (
-          <ul className="mt-2 max-h-[200px] space-y-1.5 overflow-y-auto text-[11px] text-slate-600">
-            {saved.map((c) => {
-              const checked = savedSelected.has(c.id);
-              return (
-                <li
-                  key={c.id}
-                  className={`flex gap-2 rounded border px-2 py-1.5 ${
-                    checked ? "border-violet-300 bg-violet-50/80" : "border-slate-100 bg-white/70"
-                  }`}
-                >
-                  {!isSetup ? (
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 shrink-0"
-                      checked={checked}
-                      onChange={() => toggleSaved(c.id)}
-                      aria-label={`选择：${c.title}`}
-                    />
-                  ) : null}
-                  <div className="min-w-0 flex-1">
-                    <span className="font-medium text-slate-700">
-                      {c.list_index != null ? `[${c.list_index}] ` : ""}
-                      {c.title.slice(0, 80)}
-                    </span>
-                    <span className="block text-slate-400">
-                      {c.source === "uploaded_file" ? "来自上传文件" : "来自检索"}
-                      {c.quotable_snippet ? " · 已找到可引用内容" : ""}
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div> : null}
-      {!isSetup && view === "book" ? (
-        <div className="space-y-2">
-          {occurrences.length === 0 ? (
-            <p className="text-xs text-slate-500">正文中尚未使用引用。</p>
-          ) : occurrences.map((item) => (
-            <div key={item.id} className="rounded-lg border border-slate-100 bg-white p-2 text-xs">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-medium text-slate-700">{item.citation.title}</p>
-                  <p className="mt-1 text-[10px] text-slate-500">
-                    第 {item.chapter_index} 章 · {item.chapter_title} ·
-                    全书 {occurrences.filter((row) => row.citation_id === item.citation_id).length} 次 ·
-                    {item.complete ? "引用完整" : "待补充信息"}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="text-[10px] text-red-600 hover:underline"
-                  onClick={() => void deleteCitationOccurrence(bookId, item.id).then(refreshSaved)}
-                >
-                  删除该次引用
-                </button>
-              </div>
-              <p className="mt-2 line-clamp-3 text-[10px] text-slate-500">
-                {item.context_before}<mark>{item.locator || "引用"}</mark>{item.context_after}
+      {view === "manage" ? (
+        <div className="space-y-3 border-t border-slate-100 pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">引用管理</p>
+              <p className="mt-1 text-[10px] text-slate-500">
+                书末参考文献将根据当前引用自动生成。
               </p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
+            </div>
+            {!isSetup && saved.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   className="text-[10px] text-violet-700 hover:underline"
-                  onClick={() => onJumpToCitation?.(item.chapter_index, item.node_id)}
+                  onClick={selectAllSaved}
                 >
-                  跳转正文
+                  全选
                 </button>
-                <select
-                  className="h-7 min-w-0 flex-1 rounded border border-slate-200 bg-white px-1 text-[10px]"
-                  defaultValue=""
-                  aria-label="替换引用来源"
-                  onChange={(event) => {
-                    const citationId = event.target.value;
-                    event.target.value = "";
-                    if (!citationId) return;
-                    void replaceCitationOccurrence(bookId, item.id, citationId)
-                      .then(refreshSaved)
-                      .then(() => toast.success("已替换引用来源"))
-                      .catch(() => toast.error("未能替换引用来源，请重试"));
-                  }}
+                <button
+                  type="button"
+                  className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
+                  disabled={busy || !savedSelected.size}
+                  onClick={() => void handleInsertFromLibrary()}
+                  title="根据所选文献生成引用句并插入引用"
                 >
-                  <option value="">替换来源…</option>
-                  {saved
-                    .filter((citation) => citation.id !== item.citation_id)
-                    .map((citation) => (
-                      <option key={citation.id} value={citation.id}>
-                        {citation.title}
-                      </option>
-                    ))}
-                </select>
+                  插入引用
+                </button>
               </div>
+            ) : null}
+          </div>
+
+          {savedLoading ? (
+            <p className="text-xs text-slate-500">加载中…</p>
+          ) : saved.length === 0 ? (
+            <p className="text-xs text-slate-500">暂无本书文献，请先在文献搜索中加入。</p>
+          ) : (
+            <div className="max-h-[560px] space-y-2 overflow-y-auto pr-1">
+              {saved.map((citation) => {
+                const checked = savedSelected.has(citation.id);
+                const citationOccurrences = occurrences.filter(
+                  (item) => item.citation_id === citation.id,
+                );
+                const used = citationOccurrences.length > 0;
+                const complete =
+                  citation.metadata_status === "complete" &&
+                  citationOccurrences.every((item) => item.complete);
+                return (
+                  <article
+                    key={citation.id}
+                    className={`rounded-lg border p-2.5 text-xs ${
+                      checked
+                        ? "border-violet-300 bg-violet-50/70"
+                        : "border-slate-100 bg-white"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      {!isSetup ? (
+                        <input
+                          type="checkbox"
+                          className="mt-1 shrink-0"
+                          checked={checked}
+                          onChange={() => toggleSaved(citation.id)}
+                          aria-label={`选择：${citation.title}`}
+                        />
+                      ) : null}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium leading-snug text-slate-700">
+                          {citationSequenceLabel(citationStyle, citation.list_index)}
+                          {citation.title}
+                        </p>
+                        <p className="mt-1 text-[10px] text-slate-500">
+                          {citation.authors?.length
+                            ? citation.authors.slice(0, 3).join("、")
+                            : "未知作者"}
+                          {citation.year ? ` · ${citation.year}` : ""}
+                        </p>
+                        <p className={`mt-1 text-[10px] ${used ? "text-violet-700" : "text-slate-400"}`}>
+                          {used ? `正文引用 ${citationOccurrences.length} 处` : "尚未引用"}
+                          {" · "}
+                          {complete ? "文献信息完整" : "待补充文献信息"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {citationOccurrences.map((item) => (
+                      <div
+                        key={item.id}
+                        className="ml-0 mt-2 rounded-md border border-slate-100 bg-slate-50/70 p-2 sm:ml-5"
+                      >
+                        <p className="text-[10px] font-medium text-slate-600">
+                          第 {item.chapter_index} 章 · {item.chapter_title}
+                        </p>
+                        <p className="mt-1 line-clamp-3 text-[10px] leading-relaxed text-slate-500">
+                          “{item.context_before}
+                          {item.locator ? `〔${item.locator}〕` : "〔引用〕"}
+                          {item.context_after}”
+                        </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            className="text-[10px] text-violet-700 hover:underline"
+                            onClick={() => onJumpToCitation?.(item.chapter_index, item.node_id)}
+                          >
+                            跳转正文
+                          </button>
+                          <button
+                            type="button"
+                            className="text-[10px] text-red-600 hover:underline"
+                            onClick={() => {
+                              void deleteCitationOccurrence(bookId, item.id)
+                                .then(() => {
+                                  onCitationDeleted?.(item.chapter_index);
+                                  return refreshSaved();
+                                })
+                                .then(() => toast.success("已删除该次引用"))
+                                .catch(() => toast.error("未能删除该次引用，请重试"));
+                            }}
+                          >
+                            删除该次引用
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </article>
+                );
+              })}
             </div>
-          ))}
+          )}
         </div>
       ) : null}
     </div>

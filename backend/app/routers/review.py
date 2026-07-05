@@ -564,7 +564,15 @@ def _create_review_report(book, ch: Chapter, md: str, db: Session) -> ChapterRev
     canonical = canonical_markdown(md)
     digest = snapshot_hash(canonical)
     citations = list_citations_sorted(db, book.id)
-    cite_lines = [f"[{c.list_index or i}] {c.title} ({c.year or 'n.d.'})" for i, c in enumerate(citations, start=1)][:200]
+    citation_style = book.citation_style.value if book.citation_style else "apa"
+    cite_lines = [
+        (
+            f"[{c.list_index}] {c.title} ({c.year or 'n.d.'})"
+            if citation_style == "gb_t7714" and c.list_index is not None
+            else f"{c.title} ({c.year or 'n.d.'})"
+        )
+        for c in citations
+    ][:200]
     figures = db.query(Figure).filter(Figure.book_id == book.id, Figure.chapter_index == ch.index).all()
     figure_lines = [f"- {f.figure_type.value}: {(f.caption or f.raw_annotation or '')[:120]}" for f in figures]
 

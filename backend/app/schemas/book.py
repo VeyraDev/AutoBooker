@@ -87,6 +87,7 @@ class BookOut(BaseModel):
     topic_tags: list[str] | None
     topic_brief: str | None = None
     user_material: str | None = None
+    bibliography: dict | None = None
     constitution_stale: bool = False
     created_at: datetime
     updated_at: datetime | None

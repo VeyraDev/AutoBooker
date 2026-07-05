@@ -232,13 +232,21 @@ def get_chapter(
     ch = _get_chapter(book_id, chapter_index, db)
     from app.services.citation_nodes import (
         has_internal_citation_markers,
+        has_structured_citation_nodes,
         normalize_chapter_citations,
+        refresh_book_citation_rendering,
     )
+    from app.services.citation_service import sync_book_bibliography
 
     meta = ch.content if isinstance(ch.content, dict) else {}
     doc = meta.get("tiptap_json")
     if isinstance(doc, dict) and has_internal_citation_markers(doc):
         normalize_chapter_citations(db, book, ch)
+        db.commit()
+        db.refresh(ch)
+    elif isinstance(doc, dict) and has_structured_citation_nodes(doc):
+        refresh_book_citation_rendering(db, book)
+        sync_book_bibliography(db, book, commit=False)
         db.commit()
         db.refresh(ch)
     return ch
@@ -326,7 +334,7 @@ def delete_chapter(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    book_service.get_book_or_404(book_id, user, db)
+    book = book_service.get_book_or_404(book_id, user, db)
     ch = _get_chapter(book_id, chapter_index, db)
     db.delete(ch)
     rest = (
@@ -337,6 +345,12 @@ def delete_chapter(
     )
     for row in rest:
         row.index -= 1
+    db.flush()
+    from app.services.citation_nodes import refresh_book_citation_rendering
+    from app.services.citation_service import sync_book_bibliography
+
+    refresh_book_citation_rendering(db, book)
+    sync_book_bibliography(db, book, commit=False)
     db.commit()
     return None
 
@@ -348,7 +362,7 @@ def reorder_chapters(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    book_service.get_book_or_404(book_id, user, db)
+    book = book_service.get_book_or_404(book_id, user, db)
     all_ch = db.query(Chapter).filter(Chapter.book_id == book_id).all()
     if len(body.items) != len(all_ch):
         raise HTTPException(
@@ -373,6 +387,12 @@ def reorder_chapters(
     id_to_new = {it.chapter_id: it.new_index for it in body.items}
     for ch in all_ch:
         ch.index = id_to_new[ch.id]
+    db.flush()
+    from app.services.citation_nodes import refresh_book_citation_rendering
+    from app.services.citation_service import sync_book_bibliography
+
+    refresh_book_citation_rendering(db, book)
+    sync_book_bibliography(db, book, commit=False)
     db.commit()
     renumber_figures(book_id, db)
     rows = db.query(Chapter).filter(Chapter.book_id == book_id).order_by(Chapter.index.asc()).all()
@@ -420,7 +440,7 @@ async def generate_chapter_stream(
         if min_cites and cite_count < min_cites:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                f"本书引用库不足（当前 {cite_count} 条，建议至少 {min_cites} 条）。"
+                    f"本书文献不足（当前 {cite_count} 条，建议至少 {min_cites} 条）。"
                 "请先在文献搜索中勾选入库，或加 ?force_generate=true 继续生成。",
             )
 
@@ -554,7 +574,9 @@ async def generate_chapter_stream(
                         "extract figures failed book=%s ch=%s", book_id, chapter_index
                     )
                 try:
-                    from app.models.book_job import BookJob
+                    import threading
+
+                    from app.models.book_job import BookJob, BookJobStatus
                     from app.services.figure_batch_service import enqueue_auto_chapter_figures, run_figure_batch
 
                     auto_job = (
@@ -564,10 +586,16 @@ async def generate_chapter_stream(
                         .first()
                     )
                     checkpoint = auto_job.checkpoint_json if auto_job and isinstance(auto_job.checkpoint_json, dict) else {}
-                    if checkpoint.get("ready_for_editor"):
+                    auto_book = auto_job is not None and auto_job.status == BookJobStatus.completed
+                    if checkpoint.get("ready_for_editor") or auto_book:
                         batch_id = enqueue_auto_chapter_figures(book_id, chapter_index)
                         if batch_id:
-                            asyncio.create_task(asyncio.to_thread(run_figure_batch, batch_id))
+                            threading.Thread(
+                                target=run_figure_batch,
+                                args=(batch_id,),
+                                daemon=True,
+                                name=f"figure-batch-{batch_id}",
+                            ).start()
                 except Exception:
                     logger.exception("enqueue automatic chapter figures failed book=%s ch=%s", book_id, chapter_index)
             asyncio.create_task(

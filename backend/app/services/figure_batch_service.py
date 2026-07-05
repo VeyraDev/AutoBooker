@@ -181,6 +181,16 @@ def pause_figure_batch(db: Session, run: FigureBatchRun) -> FigureBatchRun:
     return run
 
 
+def _active_batch_query(db: Session, book_id: UUID, chapter_index: int | None = None):
+    query = db.query(FigureBatchRun).filter(
+        FigureBatchRun.book_id == book_id,
+        FigureBatchRun.status.in_(("pending", "running")),
+    )
+    if chapter_index is not None:
+        query = query.filter(FigureBatchRun.chapter_index == chapter_index)
+    return query.order_by(FigureBatchRun.created_at.desc())
+
+
 def enqueue_auto_chapter_figures(book_id: UUID, chapter_index: int) -> UUID | None:
     db = SessionLocal()
     try:

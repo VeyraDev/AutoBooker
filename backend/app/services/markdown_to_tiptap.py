@@ -113,7 +113,7 @@ def normalize_gfm_tables(markdown: str) -> str:
 def _table_cell_node(text: str, *, header: bool) -> dict[str, Any]:
     return {
         "type": "tableHeader" if header else "tableCell",
-        "content": [{"type": "paragraph", "content": _parse_inline_bold(text)}],
+        "content": [{"type": "paragraph", "content": _parse_paragraph_inline(text)}],
     }
 
 

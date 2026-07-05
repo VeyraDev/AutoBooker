@@ -44,6 +44,11 @@ export interface Book {
   topic_tags: string[] | null;
   topic_brief?: string | null;
   user_material?: string | null;
+  bibliography?: {
+    title?: string;
+    text?: string;
+    tiptap_json?: Record<string, unknown>;
+  } | null;
   constitution_stale?: boolean;
   created_at: string;
   updated_at: string | null;

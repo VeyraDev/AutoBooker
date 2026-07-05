@@ -33,6 +33,7 @@ type Props = {
   /** 文献叙述句预览插入（光标处） */
   onPreviewCitationInsert?: (payload: { sentence: string; node: Record<string, unknown> }) => void;
   onJumpToCitation?: (chapterIndex: number, nodeId: string) => void;
+  onCitationDeleted?: (chapterIndex: number) => void;
   chapterIndex?: number | null;
   editorSelectionText?: string;
   chapterContext?: string;
@@ -83,6 +84,7 @@ export default function RightPanel({
   onInsertReference: _onInsertReference,
   onPreviewCitationInsert,
   onJumpToCitation,
+  onCitationDeleted,
   chapterIndex = null,
   editorSelectionText = "",
   chapterContext = "",
@@ -200,6 +202,7 @@ export default function RightPanel({
             chapterContext={chapterContext}
             onPreviewInsert={onPreviewCitationInsert}
             onJumpToCitation={onJumpToCitation}
+            onCitationDeleted={onCitationDeleted}
           />
         </div>
 

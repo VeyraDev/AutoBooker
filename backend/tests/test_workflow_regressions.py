@@ -152,7 +152,7 @@ def test_book_update_coerces_json_enum_values_before_citation_sync(monkeypatch):
         lambda _db, value: refreshed.append(value.citation_style),
     )
     monkeypatch.setattr(
-        "app.services.citation_service.sync_bibliography_chapter",
+        "app.services.citation_service.sync_book_bibliography",
         lambda *_args, **_kwargs: None,
     )
 

@@ -30,17 +30,24 @@ def _safe_filename(title: str, max_len: int = 80) -> str:
 
 
 def _load_ordered_chapters(book_id: UUID, db: Session) -> list[Chapter]:
-    return (
+    from app.services.citation_service import is_bibliography_chapter
+
+    rows = (
         db.query(Chapter)
         .filter(Chapter.book_id == book_id)
         .order_by(Chapter.index.asc())
         .all()
     )
+    return [chapter for chapter in rows if not is_bibliography_chapter(chapter)]
 
 
 def build_markdown(book: Book, chapters: list[Chapter]) -> str:
+    from app.services.citation_service import is_bibliography_chapter
+
     lines: list[str] = [f"# {book.title}", ""]
     for ch in chapters:
+        if is_bibliography_chapter(ch):
+            continue
         lines.append(f"## {export_chapter_title(ch)}")
         lines.append("")
         if ch.summary:
@@ -52,6 +59,11 @@ def build_markdown(book: Book, chapters: list[Chapter]) -> str:
         else:
             lines.append("（本章暂无正文）")
         lines.append("")
+    raw_bibliography = getattr(book, "bibliography", None)
+    bibliography = raw_bibliography if isinstance(raw_bibliography, dict) else {}
+    bibliography_text = str(bibliography.get("text") or "").strip()
+    if bibliography_text:
+        lines.extend(["## 参考文献", "", bibliography_text, ""])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -131,6 +143,9 @@ def export_book_bytes(book_id: UUID, export_format: str, user, db: Session) -> t
     Returns (body_bytes, filename, media_type).
     """
     book = book_service.get_book_or_404(book_id, user, db)
+    from app.services.citation_service import sync_book_bibliography
+
+    sync_book_bibliography(db, book)
     chapters = _load_ordered_chapters(book_id, db)
     base = _safe_filename(book.title)
 

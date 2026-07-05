@@ -175,7 +175,11 @@ def build_book_ast(book: Book, chapters: list[Chapter], db: Session) -> BookAst:
     prepare_book_figures_for_export(figures)
     figure_by_id = {str(f.id): f for f in figures}
 
+    from app.services.citation_service import is_bibliography_chapter
+
     for ch in chapters:
+        if is_bibliography_chapter(ch):
+            continue
         ast.blocks.append(
             AstBlock(
                 role="chapter_title",
@@ -196,5 +200,31 @@ def build_book_ast(book: Book, chapters: list[Chapter], db: Session) -> BookAst:
             )
         elif meta.get("text"):
             ast.blocks.append(AstBlock(role="body", text=str(meta.get("text"))[:50000]))
+
+    raw_bibliography = getattr(book, "bibliography", None)
+    bibliography = raw_bibliography if isinstance(raw_bibliography, dict) else {}
+    bibliography_text = str(bibliography.get("text") or "").strip()
+    if bibliography_text:
+        ast.blocks.append(
+            AstBlock(
+                role="chapter_title",
+                text=str(bibliography.get("title") or "参考文献"),
+                attrs={"book_end_matter": True},
+            )
+        )
+        bibliography_doc = bibliography.get("tiptap_json")
+        if isinstance(bibliography_doc, dict):
+            _walk_tiptap(
+                bibliography_doc.get("content") or [],
+                ast.blocks,
+                book_id=str(book.id),
+                chapter_index=0,
+                table_counter=[0],
+                figure_by_id={},
+            )
+        else:
+            for line in bibliography_text.split("\n\n"):
+                if line.strip():
+                    ast.blocks.append(AstBlock(role="body", text=line.strip()))
 
     return ast

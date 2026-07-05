@@ -27,6 +27,7 @@ from app.llm.providers import resolve_book_outline_model
 from app.services import book_service
 from app.services.heading_formatter import normalize_outline_sections
 from app.services.material_parse_service import get_book_level_writing_rules, get_primary_outline_for_book
+from app.services.citation_service import is_bibliography_chapter
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ def get_outline(
     chapters = (
         db.query(Chapter).filter(Chapter.book_id == book.id).order_by(Chapter.index.asc()).all()
     )
-    outs = [_chapter_to_outline(c) for c in chapters]
+    outs = [_chapter_to_outline(c) for c in chapters if not is_bibliography_chapter(c)]
     total_est = sum(o.estimated_words for o in outs) or (book.target_words or 0)
     return OutlineBookResponse(
         title=book.title,
@@ -187,6 +188,12 @@ def generate_outline(
                 )
             )
 
+        db.flush()
+        from app.services.citation_nodes import refresh_book_citation_rendering
+        from app.services.citation_service import sync_book_bibliography
+
+        refresh_book_citation_rendering(db, book)
+        sync_book_bibliography(db, book, commit=False)
         if book.allow_title_optimization:
             new_title = (outline.get("title") or "").strip()
             if new_title:
@@ -207,7 +214,7 @@ def generate_outline(
         chapters = (
             db.query(Chapter).filter(Chapter.book_id == book.id).order_by(Chapter.index.asc()).all()
         )
-        outs = [_chapter_to_outline(c) for c in chapters]
+        outs = [_chapter_to_outline(c) for c in chapters if not is_bibliography_chapter(c)]
         total_est = int(outline.get("estimated_words") or sum(o.estimated_words for o in outs))
         return OutlineBookResponse(
             title=book.title,
@@ -266,7 +273,7 @@ def update_outline(
     chapters = (
         db.query(Chapter).filter(Chapter.book_id == book.id).order_by(Chapter.index.asc()).all()
     )
-    outs = [_chapter_to_outline(c) for c in chapters]
+    outs = [_chapter_to_outline(c) for c in chapters if not is_bibliography_chapter(c)]
     total_est = sum(o.estimated_words for o in outs) or (book.target_words or 0)
     return OutlineBookResponse(
         title=book.title,

@@ -76,10 +76,9 @@ class CitationOut(BaseModel):
 
 
 class CitationInsertIn(BaseModel):
-    """插入选中文献：写入 citations 表并返回正文标记与参考文献行。"""
+    """为所选本书文献生成可插入正文的引用数据。"""
 
     citation_ids: list[UUID] = Field(min_length=1, max_length=30)
-    sync_bibliography: bool = True
 
 
 class CitationInsertOut(BaseModel):
@@ -138,14 +137,3 @@ class CitationEvidenceOut(BaseModel):
     heading_path: list[str] | None
     quote_text: str
     directly_quotable: bool
-
-
-class CitationReplaceIn(BaseModel):
-    citation_id: UUID
-    evidence_id: UUID | None = None
-
-
-class CitationApplyBibliographyOut(BaseModel):
-    chapter_index: int | None
-    bibliography_text: str
-    message: str

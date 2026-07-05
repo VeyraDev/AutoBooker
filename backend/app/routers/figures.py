@@ -49,8 +49,17 @@ from app.services.figure_service import (
     sync_figures_to_tiptap,
 )
 from app.models.figure_batch import FigureBatchRun
-from app.services.figure_batch_service import create_figure_batch, pause_figure_batch, run_figure_batch
-from app.services.citation_nodes import normalize_chapter_citations
+from app.services.figure_batch_service import (
+    _active_batch_query,
+    create_figure_batch,
+    pause_figure_batch,
+    run_figure_batch,
+)
+from app.services.citation_nodes import (
+    has_structured_citation_nodes,
+    normalize_chapter_citations,
+    tiptap_with_internal_citation_markers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +90,7 @@ def start_figure_batch(
     db: Session = Depends(get_db),
 ):
     book_service.get_book_or_404(book_id, user, db)
-    active_query = db.query(FigureBatchRun).filter(
-        FigureBatchRun.book_id == book_id,
-        FigureBatchRun.status.in_(("pending", "running")),
-    )
-    if chapter_index is None:
-        active_query = active_query.filter(FigureBatchRun.chapter_index.is_(None))
-    else:
-        active_query = active_query.filter(FigureBatchRun.chapter_index == chapter_index)
-    active = active_query.order_by(FigureBatchRun.created_at.desc()).first()
+    active = _active_batch_query(db, book_id, chapter_index).first()
     if active:
         return _batch_out(active)
     run = create_figure_batch(db, book_id, chapter_index=chapter_index, trigger="manual")
@@ -106,15 +107,7 @@ def get_active_figure_batch(
     db: Session = Depends(get_db),
 ):
     book_service.get_book_or_404(book_id, user, db)
-    query = db.query(FigureBatchRun).filter(
-        FigureBatchRun.book_id == book_id,
-        FigureBatchRun.status.in_(("pending", "running")),
-    )
-    if chapter_index is None:
-        query = query.filter(FigureBatchRun.chapter_index.is_(None))
-    else:
-        query = query.filter(FigureBatchRun.chapter_index == chapter_index)
-    run = query.order_by(FigureBatchRun.created_at.desc()).first()
+    run = _active_batch_query(db, book_id, chapter_index).first()
     return _batch_out(run) if run else None
 
 
@@ -342,6 +335,11 @@ def sync_chapter_figures(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chapter not found")
     meta = ch.content if isinstance(ch.content, dict) else {}
     text = str(meta.get("text") or "")
+    existing_doc = meta.get("tiptap_json")
+    if isinstance(existing_doc, dict) and has_structured_citation_nodes(existing_doc):
+        rich_text = tiptap_with_internal_citation_markers(existing_doc)
+        if rich_text.strip():
+            text = rich_text
     if not text.strip():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "章节无 text 内容可同步")
     last_err: Exception | None = None

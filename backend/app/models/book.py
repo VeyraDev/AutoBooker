@@ -67,6 +67,7 @@ class Book(Base):
     constitution_stale = Column(Boolean, nullable=False, default=False, server_default="false")
     material_conflicts = Column(JSONB, nullable=True)
     preface = Column(JSONB, nullable=True)
+    bibliography = Column(JSONB, nullable=True)
     status = Column(Enum(BookStatus, name="book_status"), default=BookStatus.setup, nullable=False)
     last_literature_query = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

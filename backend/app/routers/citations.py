@@ -1,7 +1,8 @@
-"""全书引用库：列表、批量添加、插入正文标记、同步参考文献章节。"""
+"""全书引用管理：本书文献、正文位置与自动书末参考文献。"""
 
 from __future__ import annotations
 
+import copy
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,7 +16,6 @@ from app.models.citation import Citation, CitationEvidence, CitationOccurrence, 
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.citation import (
-    CitationApplyBibliographyOut,
     CitationBatchIn,
     CitationCreateIn,
     CitationInsertIn,
@@ -28,17 +28,15 @@ from app.schemas.citation import (
     CitationNodeIn,
     CitationOccurrenceOut,
     CitationEvidenceOut,
-    CitationReplaceIn,
 )
 from app.services import book_service
 from app.services.citation_service import (
-    build_bibliography_text,
     create_citation_from_paper,
     formatted_line,
     in_text_mark,
-    list_citations_sorted,
+    list_citations_for_management,
     paper_to_dict,
-    sync_bibliography_chapter,
+    sync_book_bibliography,
 )
 from app.services.citation_weave import weave_citation_sentence
 from app.services.citation_nodes import (
@@ -65,7 +63,10 @@ def list_book_citations(
     db: Session = Depends(get_db),
 ):
     book = book_service.get_book_or_404(book_id, user, db)
-    rows = list_citations_sorted(db, book.id)
+    refresh_book_citation_rendering(db, book)
+    sync_book_bibliography(db, book, commit=False)
+    db.commit()
+    rows = list_citations_for_management(db, book)
     return CitationListOut(items=[_to_out(r, book) for r in rows])
 
 
@@ -120,11 +121,10 @@ def insert_citations(
     )
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "未找到所选文献")
-    rows = sorted(rows, key=lambda c: c.list_index or 9999)
+    order = {citation_id: index for index, citation_id in enumerate(body.citation_ids)}
+    rows = sorted(rows, key=lambda citation: order.get(citation.id, 10**9))
     marks = [in_text_mark(r, style) for r in rows]
     bib_lines = [formatted_line(r, style) for r in rows]
-    if body.sync_bibliography:
-        sync_bibliography_chapter(db, book)
     return CitationInsertOut(
         in_text_marks=marks,
         bibliography_lines=bib_lines,
@@ -258,7 +258,7 @@ def delete_occurrence(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Occurrence not found")
     chapter = db.get(Chapter, occurrence.chapter_id)
     if chapter and isinstance(chapter.content, dict):
-        meta = dict(chapter.content)
+        meta = copy.deepcopy(chapter.content)
         doc = meta.get("tiptap_json")
         if isinstance(doc, dict):
             def remove(nodes):
@@ -274,91 +274,15 @@ def delete_occurrence(
                 return out
             doc["content"] = remove(doc.get("content"))
             meta["tiptap_json"] = doc
+            from app.services.tiptap_convert import tiptap_json_to_markdown
+
+            meta["text"] = tiptap_json_to_markdown(doc).strip()
             chapter.content = meta
     db.delete(occurrence)
     db.flush()
     refresh_book_citation_rendering(db, book)
-    sync_bibliography_chapter(db, book)
+    sync_book_bibliography(db, book, commit=False)
     db.commit()
-
-
-@router.post("/{book_id}/citation-occurrences/{occurrence_id}/replace", response_model=dict)
-def replace_occurrence(
-    book_id: UUID,
-    occurrence_id: UUID,
-    body: CitationReplaceIn,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    book = book_service.get_book_or_404(book_id, user, db)
-    occurrence = db.query(CitationOccurrence).filter(
-        CitationOccurrence.id == occurrence_id,
-        CitationOccurrence.book_id == book.id,
-    ).first()
-    citation = db.query(Citation).filter(Citation.id == body.citation_id, Citation.book_id == book.id).first()
-    if not occurrence or not citation:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Citation occurrence not found")
-    evidence = None
-    if body.evidence_id:
-        evidence = db.query(CitationEvidence).filter(
-            CitationEvidence.id == body.evidence_id,
-            CitationEvidence.citation_id == citation.id,
-            CitationEvidence.active.is_(True),
-        ).first()
-        if not evidence:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Evidence does not belong to citation")
-    occurrence.citation_id = citation.id
-    occurrence.evidence_id = evidence.id if evidence else None
-    occurrence.complete = bool(citation.title and (citation.year or citation.doi or citation.url))
-    chapter = db.get(Chapter, occurrence.chapter_id)
-    if chapter and isinstance(chapter.content, dict):
-        meta = dict(chapter.content)
-        doc = meta.get("tiptap_json")
-
-        def replace(nodes):
-            for node in nodes or []:
-                if not isinstance(node, dict):
-                    continue
-                attrs = node.get("attrs") or {}
-                if node.get("type") == "citation" and str(attrs.get("nodeId")) == str(occurrence.node_id):
-                    node["attrs"] = {
-                        **attrs,
-                        "citationId": str(citation.id),
-                        "evidenceId": str(evidence.id) if evidence else "",
-                    }
-                replace(node.get("content"))
-
-        if isinstance(doc, dict):
-            replace(doc.get("content"))
-            meta["tiptap_json"] = doc
-            chapter.content = meta
-    db.flush()
-    refresh_book_citation_rendering(db, book)
-    sync_bibliography_chapter(db, book)
-    db.commit()
-    return {"id": str(occurrence.id), "citation_id": str(citation.id)}
-
-
-@router.post("/{book_id}/citations/sync-bibliography", response_model=CitationApplyBibliographyOut)
-def apply_bibliography(
-    book_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    book = book_service.get_book_or_404(book_id, user, db)
-    text = build_bibliography_text(db, book)
-    if not text:
-        return CitationApplyBibliographyOut(
-            chapter_index=None,
-            bibliography_text="",
-            message="暂无引用条目",
-        )
-    ch = sync_bibliography_chapter(db, book)
-    return CitationApplyBibliographyOut(
-        chapter_index=ch.index if ch else None,
-        bibliography_text=text,
-        message="已同步书末参考文献章节",
-    )
 
 
 @router.delete("/{book_id}/citations/{citation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -379,9 +303,10 @@ def delete_citation(
     if db.query(CitationOccurrence).filter(CitationOccurrence.citation_id == row.id).first():
         raise HTTPException(status.HTTP_409_CONFLICT, "请先删除正文中的引用位置")
     db.delete(row)
-    db.commit()
+    db.flush()
     style = book.citation_style.value if book.citation_style else "apa"
     from app.services.citation_service import _reindex_citations
 
     _reindex_citations(db, book.id, style)
+    sync_book_bibliography(db, book, commit=False)
     db.commit()

@@ -60,18 +60,26 @@ def format_in_text_by_source(
 ) -> str:
     src = (paper.get("source") or "").lower()
     year = paper.get("year") or datetime.now().year
-    if style == "gb_t7714" and list_index:
-        return f"[{list_index}]"
+    if style == "gb_t7714":
+        return f"[{list_index}]" if list_index is not None else "[待编号]"
+
+    def author_mark(author: str, title_hint: str = "") -> str:
+        if style == "mla":
+            return f"({author or title_hint})"
+        if style == "chicago":
+            return f"({author or title_hint} {year})"
+        return f"({author or title_hint}, {year})"
+
     if src == "github":
         ext = (paper.get("external_id") or "").strip()
         repo = ext.split("/")[-1] if "/" in ext else (paper.get("title") or "repo")
         owner = ext.split("/")[0] if "/" in ext else ((paper.get("authors") or ["GitHub"])[0])
-        return f"({owner}, {repo}, {year})"
+        return author_mark(owner, repo)
     if src == "wikipedia":
-        return f"(Wikipedia, {paper.get('title') or '词条'}, {year})"
+        return author_mark("Wikipedia", paper.get("title") or "词条")
     if src == "official_doc":
         vendor = (paper.get("authors") or ["Doc"])[0]
-        return f"({vendor}, {paper.get('title') or '文档'}, {year})"
+        return author_mark(vendor, paper.get("title") or "文档")
     authors = paper.get("authors") or []
     first = authors[0].split()[-1] if authors else "Anonymous"
-    return f"({first}, {year})"
+    return author_mark(first, paper.get("title") or "")

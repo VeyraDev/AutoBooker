@@ -1,4 +1,4 @@
-"""引用库 CRUD、排序与书末参考文献章节同步。"""
+"""本书文献、引用排序与独立书末参考文献同步。"""
 
 from __future__ import annotations
 
@@ -12,10 +12,11 @@ from app.agents.literature_agent import format_paper_citation
 from app.services.citation_formats import format_in_text_by_source
 from app.models.book import Book, CitationStyle
 from app.models.chapter import Chapter
-from app.models.citation import Citation, CitationEvidence, CitationSource
+from app.models.citation import Citation, CitationEvidence, CitationOccurrence, CitationSource
 from app.models.reference import ReferenceChunk
 
 _BIB_CHAPTER_TITLES = ("参考文献", "References", "参考书目", "引用文献")
+SEQUENTIAL_CITATION_STYLES = frozenset({"gb_t7714"})
 
 _DOI_RE = re.compile(r"\b(10\.\d{4,}/[^\s\])>,;]+)", re.IGNORECASE)
 
@@ -27,6 +28,58 @@ def _author_sort_key(authors: list[str]) -> str:
     if not name:
         return "zzz"
     return name.casefold()
+
+
+def is_sequential_citation_style(style: str | None) -> bool:
+    return str(style or "").lower() in SEQUENTIAL_CITATION_STYLES
+
+
+def bibliography_sort_key(citation: Citation, style: str) -> tuple:
+    authors = citation.authors or []
+    author = _author_sort_key(authors)
+    title = (citation.title or "").casefold()
+    year = citation.year if citation.year is not None else 10**9
+    if style == "mla":
+        return author, title, year
+    return author, year, title
+
+
+def apply_reference_order(
+    citations: list[Citation],
+    first_occurrence_ids: list[uuid.UUID],
+    style: str,
+) -> tuple[list[Citation], list[Citation]]:
+    """Assign formal numbers only for used sequential-style references."""
+    by_id = {row.id: row for row in citations}
+    unique_used_ids: list[uuid.UUID] = []
+    for citation_id in first_occurrence_ids:
+        if citation_id in by_id and citation_id not in unique_used_ids:
+            unique_used_ids.append(citation_id)
+    used = [by_id[citation_id] for citation_id in unique_used_ids]
+    if not is_sequential_citation_style(style):
+        used.sort(key=lambda row: bibliography_sort_key(row, style))
+    used_ids = set(unique_used_ids)
+    unused = sorted(
+        [row for row in citations if row.id not in used_ids],
+        key=lambda row: bibliography_sort_key(row, style),
+    )
+    for row in citations:
+        row.list_index = None
+    if is_sequential_citation_style(style):
+        for index, row in enumerate(used, start=1):
+            row.list_index = index
+    return used, unused
+
+
+def _first_occurrence_ids(db: Session, book_id: uuid.UUID) -> list[uuid.UUID]:
+    rows = (
+        db.query(CitationOccurrence.citation_id)
+        .join(Chapter, CitationOccurrence.chapter_id == Chapter.id)
+        .filter(CitationOccurrence.book_id == book_id)
+        .order_by(Chapter.index.asc(), CitationOccurrence.ordinal.asc())
+        .all()
+    )
+    return [row[0] for row in rows]
 
 
 def paper_to_dict(paper: dict[str, Any]) -> dict[str, Any]:
@@ -199,10 +252,18 @@ def list_citations_sorted(db: Session, book_id: uuid.UUID) -> list[Citation]:
     return rows
 
 
+def list_citations_for_management(db: Session, book: Book) -> list[Citation]:
+    style = book.citation_style.value if book.citation_style else "apa"
+    rows = db.query(Citation).filter(Citation.book_id == book.id).all()
+    used, unused = apply_reference_order(rows, _first_occurrence_ids(db, book.id), style)
+    db.flush()
+    return [*used, *unused]
+
+
 def _reindex_citations(db: Session, book_id: uuid.UUID, style: str) -> None:
-    rows = list_citations_sorted(db, book_id)
-    for i, row in enumerate(rows, start=1):
-        row.list_index = i
+    rows = db.query(Citation).filter(Citation.book_id == book_id).all()
+    apply_reference_order(rows, _first_occurrence_ids(db, book_id), style)
+    for row in rows:
         paper = {
             "title": row.title,
             "year": row.year,
@@ -214,7 +275,11 @@ def _reindex_citations(db: Session, book_id: uuid.UUID, style: str) -> None:
             "url": getattr(row, "url", None),
         }
         cache = dict(row.format_cache or {})
-        cache[style] = format_paper_citation(paper, style, index=i if style == "gb_t7714" else None)
+        cache[style] = format_paper_citation(
+            paper,
+            style,
+            index=row.list_index if is_sequential_citation_style(style) else None,
+        )
         row.format_cache = cache
 
 
@@ -259,9 +324,18 @@ def in_text_mark(citation: Citation, style: str) -> str:
     authors = citation.authors or []
     year = citation.year or "n.d."
     if style == "gb_t7714":
-        n = citation.list_index or 1
-        return f"[{n}]"
+        return f"[{citation.list_index}]" if citation.list_index is not None else "[待编号]"
     first = authors[0].split()[-1] if authors else "Anonymous"
+    if style == "mla":
+        if len(authors) == 2:
+            second = authors[1].split()[-1]
+            return f"({first} and {second})"
+        return f"({first}{' et al.' if len(authors) > 2 else ''})"
+    if style == "chicago":
+        if len(authors) == 2:
+            second = authors[1].split()[-1]
+            return f"({first} and {second} {year})"
+        return f"({first}{' et al.' if len(authors) > 2 else ''} {year})"
     if len(authors) > 2:
         return f"({first} et al., {year})"
     if len(authors) == 2:
@@ -278,35 +352,61 @@ def find_bibliography_chapter(db: Session, book_id: uuid.UUID) -> Chapter | None
         .all()
     )
     for ch in chapters:
-        title = (ch.title or "").strip()
-        if any(k in title for k in _BIB_CHAPTER_TITLES):
+        title = (ch.title or "").strip().casefold()
+        if title in {item.casefold() for item in _BIB_CHAPTER_TITLES}:
             return ch
     return None
 
 
+def is_bibliography_chapter(chapter: Chapter) -> bool:
+    title = (chapter.title or "").strip().casefold()
+    return title in {item.casefold() for item in _BIB_CHAPTER_TITLES}
+
+
 def build_bibliography_text(db: Session, book: Book) -> str:
     style = book.citation_style.value if book.citation_style else "apa"
-    from app.models.citation import CitationOccurrence
-
-    used_ids = [
-        row[0]
-        for row in db.query(CitationOccurrence.citation_id)
-        .filter(CitationOccurrence.book_id == book.id)
-        .distinct()
-        .all()
-    ]
-    if used_ids:
-        rows = db.query(Citation).filter(Citation.id.in_(used_ids)).all()
-        rows.sort(key=lambda c: c.list_index or 10**9)
-    elif getattr(book, "structured_citations", False):
-        rows = []
-    else:
-        # Legacy books have no structured occurrences; retain their current bibliography behavior.
-        rows = list_citations_sorted(db, book.id)
+    rows = db.query(Citation).filter(Citation.book_id == book.id).all()
+    rows, _unused = apply_reference_order(rows, _first_occurrence_ids(db, book.id), style)
     if not rows:
         return ""
     lines = [formatted_line(r, style) for r in rows]
     return "\n\n".join(lines)
+
+
+def sync_book_bibliography(
+    db: Session,
+    book: Book,
+    *,
+    commit: bool = True,
+) -> dict[str, Any] | None:
+    text = build_bibliography_text(db, book)
+    legacy_chapters = [
+        chapter
+        for chapter in db.query(Chapter).filter(Chapter.book_id == book.id).all()
+        if is_bibliography_chapter(chapter)
+    ]
+    for chapter in legacy_chapters:
+        db.delete(chapter)
+    if not text:
+        book.bibliography = None
+        db.commit() if commit else db.flush()
+        return None
+    payload = {
+        "title": "参考文献",
+        "text": text,
+        "tiptap_json": {
+            "type": "doc",
+            "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": line}]}
+                for line in text.split("\n\n")
+            ],
+        },
+    }
+    book.bibliography = payload
+    db.commit() if commit else db.flush()
+    if commit:
+        db.refresh(book)
+    return payload
 
 
 def sync_bibliography_chapter(
@@ -314,74 +414,9 @@ def sync_bibliography_chapter(
     book: Book,
     *,
     commit: bool = True,
-) -> Chapter | None:
-    text = build_bibliography_text(db, book)
-    if not text:
-        ch = find_bibliography_chapter(db, book.id)
-        if ch:
-            db.delete(ch)
-            db.commit() if commit else db.flush()
-        return None
-    ch = find_bibliography_chapter(db, book.id)
-    if not ch:
-        max_idx = (
-            db.query(Chapter.index)
-            .filter(Chapter.book_id == book.id)
-            .order_by(Chapter.index.desc())
-            .first()
-        )
-        next_idx = (max_idx[0] if max_idx else 0) + 1
-        ch = Chapter(
-            book_id=book.id,
-            index=next_idx,
-            title="参考文献",
-            summary="全书引用文献列表（自动维护）",
-            content={
-                "text": text,
-                "tiptap_json": {
-                    "type": "doc",
-                    "content": [
-                        {
-                            "type": "heading",
-                            "attrs": {"level": 1},
-                            "content": [{"type": "text", "text": "参考文献"}],
-                        },
-                        *[
-                            {
-                                "type": "paragraph",
-                                "content": [{"type": "text", "text": ln}],
-                            }
-                            for ln in text.split("\n\n")
-                        ],
-                    ],
-                },
-            },
-            word_count=len(text),
-        )
-        db.add(ch)
-    else:
-        ch.content = {
-            "text": text,
-            "tiptap_json": {
-                "type": "doc",
-                "content": [
-                    {
-                        "type": "heading",
-                        "attrs": {"level": 1},
-                        "content": [{"type": "text", "text": ch.title or "参考文献"}],
-                    },
-                    *[
-                        {"type": "paragraph", "content": [{"type": "text", "text": ln}]}
-                        for ln in text.split("\n\n")
-                    ],
-                ],
-            },
-        }
-        ch.word_count = len(text)
-    db.commit() if commit else db.flush()
-    if commit:
-        db.refresh(ch)
-    return ch
+) -> dict[str, Any] | None:
+    """Compatibility alias; bibliography is no longer stored as a Chapter."""
+    return sync_book_bibliography(db, book, commit=commit)
 
 
 def extract_bibliography_lines(text: str) -> list[str]:

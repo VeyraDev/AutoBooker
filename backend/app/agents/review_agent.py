@@ -66,7 +66,7 @@ action_type 含义（必须准确分类）：
 - figure：图表占位、数据与正文是否一致；数据图是否缺数值
 - structure：表格须有表头行与 GFM 分隔行；正文须引用（如「见表1-1」）；序号列须从 1 连续编号
 
-- 重点检查：无来源断言（「研究表明」等）、人名+时间+地点齐全但无出处的「案例」、与【已批准引用库】不一致的引用
+- 重点检查：无来源断言（「研究表明」等）、人名+时间+地点齐全但无出处的「案例」、与【已批准本书文献】不一致的引用
 - 勿编造书中不存在的内容；quote 必须来自给定正文
 """
 
@@ -124,7 +124,7 @@ class ReviewAgent:
             user_parts.append(f"作者写作约束（审校时参考）：\n{user_material[:3000]}")
         if approved_citations:
             user_parts.append(
-                "【已批准引用库】\n" + "\n".join(approved_citations[:200])
+                "【已批准本书文献】\n" + "\n".join(approved_citations[:200])
             )
         if figure_summaries:
             user_parts.append(

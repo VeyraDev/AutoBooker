@@ -145,7 +145,7 @@ class ChapterWriterAgent:
             parts.append("【单节】直接输出本章正文段落，不要写标题行。")
 
         if citation_blocks:
-            parts.append("【已批准引用库】（正文引用只能来自以下条目）")
+            parts.append("【已批准本书文献】（正文引用只能来自以下条目）")
             parts.extend([f"- {b}" for b in citation_blocks])
         if snippets:
             parts.append("【上传资料检索片段】")

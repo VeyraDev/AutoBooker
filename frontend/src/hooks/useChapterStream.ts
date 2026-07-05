@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useAuthStore } from "@/stores/authStore";
 
 export function isCitationInsufficientError(err: Error): boolean {
-  return err.message.includes("引用库不足");
+  return err.message.includes("本书文献不足") || err.message.includes("引用库不足");
 }
 
 function parseGenerateError(status: number, body: string): Error {
@@ -91,7 +91,7 @@ export type ChapterStreamCallbacks = {
 };
 
 export type ChapterStreamStartOptions = {
-  /** 跳过引用库数量校验（后端 force_generate） */
+  /** 跳过本书文献数量校验（后端 force_generate） */
   forceGenerate?: boolean;
 };
 

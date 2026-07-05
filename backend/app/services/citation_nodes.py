@@ -10,7 +10,12 @@ from sqlalchemy.orm import Session
 from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.citation import Citation, CitationEvidence, CitationOccurrence
-from app.services.citation_service import in_text_mark, sync_bibliography_chapter
+from app.services.citation_service import (
+    _reindex_citations,
+    in_text_mark,
+    is_sequential_citation_style,
+    sync_book_bibliography,
+)
 
 _MARKER = re.compile(
     r"\[\[CITE:(?P<citation>[0-9a-f-]{36})(?:\|(?P<evidence>[0-9a-f-]{36}))?"
@@ -33,8 +38,10 @@ def _citation_style(book: Book) -> str:
     return str(getattr(value, "value", value) or "apa")
 
 
-def _citation_display_text(citation: Citation) -> str:
-    return f"[{citation.list_index}]" if citation.list_index is not None else "[?]"
+def _citation_display_text(citation: Citation, style: str, rendered_text: str) -> str:
+    if is_sequential_citation_style(style):
+        return f"[{citation.list_index}]" if citation.list_index is not None else "[待编号]"
+    return rendered_text
 
 
 def has_internal_citation_markers(doc: dict[str, Any]) -> bool:
@@ -45,6 +52,54 @@ def has_internal_citation_markers(doc: dict[str, Any]) -> bool:
         for child in doc.get("content") or []
         if isinstance(child, dict)
     )
+
+
+def has_structured_citation_nodes(doc: dict[str, Any]) -> bool:
+    if doc.get("type") == "citation":
+        return True
+    return any(
+        has_structured_citation_nodes(child)
+        for child in doc.get("content") or []
+        if isinstance(child, dict)
+    )
+
+
+def tiptap_with_internal_citation_markers(doc: dict[str, Any]) -> str:
+    """Serialize TipTap for rich-body rebuilds without losing citation identity."""
+    marker_doc = copy.deepcopy(doc)
+
+    def walk(parent: dict[str, Any]) -> None:
+        content = parent.get("content")
+        if not isinstance(content, list):
+            return
+        output: list[dict[str, Any]] = []
+        for child in content:
+            if not isinstance(child, dict):
+                continue
+            if child.get("type") != "citation":
+                walk(child)
+                output.append(child)
+                continue
+            attrs = child.get("attrs") or {}
+            citation_id = str(attrs.get("citationId") or "")
+            if not citation_id:
+                continue
+            parts = [citation_id]
+            evidence_id = str(attrs.get("evidenceId") or "")
+            mode = str(attrs.get("citeMode") or "parenthetical")
+            locator = str(attrs.get("locator") or "")
+            if evidence_id:
+                parts.append(evidence_id)
+            parts.append(mode)
+            if locator:
+                parts.append(locator)
+            output.append({"type": "text", "text": f"[[CITE:{'|'.join(parts)}]]"})
+        parent["content"] = output
+
+    walk(marker_doc)
+    from app.services.tiptap_convert import tiptap_json_to_markdown
+
+    return tiptap_json_to_markdown(marker_doc)
 
 
 def citation_node(
@@ -58,6 +113,14 @@ def citation_node(
     suffix: str = "",
     node_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
+    rendered_text = render_citation_node(
+        citation,
+        style,
+        mode=mode,
+        locator=locator,
+        prefix=prefix,
+        suffix=suffix,
+    )
     return {
         "type": "citation",
         "attrs": {
@@ -68,8 +131,8 @@ def citation_node(
             "locator": locator or "",
             "prefix": prefix,
             "suffix": suffix,
-            "renderedText": render_citation_node(citation, style, mode=mode, locator=locator, prefix=prefix, suffix=suffix),
-            "displayText": _citation_display_text(citation),
+            "renderedText": rendered_text,
+            "displayText": _citation_display_text(citation, style, rendered_text),
         },
     }
 
@@ -84,13 +147,14 @@ def render_citation_node(
     suffix: str = "",
 ) -> str:
     mark = in_text_mark(citation, style)
-    if mode == "narrative":
+    if mode == "narrative" and not is_sequential_citation_style(style):
         author = (citation.authors or ["佚名"])[0]
         year = citation.year or "n.d."
         mark = f"{author}（{year}）"
     if locator:
         if mark.endswith(")"):
-            mark = f"{mark[:-1]}, {locator})"
+            separator = " " if style == "mla" else ", "
+            mark = f"{mark[:-1]}{separator}{locator})"
         elif mark.endswith("]"):
             mark = f"{mark}（{locator}）"
     return f"{prefix or ''}{mark}{suffix or ''}"
@@ -184,29 +248,19 @@ def sync_chapter_occurrences(db: Session, book: Book, chapter: Chapter) -> None:
     stale.delete(synchronize_session=False)
     db.flush()
     refresh_book_citation_rendering(db, book)
-    sync_bibliography_chapter(db, book, commit=False)
+    sync_book_bibliography(db, book, commit=False)
 
 
 def refresh_book_citation_rendering(db: Session, book: Book) -> None:
     style = _citation_style(book)
-    occurrences = (
-        db.query(CitationOccurrence, Chapter)
-        .join(Chapter, CitationOccurrence.chapter_id == Chapter.id)
-        .filter(CitationOccurrence.book_id == book.id)
-        .order_by(Chapter.index.asc(), CitationOccurrence.ordinal.asc())
-        .all()
-    )
-    ordered_ids: list[uuid.UUID] = []
-    for occurrence, _chapter in occurrences:
-        if occurrence.citation_id not in ordered_ids:
-            ordered_ids.append(occurrence.citation_id)
+    _reindex_citations(db, book.id, style)
     citations = db.query(Citation).filter(Citation.book_id == book.id).all()
     by_id = {c.id: c for c in citations}
-    for citation in citations:
-        citation.list_index = ordered_ids.index(citation.id) + 1 if citation.id in ordered_ids else None
     db.flush()
     for chapter in db.query(Chapter).filter(Chapter.book_id == book.id).all():
-        meta = dict(chapter.content) if isinstance(chapter.content, dict) else {}
+        # JSONB nested mutations are not tracked reliably by SQLAlchemy. Work on a
+        # deep copy so assigning the result always persists refreshed citation text.
+        meta = copy.deepcopy(chapter.content) if isinstance(chapter.content, dict) else {}
         doc = meta.get("tiptap_json")
         if not isinstance(doc, dict):
             continue
@@ -219,18 +273,22 @@ def refresh_book_citation_rendering(db: Session, book: Book) -> None:
                 citation = None
             if not citation:
                 continue
-            attrs["renderedText"] = render_citation_node(
+            rendered_text = render_citation_node(
                 citation, style,
                 mode=str(attrs.get("citeMode") or "parenthetical"),
                 locator=str(attrs.get("locator") or "") or None,
                 prefix=str(attrs.get("prefix") or ""),
                 suffix=str(attrs.get("suffix") or ""),
             )
-            attrs["displayText"] = _citation_display_text(citation)
+            attrs["renderedText"] = rendered_text
+            attrs["displayText"] = _citation_display_text(citation, style, rendered_text)
             node["attrs"] = attrs
             changed = True
         if changed:
+            from app.services.tiptap_convert import tiptap_json_to_markdown
+
             meta["tiptap_json"] = doc
+            meta["text"] = tiptap_json_to_markdown(doc).strip()
             chapter.content = meta
     db.flush()
 

@@ -96,6 +96,9 @@ function migrateTextBlock(
 
   const blockOnly = plain.match(/^\s*\$\$([\s\S]+)\$\$\s*$/) ?? plain.match(/^\s*\\\[([\s\S]+)\\\]\s*$/);
   if (blockOnly) {
+    if (ctx.inTable) {
+      return { ...node, content: [makeMathInline(blockOnly[1])] };
+    }
     return makeMathBlock(blockOnly[1]);
   }
 
@@ -105,6 +108,15 @@ function migrateTextBlock(
     const inlineOnly = segments.filter((s) => s.kind !== "block");
     const content = segmentsToInlineNodes(inlineOnly);
     return { ...node, content };
+  }
+
+  if (ctx.inTable) {
+    const inlineSegments: MathSegment[] = [];
+    for (const seg of segments) {
+      if (seg.kind === "block") inlineSegments.push({ kind: "inline", latex: seg.latex });
+      else inlineSegments.push(seg);
+    }
+    return { ...node, content: segmentsToInlineNodes(inlineSegments) };
   }
 
   const blocks: Record<string, unknown>[] = [];
@@ -150,8 +162,10 @@ function migrateNode(node: unknown, ctx: { inTable: boolean } = { inTable: false
     return { ...n, content };
   }
 
-  if (ctx.inTable) {
-    return n;
+  if (type === "mathBlock" && ctx.inTable) {
+    const attrs = { ...((n.attrs as Record<string, unknown>) ?? {}) };
+    const latex = typeof attrs.latex === "string" ? normalizeLatexInput(attrs.latex).latex : "";
+    return { type: "mathInline", attrs: { latex } };
   }
 
   if (type === "mathInline" || type === "mathBlock") {

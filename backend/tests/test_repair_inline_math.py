@@ -16,6 +16,21 @@ def test_repair_fragmented_inline_math_keeps_block_formula():
     assert "$$\\alpha = \\frac{I}{V_{post}}$$" in fixed
 
 
+def test_markdown_body_preserves_inline_math_in_table_cell():
+    raw = """| 指标 | 数值 |
+| --- | --- |
+| 公式 | $E=mc^2$ |"""
+    blocks = markdown_body_to_tiptap_blocks(raw)
+    table = next(b for b in blocks if b.get("type") == "table")
+    rows = table.get("content") or []
+    data_row = rows[1]
+    cells = data_row.get("content") or []
+    formula_cell = cells[1]
+    para = (formula_cell.get("content") or [])[0]
+    nodes = para.get("content") or []
+    assert any(n.get("type") == "mathInline" and n.get("attrs", {}).get("latex") == "E=mc^2" for n in nodes)
+
+
 def test_markdown_body_preserves_inline_math_in_paragraph():
     raw = "其中 $V_{post}$ 为投后估值，$I$ 为本轮融资金额。"
     blocks = markdown_body_to_tiptap_blocks(raw)

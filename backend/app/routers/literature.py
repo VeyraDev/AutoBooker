@@ -35,7 +35,6 @@ from app.services.citation_service import (
     formatted_line,
     in_text_mark,
     paper_to_dict,
-    sync_bibliography_chapter,
 )
 from app.services.literature_content import build_quote_paragraph, fetch_paper_quotable_snippet
 from app.services.literature_profiles import (
@@ -189,7 +188,7 @@ def literature_add_selected(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """将用户勾选的检索结果写入引用库（先入库元数据，摘录后台补全）。"""
+    """将用户勾选的检索结果加入本书（先保存元数据，摘录后台补全）。"""
     book = book_service.get_book_or_404(book_id, user, db)
     style = book.citation_style.value if book.citation_style else "apa"
     created: list = []
@@ -219,7 +218,7 @@ def literature_insert_selected(
     db: Session = Depends(get_db),
 ):
     """
-    勾选文献 → 抓取可引用片段 → 写入引用库 → 返回可插入正文的引用段落。
+    勾选文献 → 抓取可引用片段 → 加入本书 → 返回可插入正文的引用段落。
     """
     book = book_service.get_book_or_404(book_id, user, db)
     style = book.citation_style.value if book.citation_style else "apa"
@@ -265,7 +264,6 @@ def literature_insert_selected(
         )
         citation_rows.append(row)
 
-    sync_bibliography_chapter(db, book)
     return LiteratureInsertQuotesOut(
         quotes=quote_blocks,
         citations=[

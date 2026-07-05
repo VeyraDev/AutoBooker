@@ -51,6 +51,7 @@ export type OutlineNavBodyProps = {
   streamingPreface?: boolean;
   onPrefaceStreamPrimary?: () => void;
   onPrefaceDelete?: () => void;
+  hasBibliography?: boolean;
 };
 
 function SortableChapterBlock({
@@ -446,6 +447,7 @@ export default function OutlineNavBody({
   streamingPreface = false,
   onPrefaceStreamPrimary,
   onPrefaceDelete,
+  hasBibliography = false,
 }: OutlineNavBodyProps) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -659,6 +661,25 @@ export default function OutlineNavBody({
       ) : (
         <div className="toc-list">{chapterListInner}</div>
       )}
+
+      {hasBibliography ? (
+        <div className="mt-2 border-t border-slate-200/60 pt-2">
+          <div className="toc-divider">── 书后内容 ──</div>
+          <div className="toc-chapter-row cursor-default" title="根据正文引用自动生成">
+            <button
+              type="button"
+              className="toc-toggle"
+              aria-hidden
+              tabIndex={-1}
+              style={{ visibility: "hidden" }}
+            >
+              ▶
+            </button>
+            <span className="toc-chapter-title">参考文献</span>
+            <span className="ml-auto pr-2 text-[10px] text-slate-400">自动</span>
+          </div>
+        </div>
+      ) : null}
 
       {!writingMode || !onOpenGlobalOutline ? (
         <button type="button" className="toc-add-btn" onClick={onAddChapter}>

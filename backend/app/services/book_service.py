@@ -89,11 +89,11 @@ def update_book(book: Book, payload: dict, db: Session) -> Book:
     _sync_discipline_field(book)
     if "citation_style" in payload and book.citation_style != previous_citation_style:
         from app.services.citation_nodes import refresh_book_citation_rendering
-        from app.services.citation_service import sync_bibliography_chapter
+        from app.services.citation_service import sync_book_bibliography
 
         db.flush()
         refresh_book_citation_rendering(db, book)
-        sync_bibliography_chapter(db, book)
+        sync_book_bibliography(db, book)
     db.commit()
     db.refresh(book)
     return book

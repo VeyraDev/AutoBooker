@@ -144,7 +144,7 @@ def lint_chapter_citations(
                 CitationLintIssue(
                     kind="not_in_library",
                     quote=m.group(0),
-                    detail=f"正文引用「{m.group(0)}」未在本书引用库中找到，请入库或删除。",
+                    detail=f"正文引用「{m.group(0)}」未在本书文献中找到，请加入本书或删除。",
                     suggested_title=author,
                 )
             )
@@ -164,7 +164,7 @@ def lint_chapter_citations(
                 CitationLintIssue(
                     kind="not_in_library",
                     quote=m.group(0),
-                    detail=f"序号引用 [{idx}] 不在当前引用库编号范围内。",
+                    detail=f"序号引用 [{idx}] 不在当前本书文献编号范围内。",
                 )
             )
 

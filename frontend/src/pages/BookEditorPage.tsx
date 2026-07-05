@@ -1470,6 +1470,7 @@ export default function BookEditorPage() {
                         streamingPreface={streamingPreface}
                         onPrefaceStreamPrimary={() => void handlePrefaceStreamPrimary()}
                         onPrefaceDelete={() => void handlePrefaceDelete()}
+                        hasBibliography={Boolean(book.bibliography?.text?.trim())}
                       />
                     </div>
                   </aside>
@@ -1790,6 +1791,12 @@ export default function BookEditorPage() {
                         if (attempts < 8) window.setTimeout(focusNode, 250);
                       };
                       window.setTimeout(focusNode, 100);
+                    }}
+                    onCitationDeleted={(targetChapterIndex) => {
+                      void qc.invalidateQueries({
+                        queryKey: ["chapter", bookId, targetChapterIndex],
+                      });
+                      void qc.invalidateQueries({ queryKey: ["book", bookId] });
                     }}
                     chapterIndex={chapterIndex}
                     editorSelectionText={editorSelectionText}

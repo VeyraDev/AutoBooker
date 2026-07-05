@@ -29,7 +29,7 @@ export const CitationNode = Node.create({
       prefix: { default: "" },
       suffix: { default: "" },
       renderedText: { default: "（引用）" },
-      displayText: { default: "[?]" },
+      displayText: { default: "（引用）" },
     };
   },
 
@@ -48,11 +48,11 @@ export const CitationNode = Node.create({
         contenteditable: "false",
         title: HTMLAttributes.renderedText || "引用",
       }),
-      HTMLAttributes.displayText || HTMLAttributes.renderedText || "[?]",
+      HTMLAttributes.displayText || HTMLAttributes.renderedText || "（引用）",
     ];
   },
 
   renderText({ node }) {
-    return String(node.attrs.displayText || node.attrs.renderedText || "[?]");
+    return String(node.attrs.displayText || node.attrs.renderedText || "（引用）");
   },
 });

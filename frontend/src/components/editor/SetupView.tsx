@@ -600,7 +600,7 @@ export default function SetupView({
 
         <section className="p-5">
           <h3 className="text-sm font-semibold text-ink">文献检索</h3>
-          <p className="mt-1 text-xs text-slate-500">需要时先生成检索词，再选择文献加入引用库。</p>
+              <p className="mt-1 text-xs text-slate-500">需要时先生成检索词，再选择文献加入本书。</p>
           <div className="mt-4">
             <LiteraturePanel
               bookId={book.id}

@@ -9,7 +9,6 @@ export async function listCitations(bookId: string): Promise<CitationRecord[]> {
 export async function insertCitations(
   bookId: string,
   citationIds: string[],
-  syncBibliography = true,
 ): Promise<{
   in_text_marks: string[];
   bibliography_lines: string[];
@@ -21,7 +20,6 @@ export async function insertCitations(
     citations: CitationRecord[];
   }>(`/books/${bookId}/citations/insert`, {
     citation_ids: citationIds,
-    sync_bibliography: syncBibliography,
   });
   return data;
 }
@@ -62,23 +60,4 @@ export async function listCitationOccurrences(bookId: string): Promise<CitationO
 
 export async function deleteCitationOccurrence(bookId: string, occurrenceId: string): Promise<void> {
   await client.delete(`/books/${bookId}/citation-occurrences/${occurrenceId}`);
-}
-
-export async function replaceCitationOccurrence(
-  bookId: string,
-  occurrenceId: string,
-  citationId: string,
-): Promise<void> {
-  await client.post(`/books/${bookId}/citation-occurrences/${occurrenceId}/replace`, {
-    citation_id: citationId,
-  });
-}
-
-export async function syncBibliographyChapter(bookId: string): Promise<{
-  chapter_index: number | null;
-  bibliography_text: string;
-  message: string;
-}> {
-  const { data } = await client.post(`/books/${bookId}/citations/sync-bibliography`);
-  return data;
 }
