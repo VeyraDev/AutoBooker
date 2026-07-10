@@ -18,7 +18,7 @@ class WritingRequirement(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     book_id = Column(UUID(as_uuid=True), ForeignKey("books.id", ondelete="CASCADE"), nullable=False, index=True)
-    source_file_id = Column(UUID(as_uuid=True), ForeignKey("reference_files.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_file_id = Column(UUID(as_uuid=True), ForeignKey("reference_files.id", ondelete="CASCADE"), nullable=True, index=True)
     content = Column(Text, nullable=False)
     category = Column(String(64), nullable=False, default="general")
     strength = Column(String(20), nullable=False, default="should")
@@ -40,7 +40,7 @@ class MaterialTerm(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     book_id = Column(UUID(as_uuid=True), ForeignKey("books.id", ondelete="CASCADE"), nullable=False, index=True)
-    source_file_id = Column(UUID(as_uuid=True), ForeignKey("reference_files.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_file_id = Column(UUID(as_uuid=True), ForeignKey("reference_files.id", ondelete="CASCADE"), nullable=True, index=True)
     term = Column(String(300), nullable=False)
     canonical_form = Column(String(300), nullable=True)
     definition = Column(Text, nullable=True)
@@ -74,7 +74,7 @@ class OutlineConstraint(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     book_id = Column(UUID(as_uuid=True), ForeignKey("books.id", ondelete="CASCADE"), nullable=False, index=True)
-    source_file_id = Column(UUID(as_uuid=True), ForeignKey("reference_files.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_file_id = Column(UUID(as_uuid=True), ForeignKey("reference_files.id", ondelete="CASCADE"), nullable=True, index=True)
     chapter_index = Column(Integer, nullable=False)
     chapter_title = Column(String(500), nullable=False)
     locked_sections = Column(JSONB, nullable=True)

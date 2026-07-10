@@ -1,0 +1,26 @@
+name: refactor-guards
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: autobooker/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Inventory local writes
+        run: python scripts/inventory_local_file_writes.py
+      - name: Check no local business writes
+        run: python scripts/check_no_local_business_writes.py
+      - name: Pytest refactor subset
+        run: pytest -q tests/test_refactor_baseline.py tests/test_export_structure_regression.py tests/test_writing_context_builder.py tests/test_job_runner_lease.py

@@ -26,7 +26,11 @@ from app.schemas.outline import (
 from app.llm.providers import resolve_book_outline_model
 from app.services import book_service
 from app.services.heading_formatter import normalize_outline_sections
-from app.services.material_parse_service import get_book_level_writing_rules, get_primary_outline_for_book
+from app.services.material_parse_service import (
+    get_book_level_writing_rules,
+    get_primary_outline_for_book,
+    merge_outline_with_primary,
+)
 from app.services.citation_service import is_bibliography_chapter
 
 logger = logging.getLogger(__name__)
@@ -151,12 +155,15 @@ def generate_outline(
             "primary_outline": get_primary_outline_for_book(db, book.id),
             "writing_rules": get_book_level_writing_rules(db, book.id),
         }
+        from app.services.writing.writing_context_builder import WritingContextBuilder
+
+        wcb = WritingContextBuilder(db)
+        snap = wcb.build_for_outline(book.id)
+        cfg["writing_context"] = wcb.to_prompt_block(snap)
 
         agent = OutlineAgent()
         chat_model = resolve_book_outline_model(book, user)
         outline = agent.generate(cfg, snippets, model=chat_model)
-        from app.services.material_parse_service import get_primary_outline_for_book, merge_outline_with_primary
-
         outline = merge_outline_with_primary(
             outline,
             get_primary_outline_for_book(db, book.id),

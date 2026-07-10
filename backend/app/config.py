@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     AI_DETECT_API_KEY: str = ""
 
     # 社群二维码图片 URL
-    COMMUNITY_QR_URL: str = ""
+    ASSETS_COMPAT_STATIC: bool = False
 
     # 可选：提高 GitHub API 限额
     GITHUB_TOKEN: str = ""

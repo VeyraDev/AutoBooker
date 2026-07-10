@@ -4,11 +4,14 @@ import axios from "axios";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { patchUserAiModels } from "@/api/auth";
-import { EXPORT_EXT, exportBook, getBook, updateBook, duplicateBook, type ExportFormat } from "@/api/books";
-import { fetchBookJob } from "@/api/bookJobs";
+import ProjectInputPage from "@/features/intake/components/ProjectInputPage";
+import { useIntake } from "@/features/intake/api/intakeApi";
+import ReviewStagePage from "@/features/reviewStage/ReviewStagePage";
+import { EXPORT_EXT, exportBook, fetchExportNotice, getBook, updateBook, duplicateBook, type ExportFormat } from "@/api/books";
+import { fetchBookJob, startAutoGenerateForBook } from "@/api/bookJobs";
 import {
   cancelChapterGeneration,
   createChapter,
@@ -149,7 +152,11 @@ function streamRawToChapterPayload(raw: string): { json: Record<string, unknown>
 export default function BookEditorPage() {
   const { bookId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const qc = useQueryClient();
+  const showIntake = searchParams.get("intake") === "1";
+  const autoAfterIntake = searchParams.get("auto") === "1";
+  const showReviewStage = searchParams.get("review") === "1";
 
   const [selection, setSelection] = useState<OutlineSelection>({ type: "chapter", index: 1 });
   const [panelCollapsed, setPanelCollapsed] = useState(true);
@@ -175,6 +182,8 @@ export default function BookEditorPage() {
   const [duplicateBookBusy, setDuplicateBookBusy] = useState(false);
   const [editorSelectionText, setEditorSelectionText] = useState("");
   const [editorChapterContext, setEditorChapterContext] = useState("");
+  const [enteringReviewStage, setEnteringReviewStage] = useState(false);
+  const [completingBook, setCompletingBook] = useState(false);
 
   const editorRef = useRef<ChapterEditorHandle>(null);
   const editorMainScrollRef = useRef<HTMLDivElement>(null);
@@ -244,6 +253,16 @@ export default function BookEditorPage() {
   });
 
   const book = bookQuery.data;
+  const intakeGateQuery = useIntake(bookId ?? "", {
+    enabled: Boolean(bookId && (showIntake || book?.creation_origin)),
+  });
+  const intakeGate = intakeGateQuery.data?.intake ?? null;
+  const intakeIncomplete = Boolean(book?.creation_origin) && (
+    intakeGateQuery.isLoading ||
+    !intakeGate ||
+    intakeGate.status !== "confirmed"
+  );
+  const shouldShowProjectInput = Boolean(bookId && (showIntake || intakeIncomplete));
   const outline = outlineQuery.data;
   const chapters = useMemo(() => outline?.chapters ?? EMPTY_OUTLINE_CHAPTERS, [outline]);
 
@@ -487,6 +506,14 @@ export default function BookEditorPage() {
 
   async function handleExport(format: ExportFormat) {
     if (!bookId || !book) return;
+    try {
+      const notice = await fetchExportNotice(bookId);
+      if (notice?.suggestions?.length) {
+        toast(notice.suggestions.join("\n"), { icon: "ℹ️", duration: 6000 });
+      }
+    } catch {
+      /* non-blocking */
+    }
     const toastId = toast.loading("正在导出…");
     try {
       const blob = await exportBook(bookId, format);
@@ -833,6 +860,27 @@ export default function BookEditorPage() {
           .slice(0, 280);
     }
     return e instanceof Error ? e.message : fallback;
+  }
+
+  async function handleProjectInputComplete() {
+    if (!bookId) return;
+    if (!autoAfterIntake) {
+      navigate(`/app/books/${bookId}`);
+      return;
+    }
+    try {
+      await startAutoGenerateForBook(bookId);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["book", bookId] }),
+        qc.invalidateQueries({ queryKey: ["bookJob", bookId] }),
+        qc.invalidateQueries({ queryKey: ["intake", bookId] }),
+      ]);
+      toast.success("一键成书已开始");
+      navigate(autoBookProgressPath(bookId));
+    } catch (e) {
+      toast.error(toastAxiosDetail(e, "项目输入已确认，但未能启动一键成书，请稍后重试"));
+      navigate(`/app/books/${bookId}`);
+    }
   }
 
   async function handleGenerateOutline(payload: {
@@ -1297,11 +1345,32 @@ export default function BookEditorPage() {
     }
   }
 
+  async function handleEnterReviewStage() {
+    if (!bookId) return;
+    setEnteringReviewStage(true);
+    try {
+      await updateBook(bookId, { status: "review_ready" });
+      await invalidateAll();
+      toast.success("已进入审校阶段，你可以运行审校，也可以直接完成全书。");
+    } catch (e) {
+      toast.error(toastAxiosDetail(e, "进入审校阶段失败"));
+    } finally {
+      setEnteringReviewStage(false);
+    }
+  }
+
   async function handleCompleteBook() {
     if (!bookId) return;
-    await updateBook(bookId, { status: "completed" });
-    await invalidateAll();
-    toast.success("全书已完成（可在列表查看状态）");
+    setCompletingBook(true);
+    try {
+      await updateBook(bookId, { status: "completed" });
+      await invalidateAll();
+      toast.success("全书已完成（可在列表查看状态）");
+    } catch (e) {
+      toast.error(toastAxiosDetail(e, "完成全书失败"));
+    } finally {
+      setCompletingBook(false);
+    }
   }
 
   if (!bookId) {
@@ -1354,6 +1423,9 @@ export default function BookEditorPage() {
     }
     return (
       <div className="planning-setup-shell flex w-full flex-col">
+        {shouldShowProjectInput && bookId ? (
+          <ProjectInputPage bookId={bookId} onComplete={handleProjectInputComplete} />
+        ) : (
         <PlanningWizard
           book={book}
           bookId={bookId}
@@ -1368,6 +1440,7 @@ export default function BookEditorPage() {
           onDeleteChapter={(idx) => void handleDeleteChapter(idx)}
           dragDisabled={dragDisabled}
         />
+        )}
       </div>
     );
   }
@@ -1376,6 +1449,15 @@ export default function BookEditorPage() {
     <>
       {/* WPS 式：顶栏 + 目录 + 正文同色底板无缝拼合；整页文档滚动 + 固定字数页脚 */}
       <section className="editor-writing-shell editor-writing-shell--wps-board editor-page-document-scroll flex w-full min-w-0 flex-col gap-0 overflow-x-hidden">
+        {(showReviewStage || book.status === "review_ready") && bookId ? (
+          <div className="border-b bg-white px-4 py-3">
+            <ReviewStagePage
+              bookId={bookId}
+              completing={completingBook}
+              onCompleteBook={book.status === "review_ready" ? handleCompleteBook : undefined}
+            />
+          </div>
+        ) : null}
         <header className="editor-wps-topbar">
           <EditorTopBar
             title={book.title}
@@ -1731,10 +1813,15 @@ export default function BookEditorPage() {
                             </div>
                           ) : null}
 
-                          {allDone && !autoGenerating && (
+                          {book.status === "writing" && allDone && !autoGenerating && (
                             <div className="mt-8 flex justify-end border-t border-slate-100 pt-6">
-                              <button type="button" className="btn-primary" onClick={() => void handleCompleteBook()}>
-                                完成全书
+                              <button
+                                type="button"
+                                className="btn-primary disabled:cursor-not-allowed disabled:opacity-60"
+                                disabled={enteringReviewStage}
+                                onClick={() => void handleEnterReviewStage()}
+                              >
+                                {enteringReviewStage ? "正在进入审校…" : "进入审校阶段"}
                               </button>
                             </div>
                           )}

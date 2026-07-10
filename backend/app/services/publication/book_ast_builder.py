@@ -51,6 +51,7 @@ def _walk_tiptap(
     chapter_index: int,
     table_counter: list[int],
     figure_by_id: dict[str, Figure],
+    db: Session | None = None,
 ) -> None:
     for i, node in enumerate(nodes):
         if not isinstance(node, dict):
@@ -123,7 +124,17 @@ def _walk_tiptap(
             attrs["book_id"] = book_id
             attrs["chapter_index"] = fig.chapter_index if fig else chapter_index
             if fig:
-                if fig.file_url:
+                asset_id = None
+                if db is not None:
+                    try:
+                        from app.services.assets.asset_resolver import AssetResolver
+
+                        asset_id = AssetResolver(db).parse_asset_id_from_figure(fig)
+                    except Exception:
+                        asset_id = None
+                if asset_id:
+                    attrs["fileUrl"] = f"/api/books/{book_id}/assets/{asset_id}/content"
+                elif fig.file_url:
                     attrs["fileUrl"] = _strip_url_query(fig.file_url)
                 if getattr(fig, "svg_url", None):
                     attrs["svgUrl"] = _strip_url_query(fig.svg_url)
@@ -153,78 +164,7 @@ def _walk_tiptap(
 
 
 def build_book_ast(book: Book, chapters: list[Chapter], db: Session) -> BookAst:
-    ast = BookAst(title=book.title or "未命名")
-    ast.blocks.append(AstBlock(role="book_title", text=book.title or "未命名"))
+    from app.services.publication.export_assembler import build_book_export_ast
 
-    pf = get_preface(book)
-    if pf.get("enabled") and isinstance(pf.get("tiptap_json"), dict):
-        ast.blocks.append(AstBlock(role="preface_title", text="前言"))
-        tj = pf["tiptap_json"]
-        _walk_tiptap(
-            tj.get("content") or [],
-            ast.blocks,
-            book_id=str(book.id),
-            chapter_index=0,
-            table_counter=[0],
-            figure_by_id={},
-        )
-
-    figures = db.query(Figure).filter(Figure.book_id == book.id).all()
-    for fig in figures:
-        repair_figure_file(fig, db)
-    prepare_book_figures_for_export(figures)
-    figure_by_id = {str(f.id): f for f in figures}
-
-    from app.services.citation_service import is_bibliography_chapter
-
-    for ch in chapters:
-        if is_bibliography_chapter(ch):
-            continue
-        ast.blocks.append(
-            AstBlock(
-                role="chapter_title",
-                text=export_chapter_title(ch),
-                attrs={"chapter_index": ch.index},
-            )
-        )
-        meta = ch.content if isinstance(ch.content, dict) else {}
-        tj = meta.get("tiptap_json")
-        if isinstance(tj, dict):
-            _walk_tiptap(
-                tj.get("content") or [],
-                ast.blocks,
-                book_id=str(book.id),
-                chapter_index=ch.index,
-                table_counter=[0],
-                figure_by_id=figure_by_id,
-            )
-        elif meta.get("text"):
-            ast.blocks.append(AstBlock(role="body", text=str(meta.get("text"))[:50000]))
-
-    raw_bibliography = getattr(book, "bibliography", None)
-    bibliography = raw_bibliography if isinstance(raw_bibliography, dict) else {}
-    bibliography_text = str(bibliography.get("text") or "").strip()
-    if bibliography_text:
-        ast.blocks.append(
-            AstBlock(
-                role="chapter_title",
-                text=str(bibliography.get("title") or "参考文献"),
-                attrs={"book_end_matter": True},
-            )
-        )
-        bibliography_doc = bibliography.get("tiptap_json")
-        if isinstance(bibliography_doc, dict):
-            _walk_tiptap(
-                bibliography_doc.get("content") or [],
-                ast.blocks,
-                book_id=str(book.id),
-                chapter_index=0,
-                table_counter=[0],
-                figure_by_id={},
-            )
-        else:
-            for line in bibliography_text.split("\n\n"):
-                if line.strip():
-                    ast.blocks.append(AstBlock(role="body", text=line.strip()))
-
-    return ast
+    export_ast = build_book_export_ast(book, chapters, db)
+    return BookAst(title=export_ast.title, blocks=export_ast.flatten_blocks())

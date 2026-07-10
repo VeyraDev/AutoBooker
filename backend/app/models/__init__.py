@@ -1,5 +1,18 @@
 from app.models.user import User
-from app.models.book import Book, BookType, BookStatus, BookWorkflowMode, CitationStyle
+from app.models.book import Book, BookType, BookStatus, BookWorkflowMode, CitationStyle, CreationOrigin
+from app.models.binary_asset import BinaryAsset, FigureAsset, AssetDomain, AssetRole, FigureAssetRole
+from app.models.intake import (
+    ProjectIntake,
+    IntakeItem,
+    InputUnderstanding,
+    WritingPlan,
+    IntakeStatus,
+    IntakeItemType,
+    IntakeItemStatus,
+    UnderstandingStatus,
+    WritingPlanStatus,
+)
+from app.models.review_stage import BookReviewStageRun, BookReviewFinding, ReviewStageStatus, ReviewTrack, ReviewFindingStatus
 from app.models.chapter import Chapter, ChapterStatus
 from app.models.reference import FileLifecycleStatus, FilePurpose, ParseStatus, ReferenceChunk, ReferenceFile, ReferenceFilePurpose
 from app.models.memory import BookMemory, MemoryType
@@ -70,4 +83,24 @@ __all__ = [
     "ChapterReview",
     "ChapterReviewIssue",
     "ReviewApplication",
+    "BinaryAsset",
+    "FigureAsset",
+    "AssetDomain",
+    "AssetRole",
+    "FigureAssetRole",
+    "CreationOrigin",
+    "ProjectIntake",
+    "IntakeItem",
+    "InputUnderstanding",
+    "WritingPlan",
+    "IntakeStatus",
+    "IntakeItemType",
+    "IntakeItemStatus",
+    "UnderstandingStatus",
+    "WritingPlanStatus",
+    "BookReviewStageRun",
+    "BookReviewFinding",
+    "ReviewStageStatus",
+    "ReviewTrack",
+    "ReviewFindingStatus",
 ]

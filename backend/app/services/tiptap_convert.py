@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from uuid import UUID
 
 from docx import Document
@@ -12,6 +14,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
+from sqlalchemy.orm import Session
 
 from app.services.markdown_to_tiptap import _parse_inline_bold
 from app.services.publication.publication_styles import DOC_BODY_FONT, FIRST_LINE_INDENT_PT
@@ -484,7 +487,14 @@ def _canonical_figure_paths(attrs: dict[str, Any]) -> list[Path]:
     return [p for p in paths if p.is_file()]
 
 
-def _resolve_figure_local_path(attrs: dict[str, Any]) -> Path | None:
+def _resolve_figure_local_path(attrs: dict[str, Any], db: Session | None = None) -> Path | None:
+    if db is not None:
+        from app.services.assets.asset_resolver import AssetResolver
+
+        resolved = AssetResolver(db).resolve_figure_local_path_from_attrs(attrs)
+        if resolved and resolved.is_file():
+            return resolved
+
     from app.services.figures.storage.manager import figure_storage
 
     candidates: list[Path] = []
@@ -515,25 +525,69 @@ def _resolve_figure_local_path(attrs: dict[str, Any]) -> Path | None:
     return min(candidates, key=_figure_path_rank)
 
 
-def _figure_raster_for_export(local: Path) -> Path | None:
-    """DOCX/PDF 仅支持位图；SVG 尝试转 PNG 或使用同目录 figure.png。"""
+@contextmanager
+def _materialize_figure_local_path(
+    attrs: dict[str, Any],
+    db: Session | None = None,
+) -> Iterator[Path | None]:
+    if db is not None:
+        from app.services.assets.asset_resolver import AssetResolver
+
+        with AssetResolver(db).materialize_figure_local_path_from_attrs(attrs) as resolved:
+            if resolved and resolved.is_file():
+                yield resolved
+                return
+
+    local = _resolve_figure_local_path(attrs, db=None)
+    yield local if local and local.is_file() else None
+
+
+def _new_temp_path(*, suffix: str) -> Path:
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        return Path(tmp.name)
+
+
+def _figure_raster_for_export_owned(local: Path) -> tuple[Path | None, bool]:
+    """Return a DOCX/PDF-compatible raster and whether the caller owns it."""
     ext = local.suffix.lower()
     if ext in _RASTER_EXTS:
-        return local if local.is_file() else None
+        return (local if local.is_file() else None), False
 
     if ext == ".svg":
-        for png_candidate in (local.with_name("figure.png"), local.with_suffix(".png")):
+        png_candidates: list[Path] = []
+        if local.name == "figure.svg":
+            png_candidates.append(local.with_name("figure.png"))
+        png_candidates.append(local.with_suffix(".png"))
+        for png_candidate in png_candidates:
             if png_candidate.is_file():
-                return _figure_raster_for_export(png_candidate)
+                return _figure_raster_for_export_owned(png_candidate)
         from app.services.figures.render.svg.export_png import export_png_from_svg
 
-        canonical_png = local.with_name("figure.png")
-        if export_png_from_svg(local, canonical_png) and canonical_png.is_file():
-            return canonical_png
-        cache_png = local.parent / ".export-cache.png"
-        if export_png_from_svg(local, cache_png) and cache_png.is_file():
-            return cache_png
-    return None
+        if local.name == "figure.svg":
+            canonical_png = local.with_name("figure.png")
+            if export_png_from_svg(local, canonical_png) and canonical_png.is_file():
+                return canonical_png, False
+
+        cache_path = _new_temp_path(suffix=".svg-raster.png")
+        if export_png_from_svg(local, cache_path) and cache_path.is_file():
+            return cache_path, True
+        cache_path.unlink(missing_ok=True)
+    return None, False
+
+
+@contextmanager
+def _materialize_figure_raster_for_export(local: Path) -> Iterator[Path | None]:
+    raster, owned = _figure_raster_for_export_owned(local)
+    try:
+        yield raster
+    finally:
+        if owned and raster:
+            raster.unlink(missing_ok=True)
+
+
+def _figure_raster_for_export(local: Path) -> Path | None:
+    """DOCX/PDF 仅支持位图；SVG 尝试转 PNG 或使用同目录 figure.png。"""
+    return _figure_raster_for_export_owned(local)[0]
 
 
 def _docx_figure_size(local: Path) -> tuple[float, float | None]:
@@ -566,26 +620,26 @@ def _docx_figure_size(local: Path) -> tuple[float, float | None]:
     return width, height
 
 
-def docx_figure_image_only(doc: Document, node: dict[str, Any]) -> bool:
+def docx_figure_image_only(doc: Document, node: dict[str, Any], db: Session | None = None) -> bool:
     """仅插入图片，不写「图 1-1」「图解：」等（题注由 AST figure_caption 负责）。"""
     attrs = node.get("attrs") or {}
-    local = _resolve_figure_local_path(attrs)
-    if not local:
-        return False
-    raster = _figure_raster_for_export(local)
-    if not raster:
-        return False
-    pic_p = doc.add_paragraph()
-    pic_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    width, height = _docx_figure_size(raster)
-    kwargs: dict[str, Any] = {"width": Inches(width)}
-    if height is not None:
-        kwargs["height"] = Inches(height)
-    try:
-        pic_p.add_run().add_picture(str(raster), **kwargs)
-    except Exception:
-        return False
-    return True
+    with _materialize_figure_local_path(attrs, db=db) as local:
+        if not local:
+            return False
+        with _materialize_figure_raster_for_export(local) as raster:
+            if not raster:
+                return False
+            pic_p = doc.add_paragraph()
+            pic_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            width, height = _docx_figure_size(raster)
+            kwargs: dict[str, Any] = {"width": Inches(width)}
+            if height is not None:
+                kwargs["height"] = Inches(height)
+            try:
+                pic_p.add_run().add_picture(str(raster), **kwargs)
+            except Exception:
+                return False
+            return True
 
 
 def _docx_block(doc: Document, node: dict[str, Any]) -> None:

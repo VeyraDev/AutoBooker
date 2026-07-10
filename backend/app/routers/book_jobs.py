@@ -8,25 +8,32 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.constants.style_types import coerce_style
 from app.database import get_db
-from app.models.book import BookStatus, BookType
+from app.models.book import BookStatus
 from app.models.book_job import BookJob, BookJobStatus
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.book_job import AutoGenerateIn, BookJobDetailOut, BookJobOut
 from app.services import book_service
-from app.services.auto_book_job import run_auto_book_job
+from app.services.jobs.book_job_dispatch import dispatch_book_job
 from app.services.auto_book_job_progress import build_job_detail, patch_job_checkpoint
 
 router = APIRouter(prefix="/book-jobs", tags=["book-jobs"])
 
 
 def _reconcile_job_worker(db: Session, job: BookJob) -> None:
-    """BackgroundTasks 随进程重启而消失；若 Job 标记的 worker 非本进程则视为已中断。"""
+    """BackgroundTasks 随进程重启而消失；若 Job lease 已过期则视为可重试。"""
     if job.status not in (BookJobStatus.pending, BookJobStatus.running):
         return
+    from datetime import datetime, timezone
+
     ck = dict(job.checkpoint_json or {})
+    worker_id = ck.get("worker_id")
+    if worker_id and job.lease_until and job.lease_until < datetime.now(timezone.utc):
+        job.lease_owner = None
+        job.lease_until = None
+        db.commit()
+        return
     worker_pid = ck.get("worker_pid")
     if worker_pid is None:
         return
@@ -57,26 +64,10 @@ def start_auto_generate(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    bt = body.book_type
-    st = coerce_style(bt, body.style_type).value
-    book = book_service.create_book(
-        user,
-        {
-            "title": body.title.strip(),
-            "book_type": BookType(body.book_type),
-            "style_type": st,
-            "discipline": body.discipline,
-        },
-        db,
-        commit=False,
+    raise HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        "请先创建书稿并确认项目输入、输入理解和写作方案后再启动一键成书",
     )
-    job = BookJob(book_id=book.id, user_id=user.id, status=BookJobStatus.pending, progress_pct=0)
-    db.add(job)
-    book.status = BookStatus.auto_generating
-    db.commit()
-    db.refresh(job)
-    background_tasks.add_task(run_auto_book_job, job.id)
-    return _job_to_out(job, db)
 
 
 @router.get("/{book_id}", response_model=BookJobOut)
@@ -108,6 +99,13 @@ def start_auto_generate_for_book(
 ):
     """对已有书稿启动一键生成（设定页保存后调用）。"""
     book = book_service.get_book_or_404(book_id, user, db)
+    from app.services.writing.writing_context_builder import WritingContextBuilder
+
+    if getattr(book, "creation_origin", None) and not WritingContextBuilder(db).auto_progress_allowed(book.id):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "请先完成项目输入并确认写作方案后再启动一键成书",
+        )
     existing = (
         db.query(BookJob)
         .filter(BookJob.book_id == book_id, BookJob.status.in_((BookJobStatus.pending, BookJobStatus.running)))
@@ -123,5 +121,5 @@ def start_auto_generate_for_book(
     book.status = BookStatus.auto_generating
     db.commit()
     db.refresh(job)
-    background_tasks.add_task(run_auto_book_job, job.id)
+    background_tasks.add_task(dispatch_book_job, job.id)
     return _job_to_out(job, db)

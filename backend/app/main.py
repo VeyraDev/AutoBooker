@@ -19,6 +19,9 @@ from app.routers import book_jobs as book_jobs_router
 from app.routers import notifications as notifications_router
 from app.routers import feedback as feedback_router
 from app.routers import optimization as optimization_router
+from app.routers import assets as assets_router
+from app.routers import intake as intake_router
+from app.routers import review_stage as review_stage_router
 
 app = FastAPI(title="AutoBooker API", version="0.1.0")
 
@@ -47,13 +50,17 @@ app.include_router(book_jobs_router.router)
 app.include_router(notifications_router.router)
 app.include_router(feedback_router.router)
 app.include_router(optimization_router.router)
+app.include_router(assets_router.router)
+app.include_router(intake_router.router)
+app.include_router(review_stage_router.router)
 
-settings.figures_path.mkdir(parents=True, exist_ok=True)
-app.mount(
-    "/static/figures",
-    NoCacheStaticFiles(directory=str(settings.figures_path)),
-    name="figures",
-)
+if settings.ASSETS_COMPAT_STATIC:
+    settings.figures_path.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/static/figures",
+        NoCacheStaticFiles(directory=str(settings.figures_path)),
+        name="figures",
+    )
 
 
 @app.get("/health", tags=["meta"])

@@ -97,6 +97,23 @@ def delete_book(
     return None
 
 
+@router.get("/{book_id}/export/notice")
+def export_notice(book_id: UUID, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    book_service.get_book_or_404(book_id, user, db)
+    from app.services.review_stage.review_stage_service import ReviewStageService
+
+    summary = ReviewStageService(db).summary(book_id) or {}
+    count = int(summary.get("suggestion_count") or 0)
+    return {
+        "suggestion_count": count,
+        "message": (
+            f"当前书稿还有 {count} 条审校建议未处理。审校建议不会影响导出，你可以继续导出或返回处理。"
+            if count
+            else None
+        ),
+    }
+
+
 @router.get("/{book_id}/export")
 def export_book(
     book_id: UUID,

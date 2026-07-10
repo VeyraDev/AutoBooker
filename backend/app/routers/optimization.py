@@ -114,17 +114,21 @@ async def create_optimization_project(
         },
         db,
     )
-    base = settings.upload_path / str(book.id)
-    base.mkdir(parents=True, exist_ok=True)
-    dest = base / f"{uuid.uuid4().hex}_{Path(file.filename).name}"
-    dest.write_bytes(content)
     ref = ReferenceFile(
-        book_id=book.id, filename=file.filename, storage_path=str(dest),
-        file_type=suffix[1:], ingest_kind="material", parse_status=ParseStatus.processing,
-        lifecycle_status=FileLifecycleStatus.processing, file_purposes=["source_manuscript"],
+        book_id=book.id,
+        filename=file.filename,
+        storage_path=None,
+        file_type=suffix[1:],
+        ingest_kind="material",
+        parse_status=ParseStatus.processing,
+        lifecycle_status=FileLifecycleStatus.processing,
+        file_purposes=["source_manuscript"],
     )
     db.add(ref)
     db.flush()
+    from app.services.assets.reference_asset_service import ReferenceAssetService
+
+    ReferenceAssetService(db).attach_upload(ref=ref, content=content, owner_user_id=user.id)
     db.add(ReferenceFilePurpose(file_id=ref.id, purpose=FilePurpose.source_manuscript))
     try:
         parsed_goals = [str(x)[:300] for x in json.loads(goals) if str(x).strip()]

@@ -46,7 +46,7 @@ from app.services.figure_service import (
     refresh_chapter_figures,
     sync_figures_to_tiptap,
 )
-from app.services.section_assembler import process_chapter_generation_result
+from app.services.chapter_markdown_assembler import process_chapter_generation_result
 from app.services.tiptap_convert import chapter_content_to_markdown
 from app.services.memory_service import build_book_memory, extract_chapter_memory
 from app.services.outline_text import serialize_book_outline_markdown
@@ -117,6 +117,13 @@ def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> Non
             return
         n = db.query(func.count(Chapter.id)).filter(Chapter.book_id == book_id).scalar() or 0
         outline_md = serialize_book_outline_markdown(book_id, db)
+        from app.services.writing.writing_context_builder import WritingContextBuilder
+
+        wcb = WritingContextBuilder(db)
+        snap = wcb.build_for_narrative(book_id)
+        context_block = wcb.to_prompt_block(snap)
+        if context_block.strip():
+            outline_md = context_block + "\n\n---\n\n" + outline_md
         agent = NarrativeAgent()
         text = agent.generate_constitution(
             book,

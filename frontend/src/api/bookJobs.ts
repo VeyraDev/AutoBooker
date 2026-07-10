@@ -30,16 +30,6 @@ export interface BookJob {
   detail?: BookJobDetail | null;
 }
 
-export async function startAutoGenerate(payload: {
-  title: string;
-  book_type: string;
-  style_type: string;
-  discipline?: string | null;
-}): Promise<BookJob> {
-  const { data } = await client.post<BookJob>("/book-jobs/auto-generate", payload);
-  return data;
-}
-
 /** 对已有书稿启动一键生成 Job */
 export async function startAutoGenerateForBook(bookId: string): Promise<BookJob> {
   const { data } = await client.post<BookJob>(`/book-jobs/${bookId}/start`);

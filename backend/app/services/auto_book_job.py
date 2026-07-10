@@ -116,7 +116,7 @@ def _maybe_apply_outline_title(book: Book, outline: dict) -> None:
         book.title = new_title[:500]
 
 
-def run_auto_book_job(job_id: UUID) -> None:
+def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
     db = SessionLocal()
     try:
         job = db.get(BookJob, job_id)
@@ -124,7 +124,12 @@ def run_auto_book_job(job_id: UUID) -> None:
             return
         job.status = BookJobStatus.running
         db.commit()
-        patch_job_checkpoint(db, job, stage_message="正在初始化", worker_pid=os.getpid())
+        ck_fields: dict = {"stage_message": "正在初始化"}
+        if worker_id:
+            ck_fields["worker_id"] = worker_id
+        else:
+            ck_fields["worker_pid"] = os.getpid()
+        patch_job_checkpoint(db, job, **ck_fields)
 
         book = db.get(Book, job.book_id)
         user = db.get(User, job.user_id)
@@ -178,6 +183,11 @@ def run_auto_book_job(job_id: UUID) -> None:
             "primary_outline": get_primary_outline_for_book(db, book.id),
             "writing_rules": get_book_level_writing_rules(db, book.id),
         }
+        from app.services.writing.writing_context_builder import WritingContextBuilder
+
+        wcb = WritingContextBuilder(db)
+        snap = wcb.build_for_outline(book.id)
+        cfg["writing_context"] = wcb.to_prompt_block(snap)
         outline = OutlineAgent().generate(cfg, snippets, model=outline_model)
         from app.services.material_parse_service import merge_outline_with_primary
 

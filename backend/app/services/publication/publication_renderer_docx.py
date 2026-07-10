@@ -5,12 +5,14 @@ from __future__ import annotations
 import io
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
+from sqlalchemy.orm import Session
 
 from app.services.publication.book_ast import AstBlock, BookAst
+from app.services.publication.export_ast import BookExportAst
 from app.services.publication.page_numbers import add_docx_page_numbers
 from app.services.publication.publication_styles import (
     AST_WORD_HEADING_LEVEL,
@@ -193,6 +195,140 @@ def _add_publication_heading(
         _style_docx_run(r, size_pt=size_pt, bold=bold)
 
 
+def _add_page_break(doc: Document) -> None:
+    p = doc.add_paragraph()
+    run = p.add_run()
+    run.add_break(WD_BREAK.PAGE)
+
+
+def _render_blocks(doc: Document, blocks: list[AstBlock], db: Session | None = None) -> None:
+    for block in blocks:
+        role = block.role
+        if role == "body":
+            node = block.attrs.get("tiptap_node")
+            if isinstance(node, dict):
+                docx_block(doc, node)
+            else:
+                _add_body(doc, block.text)
+        elif role in ("section_title", "subsection_title"):
+            node = block.attrs.get("tiptap_node")
+            _add_publication_heading(
+                doc,
+                block.text,
+                word_level=_word_heading_level_for_block(block),
+                node=node if isinstance(node, dict) else None,
+            )
+        elif role == "figure":
+            node = block.attrs.get("tiptap_node")
+            if isinstance(node, dict):
+                merged_attrs = merge_figure_export_attrs(block.attrs, node.get("attrs"))
+                export_node = {**node, "attrs": merged_attrs}
+                if not docx_figure_image_only(doc, export_node, db=db):
+                    p = doc.add_paragraph("【图片待生成】")
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            else:
+                p = doc.add_paragraph(block.text)
+                for r in p.runs:
+                    _style_docx_run(r, size_pt=CAPTION_PT, bold=True)
+        elif role == "figure_caption":
+            p = doc.add_paragraph(block.text)
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for r in p.runs:
+                _style_docx_run(r, size_pt=CAPTION_PT)
+        elif role == "table_caption":
+            p = doc.add_paragraph(block.text)
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for r in p.runs:
+                _style_docx_run(r, size_pt=CAPTION_PT, bold=True)
+        elif role == "table" and block.attrs.get("table_node"):
+            append_tiptap_to_document(doc, {"type": "doc", "content": [block.attrs["table_node"]]})
+        elif role == "code":
+            node = block.attrs.get("tiptap_node")
+            if isinstance(node, dict):
+                docx_block(doc, node)
+            else:
+                _add_code_paragraph(doc, block.text)
+        elif role == "list":
+            node = block.attrs.get("tiptap_node")
+            if isinstance(node, dict):
+                docx_block(doc, node)
+        elif role == "blockquote":
+            node = block.attrs.get("tiptap_node")
+            if isinstance(node, dict):
+                docx_block(doc, node)
+            else:
+                p = doc.add_paragraph(block.text)
+                p.paragraph_format.left_indent = Pt(18)
+                for r in p.runs:
+                    _style_docx_run(r, size_pt=BODY_PT)
+
+
+def render_export_ast_to_docx(export_ast: BookExportAst, db: Session | None = None) -> bytes:
+    doc = Document()
+    _init_docx_publication_fonts(doc)
+    has_content = False
+    last_was_page_break = False
+
+    def mark_content() -> None:
+        nonlocal has_content, last_was_page_break
+        has_content = True
+        last_was_page_break = False
+
+    def add_page_break_once() -> None:
+        nonlocal last_was_page_break
+        if not has_content or last_was_page_break:
+            return
+        _add_page_break(doc)
+        last_was_page_break = True
+
+    for section in export_ast.sections:
+        if section.type == "cover":
+            p = doc.add_paragraph(section.title)
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for r in p.runs:
+                _style_docx_run(r, size_pt=BOOK_TITLE_PT, bold=True)
+            mark_content()
+            if section.page_break_after:
+                add_page_break_once()
+        elif section.type == "toc":
+            if section.page_break_before:
+                add_page_break_once()
+            p = doc.add_paragraph("目录")
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for r in p.runs:
+                _style_docx_run(r, size_pt=CHAPTER_TITLE_PT, bold=True)
+            for entry in section.entries:
+                tp = doc.add_paragraph(entry.title)
+                tp.paragraph_format.left_indent = Pt(FIRST_LINE_INDENT_PT)
+            mark_content()
+            if section.page_break_after:
+                add_page_break_once()
+        elif section.type == "preface":
+            if section.page_break_before:
+                add_page_break_once()
+            _add_publication_heading(doc, section.title, word_level=1)
+            _render_blocks(doc, section.blocks, db=db)
+            mark_content()
+            if section.page_break_after:
+                add_page_break_once()
+        elif section.type == "chapter":
+            if section.page_break_before:
+                add_page_break_once()
+            _add_publication_heading(doc, section.title, word_level=1)
+            _render_blocks(doc, section.blocks, db=db)
+            mark_content()
+        elif section.type == "bibliography":
+            if section.page_break_before:
+                add_page_break_once()
+            _add_publication_heading(doc, section.title, word_level=1)
+            _render_blocks(doc, section.blocks, db=db)
+            mark_content()
+    add_docx_page_numbers(doc)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 def render_ast_to_docx(ast: BookAst) -> bytes:
     doc = Document()
     _init_docx_publication_fonts(doc)
@@ -222,7 +358,7 @@ def render_ast_to_docx(ast: BookAst) -> bytes:
             if isinstance(node, dict):
                 merged_attrs = merge_figure_export_attrs(block.attrs, node.get("attrs"))
                 export_node = {**node, "attrs": merged_attrs}
-                if not docx_figure_image_only(doc, export_node):
+                if not docx_figure_image_only(doc, export_node, db=db):
                     p = doc.add_paragraph("【图片待生成】")
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             else:

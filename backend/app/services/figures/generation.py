@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +41,12 @@ def figure_output_path(book_id: UUID, figure_id: UUID, *, chapter_index: int = 0
 
 def public_url(book_id: UUID, chapter_index: int, figure_id: UUID, *, ext: str = "png") -> str:
     return figure_storage.public_url(book_id, chapter_index, figure_id, ext=ext)
+
+
+def sync_figure_urls_from_assets(fig: Figure, db: Session) -> None:
+    from app.services.assets.asset_resolver import AssetResolver
+
+    AssetResolver(db).sync_figure_urls_from_assets(fig)
 
 
 def sync_figure_urls_from_disk(fig: Figure, *, chapter_index: int | None = None) -> None:
@@ -138,93 +145,96 @@ def generate_figure_asset(
     )
 
     chapter_id = fig.chapter_index
-    out_path = figure_output_path(book.id, fig.id, chapter_index=chapter_id)
-    svg_path = figure_storage.svg_path(book.id, chapter_id, fig.id)
-    candidate_base = out_path.with_name(f".candidate-{uuid.uuid4().hex}")
-    candidate_png = candidate_base.with_suffix(".png")
-    candidate_svg = candidate_base.with_suffix(".svg")
+    with tempfile.TemporaryDirectory(prefix="figure-render-") as tmpdir:
+        tmp = Path(tmpdir)
+        candidate_png = tmp / f"candidate-{uuid.uuid4().hex}.png"
+        candidate_svg = tmp / f"candidate-{uuid.uuid4().hex}.svg"
 
-    model = chat_model_for_book(book, db=db)
-    render_result = None
-    png: Path | None = None
-    rendered_svg: Path | None = None
-    try:
-        render_result = render_figure(fig, book, candidate_png, model=model, chart_type=chart_type)
-        png = render_result.primary_png_path
-        rendered_svg = render_result.optional_svg_path
-        clf = _classification(fig)
-        render_report = inspect_rendered_figure(
-            png_path=png,
-            svg_path=rendered_svg,
-            classification=clf,
-        )
-        qr_evidence = (clf.get("quality_report") or {}).get("evidence") or {}
-        structural = clf.get("structural_critic") or qr_evidence.get("structural_critic") or run_structural_critic(
-            semantic_ir=clf.get("semantic_ir"),
-            dsl_json=clf.get("dsl_json"),
-            parsed_spec=clf.get("parsed_spec"),
-            source_text=description,
-        )
-        layout_critic = run_layout_critic(
-            layout_result=clf.get("layout_result"),
-            svg_path=rendered_svg,
-            classification=clf,
-        )
-        render_report = merge_quality_reports(
-            render_report,
-            {
-                "status": structural.get("status"),
-                "semantic_score": structural.get("alignment_rate", 1.0),
-                "layout_score": layout_critic.get("layout_score", 1.0),
-                "failures": structural.get("failures", []) + layout_critic.get("failures", []),
-                "warnings": structural.get("warnings", []) + layout_critic.get("warnings", []),
-                "recommendations": structural.get("recommendations", []) + layout_critic.get("recommendations", []),
-                "evidence": {"structural_critic": structural, "layout_critic": layout_critic},
-            },
-        )
-    except Exception as exc:
-        render_report = _render_exception_report(exc)
+        model = chat_model_for_book(book, db=db)
+        render_result = None
+        png: Path | None = None
+        rendered_svg: Path | None = None
+        try:
+            render_result = render_figure(fig, book, candidate_png, model=model, chart_type=chart_type)
+            png = render_result.primary_png_path
+            rendered_svg = render_result.optional_svg_path
+            clf = _classification(fig)
+            render_report = inspect_rendered_figure(
+                png_path=png,
+                svg_path=rendered_svg,
+                classification=clf,
+            )
+            qr_evidence = (clf.get("quality_report") or {}).get("evidence") or {}
+            structural = clf.get("structural_critic") or qr_evidence.get("structural_critic") or run_structural_critic(
+                semantic_ir=clf.get("semantic_ir"),
+                dsl_json=clf.get("dsl_json"),
+                parsed_spec=clf.get("parsed_spec"),
+                source_text=description,
+            )
+            layout_critic = run_layout_critic(
+                layout_result=clf.get("layout_result"),
+                svg_path=rendered_svg,
+                classification=clf,
+            )
+            render_report = merge_quality_reports(
+                render_report,
+                {
+                    "status": structural.get("status"),
+                    "semantic_score": structural.get("alignment_rate", 1.0),
+                    "layout_score": layout_critic.get("layout_score", 1.0),
+                    "failures": structural.get("failures", []) + layout_critic.get("failures", []),
+                    "warnings": structural.get("warnings", []) + layout_critic.get("warnings", []),
+                    "recommendations": structural.get("recommendations", []) + layout_critic.get("recommendations", []),
+                    "evidence": {"structural_critic": structural, "layout_critic": layout_critic},
+                },
+            )
+        except Exception as exc:
+            render_report = _render_exception_report(exc)
 
-    has_png = bool(png and png.is_file())
-    has_svg = bool(rendered_svg and rendered_svg.is_file())
-    if not has_png and not has_svg:
-        _cleanup_candidates(png, rendered_svg, candidate_png, candidate_svg)
+        has_png = bool(png and png.is_file())
+        has_svg = bool(rendered_svg and rendered_svg.is_file())
+        if not has_png and not has_svg:
+            clf = _classification(fig)
+            merged_report = merge_quality_reports(clf.get("quality_report"), render_report)
+            _set_quality_report(fig, merged_report)
+            fig.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(fig)
+            raise FigureGenerationError(
+                _render_failure_message(merged_report),
+                quality_report=merged_report,
+            )
+
+        from app.models.binary_asset import FigureAssetRole
+        from app.services.assets.figure_asset_service import FigureAssetService
+
+        owner_user_id = book.user_id
+        fas = FigureAssetService(db)
+        if has_png:
+            fas.attach_asset(
+                figure=fig,
+                content=png.read_bytes(),
+                filename=f"{fig.id.hex}.png",
+                mime_type="image/png",
+                owner_user_id=owner_user_id,
+                role=FigureAssetRole.png,
+                set_primary_url=True,
+            )
+        if has_svg:
+            fas.attach_asset(
+                figure=fig,
+                content=rendered_svg.read_bytes(),
+                filename=f"{fig.id.hex}.svg",
+                mime_type="image/svg+xml",
+                owner_user_id=owner_user_id,
+                role=FigureAssetRole.svg,
+            )
+
         clf = _classification(fig)
         merged_report = merge_quality_reports(clf.get("quality_report"), render_report)
         _set_quality_report(fig, merged_report)
-        fig.updated_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(fig)
-        raise FigureGenerationError(
-            _render_failure_message(merged_report),
-            quality_report=merged_report,
-        )
-
-    if has_png:
-        if out_path.is_file():
-            out_path.unlink()
-        png.replace(out_path)
-    elif out_path.is_file():
-        out_path.unlink()
-
-    if has_svg:
-        if svg_path.is_file():
-            svg_path.unlink()
-        rendered_svg.replace(svg_path)
-    elif svg_path.is_file():
-        svg_path.unlink()
-
-    clf = _classification(fig)
-    merged_report = merge_quality_reports(clf.get("quality_report"), render_report)
-    _set_quality_report(fig, merged_report)
-    parsed_spec = clf.get("parsed_spec") if isinstance(clf.get("parsed_spec"), dict) else {}
-
-    figure_storage.save_assets(
-        book_id=book.id,
-        chapter_id=chapter_id,
-        figure_id=fig.id,
-        dsl=clf.get("dsl_json"),
-        meta={
+        parsed_spec = clf.get("parsed_spec") if isinstance(clf.get("parsed_spec"), dict) else {}
+        clf["render_meta"] = {
             "figure_id": str(fig.id),
             "book_id": str(book.id),
             "chapter_id": chapter_id,
@@ -236,36 +246,41 @@ def generate_figure_asset(
             "render_diagnostics": getattr(render_result, "diagnostics", {}) if render_result else {},
             "quality_report": clf.get("quality_report"),
             "version": int(datetime.now(timezone.utc).timestamp()),
-        },
-    )
+        }
+        fig.classification_json = clf
 
-    fig.render_source = render_result.render_source if render_result else ""
-    sync_figure_urls_from_disk(fig, chapter_index=chapter_id)
-    fig.status = FigureStatus.generated
-    fig.updated_at = datetime.now(timezone.utc)
-    if not fig.caption:
-        first = description.split("。")[0].strip() or description
-        fig.caption = (first[:120] + "…") if len(first) > 120 else first
-    db.commit()
-    db.refresh(fig)
-    return fig
+        fig.render_source = render_result.render_source if render_result else ""
+        sync_figure_urls_from_assets(fig, db)
+        fig.status = FigureStatus.generated
+        fig.updated_at = datetime.now(timezone.utc)
+        if not fig.caption:
+            first = description.split("。")[0].strip() or description
+            fig.caption = (first[:120] + "…") if len(first) > 120 else first
+        db.commit()
+        db.refresh(fig)
+        return fig
 
 
-def save_uploaded_figure(fig: Figure, book_id: UUID, content: bytes, filename: str, db: Session) -> Figure:
+def save_uploaded_figure(fig: Figure, book_id: UUID, content: bytes, filename: str, db: Session, *, owner_user_id) -> Figure:
+    from app.models.binary_asset import FigureAssetRole
+    from app.services.assets.figure_asset_service import FigureAssetService
+
     ext = Path(filename).suffix.lower() or ".png"
-    if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
-        ext = ".png"
-    dest = figure_storage.png_path(book_id, fig.chapter_index, fig.id)
-    if ext != ".png":
-        dest = dest.with_suffix(ext)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(content)
-    old_svg = figure_storage.svg_path(book_id, fig.chapter_index, fig.id)
-    if old_svg.is_file():
-        old_svg.unlink()
-    fig.file_path = str(dest)
-    fig.file_url = public_url(book_id, fig.chapter_index, fig.id, ext=dest.suffix.lstrip("."))
-    fig.svg_url = None
+    mime = "image/png"
+    if ext in (".jpg", ".jpeg"):
+        mime = "image/jpeg"
+    elif ext == ".webp":
+        mime = "image/webp"
+    elif ext == ".gif":
+        mime = "image/gif"
+    FigureAssetService(db).set_primary_asset(
+        figure=fig,
+        content=content,
+        filename=filename,
+        mime_type=mime,
+        owner_user_id=owner_user_id,
+        role=FigureAssetRole.primary,
+    )
     fig.status = FigureStatus.uploaded
     fig.updated_at = datetime.now(timezone.utc)
     db.commit()

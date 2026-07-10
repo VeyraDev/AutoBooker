@@ -637,15 +637,18 @@ def sync_figures_to_tiptap(
 
 
 def repair_figure_file(fig: Figure, db: Session) -> Figure:
-    """修复遗留路径、同步规范目录下的 figure.svg / figure.png 与 DB URL。"""
-    from app.services.figures.generation import sync_figure_urls_from_disk
+    """修复遗留路径、同步 DB 资产 URL，本地磁盘仅 fallback。"""
+    from app.services.assets.asset_resolver import AssetResolver
     from app.services.figures.storage.manager import figure_storage
 
+    resolver = AssetResolver(db)
     changed = False
 
     def clear_missing_svg() -> bool:
         nonlocal changed
         if not getattr(fig, "svg_url", None):
+            return False
+        if fig.svg_url.startswith("/api/") or "db://binary_assets/" in str(fig.svg_url or ""):
             return False
         canonical_svg = figure_storage.svg_path(fig.book_id, fig.chapter_index, fig.id)
         if canonical_svg.is_file():
@@ -656,6 +659,25 @@ def repair_figure_file(fig: Figure, db: Session) -> Figure:
         fig.svg_url = None
         changed = True
         return True
+
+    from app.models.binary_asset import FigureAsset
+
+    link = (
+        db.query(FigureAsset)
+        .filter(FigureAsset.figure_id == fig.id, FigureAsset.active.is_(True))
+        .first()
+    )
+    if link:
+        before_url = fig.file_url
+        before_svg = fig.svg_url
+        before_path = fig.file_path
+        resolver.sync_figure_urls_from_assets(fig)
+        if fig.file_url != before_url or fig.svg_url != before_svg or fig.file_path != before_path:
+            changed = True
+        clear_missing_svg()
+        return _commit_figure(fig, db) if changed else fig
+
+    from app.services.figures.generation import sync_figure_urls_from_disk
 
     canonical_png = figure_storage.png_path(fig.book_id, fig.chapter_index, fig.id)
     canonical_svg = figure_storage.svg_path(fig.book_id, fig.chapter_index, fig.id)

@@ -41,38 +41,29 @@ def _load_ordered_chapters(book_id: UUID, db: Session) -> list[Chapter]:
     return [chapter for chapter in rows if not is_bibliography_chapter(chapter)]
 
 
-def build_markdown(book: Book, chapters: list[Chapter]) -> str:
-    from app.services.citation_service import is_bibliography_chapter
+def build_markdown(book: Book, chapters: list[Chapter], db: Session | None = None) -> str:
+    from app.services.publication.export_assembler import build_book_export_ast
+    from app.services.publication.markdown_renderer import render_export_ast_to_markdown
 
-    lines: list[str] = [f"# {book.title}", ""]
-    for ch in chapters:
-        if is_bibliography_chapter(ch):
-            continue
-        lines.append(f"## {export_chapter_title(ch)}")
-        lines.append("")
-        if ch.summary:
-            lines.append(f"> {ch.summary.strip()}")
-            lines.append("")
-        body = chapter_content_to_markdown(ch.content if isinstance(ch.content, dict) else None)
-        if body:
-            lines.append(body)
-        else:
-            lines.append("（本章暂无正文）")
-        lines.append("")
-    raw_bibliography = getattr(book, "bibliography", None)
-    bibliography = raw_bibliography if isinstance(raw_bibliography, dict) else {}
-    bibliography_text = str(bibliography.get("text") or "").strip()
-    if bibliography_text:
-        lines.extend(["## 参考文献", "", bibliography_text, ""])
-    return "\n".join(lines).rstrip() + "\n"
+    if db is None:
+        from app.database import SessionLocal
+
+        local_db = SessionLocal()
+        try:
+            export_ast = build_book_export_ast(book, chapters, local_db)
+        finally:
+            local_db.close()
+    else:
+        export_ast = build_book_export_ast(book, chapters, db)
+    return render_export_ast_to_markdown(export_ast)
 
 
 def build_docx_bytes(book: Book, chapters: list[Chapter], db: Session) -> bytes:
-    from app.services.publication.book_ast_builder import build_book_ast
-    from app.services.publication.publication_renderer_docx import render_ast_to_docx
+    from app.services.publication.export_assembler import build_book_export_ast
+    from app.services.publication.publication_renderer_docx import render_export_ast_to_docx
 
-    ast = build_book_ast(book, chapters, db)
-    return render_ast_to_docx(ast)
+    export_ast = build_book_export_ast(book, chapters, db)
+    return render_export_ast_to_docx(export_ast, db=db)
 
 
 _PDF_CSS = """
@@ -131,11 +122,11 @@ hr {
 
 
 def build_pdf_bytes(book: Book, chapters: list[Chapter], db: Session) -> bytes:
-    from app.services.publication.book_ast_builder import build_book_ast
-    from app.services.publication.publication_renderer_pdf import render_ast_to_pdf
+    from app.services.publication.export_assembler import build_book_export_ast
+    from app.services.publication.publication_renderer_pdf import render_export_ast_to_pdf
 
-    ast = build_book_ast(book, chapters, db)
-    return render_ast_to_pdf(ast)
+    export_ast = build_book_export_ast(book, chapters, db)
+    return render_export_ast_to_pdf(export_ast, db=db)
 
 
 def export_book_bytes(book_id: UUID, export_format: str, user, db: Session) -> tuple[bytes, str, str]:
@@ -151,7 +142,7 @@ def export_book_bytes(book_id: UUID, export_format: str, user, db: Session) -> t
 
     fmt = export_format.lower().strip()
     if fmt == "markdown" or fmt == "md":
-        text = build_markdown(book, chapters)
+        text = build_markdown(book, chapters, db)
         body = text.encode("utf-8")
         return body, f"{base}.md", "text/markdown; charset=utf-8"
 

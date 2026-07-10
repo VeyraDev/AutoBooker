@@ -104,11 +104,26 @@ def _generate_item(item_id: UUID) -> bool:
 
 
 def run_figure_batch(run_id: UUID) -> None:
+    import socket
+    import uuid as uuid_mod
+
+    worker_id = f"{socket.gethostname()}:fig-{uuid_mod.uuid4().hex[:8]}"
     db = SessionLocal()
     try:
         run = db.get(FigureBatchRun, run_id)
         if not run or run.status not in {"pending", "running"}:
             return
+        from app.services.jobs.job_runner import LeaseService
+
+        if run.lease_until and run.lease_owner and run.lease_owner != worker_id:
+            from datetime import datetime, timezone
+
+            if run.lease_until > datetime.now(timezone.utc):
+                return
+        run.lease_owner = worker_id
+        from datetime import datetime, timedelta, timezone
+
+        run.lease_until = datetime.now(timezone.utc) + timedelta(seconds=120)
         run.status = "running"
         db.commit()
         item_ids = [
@@ -151,6 +166,8 @@ def run_figure_batch(run_id: UUID) -> None:
         if run.status != "paused":
             run.status = "completed" if not run.failed else "completed_with_errors"
         run.finished_at = datetime.now(timezone.utc)
+        run.lease_owner = None
+        run.lease_until = None
         db.commit()
     finally:
         db.close()

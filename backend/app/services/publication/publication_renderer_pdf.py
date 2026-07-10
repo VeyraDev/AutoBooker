@@ -9,8 +9,11 @@ from typing import Any
 
 import fitz
 from PIL import Image, ImageOps
+from sqlalchemy.orm import Session
 
 from app.services.publication.book_ast import BookAst
+from app.services.publication.export_ast import BookExportAst
+from app.services.publication.book_ast import AstBlock
 from app.services.publication.page_numbers import add_pdf_page_numbers
 from app.services.publication.publication_styles import (
     PDF_CONTENT_HEIGHT_PT,
@@ -21,9 +24,9 @@ from app.services.publication.publication_styles import (
     PUBLICATION_CSS,
 )
 from app.services.tiptap_convert import (
-    _figure_raster_for_export,
     _inline_to_markdown,
-    _resolve_figure_local_path,
+    _materialize_figure_local_path,
+    _materialize_figure_raster_for_export,
     _table_cell_inline_nodes,
     merge_figure_export_attrs,
 )
@@ -86,22 +89,23 @@ def _prepare_figure_archive_entry(
     attrs: dict[str, Any],
     fig_idx: int,
     archive: fitz.Archive,
+    db: Session | None = None,
 ) -> tuple[str, int, int] | None:
-    local = _resolve_figure_local_path(attrs)
-    if not local:
-        return None
-    raster = _figure_raster_for_export(local)
-    if not raster:
-        return None
-    name = f"figure-{fig_idx}.png"
-    try:
-        png_bytes, width_px, height_px = _figure_image_for_pdf(raster)
-    except Exception:
-        png_bytes = raster.read_bytes()
-        width_px = PDF_FIGURE_WIDTH_PX
-        height_px = max(1, width_px * 3 // 4)
-    archive.add(png_bytes, name)
-    return name, width_px, height_px
+    with _materialize_figure_local_path(attrs, db=db) as local:
+        if not local:
+            return None
+        with _materialize_figure_raster_for_export(local) as raster:
+            if not raster:
+                return None
+            name = f"figure-{fig_idx}.png"
+            try:
+                png_bytes, width_px, height_px = _figure_image_for_pdf(raster)
+            except Exception:
+                png_bytes = raster.read_bytes()
+                width_px = PDF_FIGURE_WIDTH_PX
+                height_px = max(1, width_px * 3 // 4)
+            archive.add(png_bytes, name)
+            return name, width_px, height_px
 
 
 
@@ -302,6 +306,7 @@ def _build_publication_html(
     *,
     page_break_figure_ids: set[str],
     archive: fitz.Archive,
+    db: Session | None = None,
 ) -> str:
     parts = ["<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>"]
     blocks = ast.blocks
@@ -319,7 +324,7 @@ def _build_publication_html(
             fig_html = ""
             if isinstance(node, dict):
                 merged_attrs = merge_figure_export_attrs(block.attrs, node.get("attrs"))
-                prepared = _prepare_figure_archive_entry(merged_attrs, fig_idx, archive)
+                prepared = _prepare_figure_archive_entry(merged_attrs, fig_idx, archive, db=db)
                 if prepared:
                     name, width_px, height_px = prepared
                     fig_html = _figure_img_html(name, width_px, height_px)
@@ -358,6 +363,11 @@ def _build_publication_html(
             else:
                 parts.append(f"<h2 class='section-title'>{t}</h2>")
         elif role == "body":
+            if block.attrs.get("force_page_break"):
+                parts.append("<p style='page-break-before:always;margin:0'></p>")
+                if not t and not isinstance(node, dict):
+                    i += 1
+                    continue
             if isinstance(node, dict):
                 chunk = _tiptap_node_to_html(node)
                 if chunk:
@@ -403,12 +413,68 @@ def _build_publication_html(
     return "".join(parts)
 
 
-def render_ast_to_pdf(ast: BookAst) -> bytes:
+def _export_ast_to_linear_book_ast(export_ast: BookExportAst) -> BookAst:
+    blocks: list[AstBlock] = []
+
+    def append_page_break_once() -> None:
+        if not blocks:
+            return
+        last = blocks[-1]
+        if last.role == "body" and last.attrs.get("force_page_break"):
+            return
+        blocks.append(AstBlock(role="body", text="", attrs={"force_page_break": True}))
+
+    for section in export_ast.sections:
+        if section.type == "cover":
+            blocks.append(AstBlock(role="book_title", text=section.title))
+            if section.page_break_after:
+                append_page_break_once()
+        elif section.type == "toc":
+            if section.page_break_before:
+                append_page_break_once()
+            blocks.append(AstBlock(role="chapter_title", text="目录"))
+            for entry in section.entries:
+                blocks.append(AstBlock(role="body", text=entry.title))
+            if section.page_break_after:
+                append_page_break_once()
+        elif section.type == "preface":
+            if section.page_break_before:
+                append_page_break_once()
+            blocks.append(AstBlock(role="preface_title", text=section.title))
+            blocks.extend(section.blocks)
+            if section.page_break_after:
+                append_page_break_once()
+        elif section.type == "chapter":
+            if section.page_break_before:
+                append_page_break_once()
+            blocks.append(
+                AstBlock(
+                    role="chapter_title",
+                    text=section.title,
+                    attrs={"chapter_index": section.chapter_index},
+                )
+            )
+            blocks.extend(section.blocks)
+        elif section.type == "bibliography":
+            if section.page_break_before:
+                append_page_break_once()
+            blocks.append(
+                AstBlock(role="chapter_title", text=section.title, attrs={"book_end_matter": True})
+            )
+            blocks.extend(section.blocks)
+    return BookAst(title=export_ast.title, blocks=blocks)
+
+
+def render_export_ast_to_pdf(export_ast: BookExportAst, db: Session | None = None) -> bytes:
+    return render_ast_to_pdf(_export_ast_to_linear_book_ast(export_ast), db=db)
+
+
+def render_ast_to_pdf(ast: BookAst, db: Session | None = None) -> bytes:
     page_break_ids: set[str] = set()
     pdf_bytes = b""
     for _ in range(4):
         archive = fitz.Archive()
-        html_doc = _build_publication_html(ast, page_break_figure_ids=page_break_ids, archive=archive)
+        html_doc = _build_publication_html(ast, page_break_figure_ids=page_break_ids, archive=archive, db=db)
         pdf_bytes = _render_story_html_to_pdf(html_doc, archive)
         bad = _detect_bad_figure_layout_ids(pdf_bytes)
         if not bad - page_break_ids:

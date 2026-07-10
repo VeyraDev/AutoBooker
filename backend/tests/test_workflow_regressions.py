@@ -2,7 +2,8 @@ import os
 from types import SimpleNamespace
 from uuid import uuid4
 
-from fastapi import BackgroundTasks
+import pytest
+from fastapi import BackgroundTasks, HTTPException
 
 from app.models.book import BookStatus, CitationStyle
 from app.models.book_job import BookJob, BookJobStatus
@@ -85,41 +86,26 @@ def test_retry_replaces_a_job_interrupted_by_process_restart(monkeypatch):
     assert book.status == BookStatus.auto_generating
 
 
-def test_atomic_one_click_endpoint_creates_book_and_job(monkeypatch):
+def test_atomic_one_click_endpoint_requires_confirmed_intake():
     user = SimpleNamespace(id=uuid4())
-    book = SimpleNamespace(id=uuid4(), status=BookStatus.setup)
     db = _JobDb()
-    create_options = {}
     body = book_jobs_router.AutoGenerateIn(
         title="功能测试书稿",
         book_type="nonfiction",
         style_type="popular_science",
     )
 
-    def fake_create_book(*_args, **kwargs):
-        create_options.update(kwargs)
-        return book
+    with pytest.raises(HTTPException) as exc:
+        book_jobs_router.start_auto_generate(
+            body,
+            BackgroundTasks(),
+            user,
+            db,
+        )
 
-    monkeypatch.setattr(
-        book_jobs_router.book_service,
-        "create_book",
-        fake_create_book,
-    )
-    monkeypatch.setattr(book_jobs_router, "build_job_detail", lambda *_args: {})
-
-    result = book_jobs_router.start_auto_generate(
-        body,
-        BackgroundTasks(),
-        user,
-        db,
-    )
-
-    assert result.book_id == str(book.id)
-    assert result.status == BookJobStatus.pending.value
-    assert len(db.added) == 1
-    assert db.added[0].book_id == book.id
-    assert book.status == BookStatus.auto_generating
-    assert create_options["commit"] is False
+    assert exc.value.status_code == 400
+    assert "确认项目输入" in exc.value.detail
+    assert db.added == []
 
 
 def test_starting_editor_persists_auto_writing_checkpoint():

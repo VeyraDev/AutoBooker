@@ -19,6 +19,7 @@ from app.models.chapter_review import ChapterReview, ChapterReviewIssue, ReviewA
 from app.models.figure import Figure
 from app.models.user import User
 from app.repositories import review_repository
+from app.services.writing.writing_context_builder import WritingContextBuilder
 from app.routers.auth import get_current_user
 from app.routers.chapters import _chat_model_for_book, _get_chapter
 from app.schemas.review import (
@@ -71,7 +72,7 @@ def review_chapter(
     md = _resolve_markdown(ch, body)
     if not md.strip():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "本章暂无正文，请先写作或粘贴待审内容")
-    review = _create_review_report(book, ch, md, db)
+    review = _create_review_report(book, ch, md, db, user=user)
     return _review_out(review, ch, current_md=md)
 
 
@@ -173,7 +174,7 @@ def recheck_review(
     if not ch:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chapter not found")
     md = _chapter_markdown(ch)
-    review = _create_review_report(book, ch, md, db)
+    review = _create_review_report(book, ch, md, db, user=user)
     return _review_out(review, ch, current_md=md)
 
 
@@ -560,7 +561,7 @@ def _partial_recheck_dimensions(book, ch: Chapter, md: str, db: Session, review:
     db.commit()
 
 
-def _create_review_report(book, ch: Chapter, md: str, db: Session) -> ChapterReview:
+def _create_review_report(book, ch: Chapter, md: str, db: Session, *, user: User | None = None) -> ChapterReview:
     canonical = canonical_markdown(md)
     digest = snapshot_hash(canonical)
     citations = list_citations_sorted(db, book.id)
@@ -583,7 +584,7 @@ def _create_review_report(book, ch: Chapter, md: str, db: Session) -> ChapterRev
         book_title=book.title or "",
         book_type=book.book_type.value,
         citation_style=book.citation_style.value if book.citation_style else "无",
-        user_material=(book.user_material or ""),
+        user_material=(WritingContextBuilder(db).to_prompt_block(WritingContextBuilder(db).build_for_review(book.id))[:4000] or book.user_material or ""),
         narrative_constitution=(book.narrative_constitution or ""),
         approved_citations=cite_lines,
         figure_summaries=figure_lines,

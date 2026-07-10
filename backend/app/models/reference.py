@@ -43,7 +43,8 @@ class ReferenceFile(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     book_id = Column(UUID(as_uuid=True), ForeignKey("books.id", ondelete="CASCADE"), nullable=False, index=True)
     filename = Column(String(500), nullable=False)
-    storage_path = Column(String(2000), nullable=False)
+    asset_id = Column(UUID(as_uuid=True), ForeignKey("binary_assets.id", ondelete="SET NULL"), nullable=True)
+    storage_path = Column(String(2000), nullable=True)
     file_type = Column(String(20), nullable=False)  # pdf | docx | txt
     ingest_kind = Column(String(20), nullable=False, default="reference")  # reference | material
     parse_status = Column(

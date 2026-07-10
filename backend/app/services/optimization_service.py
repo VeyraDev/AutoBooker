@@ -118,7 +118,10 @@ def parse_optimization_source(project_id: UUID) -> None:
         book = db.get(Book, project.book_id)
         if not ref or not book:
             raise RuntimeError("优化项目文件不存在")
-        sections = extract_manuscript_sections(ref.storage_path, ref.file_type)
+        from app.services.assets.reference_asset_service import ReferenceAssetService
+
+        with ReferenceAssetService(db).materialize(ref) as source_path:
+            sections = extract_manuscript_sections(str(source_path), ref.file_type)
         db.query(ManuscriptChapterMapping).filter(ManuscriptChapterMapping.project_id == project.id).delete()
         db.query(ManuscriptBaselineChapter).filter(ManuscriptBaselineChapter.project_id == project.id).delete()
         db.query(Chapter).filter(Chapter.book_id == book.id).delete()

@@ -117,6 +117,8 @@ class OutlineAgent:
             parts.append(f"学科领域：{cfg['discipline']}")
         if cfg.get("topic_tags"):
             parts.append("三级话题标签：" + "、".join(cfg["topic_tags"]))
+        if cfg.get("writing_context"):
+            parts.append("【已确认写作上下文】\n" + str(cfg["writing_context"])[:8000])
         if cfg.get("writing_rules"):
             parts.append("全书级写作要求（纳入大纲相关章节要点或全局约束）：\n" + "\n".join(f"- {r}" for r in cfg["writing_rules"][:15]))
         if cfg.get("primary_outline"):

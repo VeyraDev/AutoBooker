@@ -69,6 +69,19 @@ def build_book_memory(book_id: uuid.UUID, chapter_index: int, db: Session) -> di
     if not topic_tags_line.strip():
         topic_tags_line = "（未选标签）"
     user_material = "（无）"
+    try:
+        from app.services.writing.writing_context_builder import WritingContextBuilder
+
+        wcb = WritingContextBuilder(db)
+        snap = wcb.build_for_chapter(book_id, chapter_index)
+        block = wcb.to_prompt_block(snap)
+        if block.strip():
+            user_material = block[:6000]
+        elif (book.user_material or "").strip():
+            user_material = book.user_material[:4000]
+    except Exception:
+        if (book.user_material or "").strip():
+            user_material = book.user_material[:4000]
 
     narrative_constitution = (book.narrative_constitution or "").strip()
 

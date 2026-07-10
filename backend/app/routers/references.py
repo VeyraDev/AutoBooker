@@ -57,7 +57,13 @@ def _run_parse_task(
         forced = None
         if ingest_hint in ("material", "reference"):
             forced = ingest_hint
-        agent.parse_and_store(file_id, storage_path, file_type, forced_class=forced)
+        from app.models.reference import ReferenceFile
+
+        ref = db.query(ReferenceFile).filter(ReferenceFile.id == file_id).first()
+        if ref and ref.asset_id:
+            agent.parse_from_asset(file_id, ref.asset_id, file_type, forced_class=forced)
+        elif storage_path:
+            agent.parse_and_store(file_id, storage_path, file_type, forced_class=forced)
     except Exception:
         logger.exception("background parse failed book=%s file=%s", book_id, file_id)
     finally:
@@ -124,13 +130,6 @@ async def upload_reference(
     else:
         file_type = "txt"
 
-    from app.config import settings
-
-    base = settings.upload_path / str(book.id)
-    base.mkdir(parents=True, exist_ok=True)
-    new_name = f"{uuid.uuid4().hex}_{Path(file.filename).name}"
-    dest = base / new_name
-
     content = await file.read()
 
     parsed_purposes = parsed_purposes or ["reference_material"]
@@ -138,12 +137,11 @@ async def upload_reference(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "原始书稿必须单独上传")
     if share_to_library and "bibliography" not in parsed_purposes:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "只有参考文献可授权用于公共书库")
-    dest.write_bytes(content)
 
     ref = ReferenceFile(
         book_id=book.id,
         filename=file.filename,
-        storage_path=str(dest),
+        storage_path=None,
         file_type=file_type,
         parse_status=ParseStatus.pending,
         share_to_library="pending" if share_to_library else "private",
@@ -154,6 +152,9 @@ async def upload_reference(
     )
     db.add(ref)
     db.flush()
+    from app.services.assets.reference_asset_service import ReferenceAssetService
+
+    ReferenceAssetService(db).attach_upload(ref=ref, content=content, owner_user_id=user.id)
     for purpose in parsed_purposes:
         db.add(
             ReferenceFilePurpose(
@@ -171,7 +172,7 @@ async def upload_reference(
         _run_parse_task,
         book.id,
         ref.id,
-        str(dest),
+        ref.storage_path or "",
         file_type,
         hint if hint != "auto" else None,
     )
@@ -273,8 +274,8 @@ def delete_reference(
     if ref.outline_usage == OutlineUsage.primary or (ref.file_purposes and "writing_requirements" in ref.file_purposes):
         book.constitution_stale = True
 
-    storage = Path(ref.storage_path)
-    if storage.is_file():
+    storage = Path(ref.storage_path) if ref.storage_path and not str(ref.storage_path).startswith("db://") else None
+    if storage and storage.is_file():
         try:
             storage.unlink()
         except OSError:

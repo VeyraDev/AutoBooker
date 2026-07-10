@@ -185,37 +185,62 @@ def duplicate_book(
     db.add(new_book)
     db.flush()
 
-    from app.config import settings
-
     src_refs = db.query(ReferenceFile).filter(ReferenceFile.book_id == source.id).all()
-    dest_base = settings.upload_path / str(new_book.id)
-    dest_base.mkdir(parents=True, exist_ok=True)
 
     for ref in src_refs:
-        src_path = Path(ref.storage_path)
-        if not src_path.is_file():
-            continue
-        new_name = f"{uuid.uuid4().hex}_{Path(ref.filename).name}"
-        dest_path = dest_base / new_name
-        shutil.copy2(src_path, dest_path)
-        db.add(
-            ReferenceFile(
-                book_id=new_book.id,
-                filename=ref.filename,
-                storage_path=str(dest_path),
-                file_type=ref.file_type,
-                ingest_kind=ref.ingest_kind,
-                parse_status=ref.parse_status,
-                error_message=ref.error_message,
-                parsed_at=ref.parsed_at,
-                share_to_library=ref.share_to_library,
-                file_purposes=ref.file_purposes,
-                outline_usage=ref.outline_usage,
-                user_note=ref.user_note,
-                parse_version=ref.parse_version,
-                parse_artifacts=ref.parse_artifacts,
-            )
+        new_ref = ReferenceFile(
+            book_id=new_book.id,
+            filename=ref.filename,
+            storage_path=ref.storage_path,
+            asset_id=ref.asset_id,
+            file_type=ref.file_type,
+            ingest_kind=ref.ingest_kind,
+            parse_status=ref.parse_status,
+            error_message=ref.error_message,
+            parsed_at=ref.parsed_at,
+            share_to_library=ref.share_to_library,
+            file_purposes=ref.file_purposes,
+            outline_usage=ref.outline_usage,
+            user_note=ref.user_note,
+            parse_version=ref.parse_version,
+            parse_artifacts=ref.parse_artifacts,
         )
+        if ref.asset_id:
+            from app.models.binary_asset import BinaryAsset, AssetDomain, AssetRole
+
+            old_asset = db.query(BinaryAsset).filter(BinaryAsset.id == ref.asset_id).first()
+            if old_asset:
+                copied = BinaryAsset(
+                    book_id=new_book.id,
+                    owner_user_id=user.id,
+                    asset_domain=AssetDomain.reference,
+                    asset_role=AssetRole.original_upload,
+                    filename=old_asset.filename,
+                    mime_type=old_asset.mime_type,
+                    extension=old_asset.extension,
+                    content=old_asset.content,
+                    size_bytes=old_asset.size_bytes,
+                    sha256=old_asset.sha256,
+                    width=old_asset.width,
+                    height=old_asset.height,
+                    metadata_json=old_asset.metadata_json,
+                )
+                db.add(copied)
+                db.flush()
+                new_ref.asset_id = copied.id
+                new_ref.storage_path = f"db://binary_assets/{copied.id}"
+        elif ref.storage_path:
+            src_path = Path(ref.storage_path)
+            if src_path.is_file():
+                from app.services.assets.reference_asset_service import ReferenceAssetService
+
+                content = src_path.read_bytes()
+                new_ref.storage_path = None
+                db.add(new_ref)
+                db.flush()
+                ReferenceAssetService(db).attach_upload(ref=new_ref, content=content, owner_user_id=user.id)
+                continue
+        db.add(new_ref)
 
     copied_chapters = 0
     if copy_outline:

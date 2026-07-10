@@ -191,6 +191,22 @@ class DocumentParserAgent:
                 )
             )
 
+    def parse_from_asset(
+        self,
+        file_id: uuid.UUID,
+        asset_id: uuid.UUID,
+        file_type: str,
+        *,
+        forced_class: str | None = None,
+    ) -> None:
+        from app.services.assets.binary_asset_service import BinaryAssetService
+        from app.services.assets.temporary_workspace import TemporaryWorkspace
+
+        asset = BinaryAssetService(self.db).get_asset_for_book(book_id=self.book_id, asset_id=asset_id)
+        suffix = f".{file_type.lower()}"
+        with TemporaryWorkspace().materialize(bytes(asset.content), suffix) as path:
+            self.parse_and_store(file_id, str(path), file_type, forced_class=forced_class)
+
     def parse_and_store(
         self,
         file_id: uuid.UUID,

@@ -36,8 +36,7 @@ from app.services.chapter_figure_table_normalize import (
     apply_overview_caption_edits,
     normalize_chapter_figures_tables,
 )
-from app.services.figure_generate import generate_figure_asset, save_uploaded_figure
-from app.services.figures.generation import FigureGenerationError
+from app.services.figures.generation import FigureGenerationError, generate_figure_asset, save_uploaded_figure
 from app.services.figure_service import (
     _LEGACY_TAG_BY_TYPE,
     get_figure_list,
@@ -250,7 +249,7 @@ async def upload_figure(
     if suffix not in ALLOWED_IMAGE:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "仅支持 png/jpg/webp/gif")
     content = await file.read()
-    fig = save_uploaded_figure(fig, book_id, content, file.filename, db)
+    fig = save_uploaded_figure(fig, book_id, content, file.filename, db, owner_user_id=user.id)
     return _figure_out(fig)
 
 

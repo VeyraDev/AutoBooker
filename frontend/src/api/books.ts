@@ -78,6 +78,13 @@ async function blobErrorMessage(blob: Blob): Promise<string> {
   return msg;
 }
 
+export async function fetchExportNotice(id: string): Promise<{ suggestions: string[] }> {
+  const { data } = await client.get<{ message?: string | null; suggestion_count?: number }>(`/books/${id}/export/notice`);
+  const suggestions: string[] = [];
+  if (data.message) suggestions.push(data.message);
+  return { suggestions };
+}
+
 /** 下载二进制；若服务端返回 JSON 错误体会抛出 Error */
 export async function exportBook(id: string, format: ExportFormat): Promise<Blob> {
   try {

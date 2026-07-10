@@ -420,7 +420,15 @@ cd backend
 .\.venv\Scripts\python.exe -m alembic heads
 ```
 
-当前 0.5 核心迁移为 `p3q4r5s6t7u8_autobooker_05_core.py`。
+当前 0.5 核心迁移为 `p3q4r5s6t7u8_autobooker_05_core.py`；重构迁移含 `r1s2t3u4v5w6_refactor_core.py` 与 `s7t8u9v0w1x2_writing_context_snapshots.py`。
+
+### 重构部署清单
+
+1. `alembic upgrade head`
+2. `python scripts/migrate_local_assets_to_db.py --dry-run` 核对后正式执行
+3. 验证旧书稿图片/资料经 `/api/books/{id}/assets/{asset_id}/content` 可访问
+4. 设置 `ASSETS_COMPAT_STATIC=false`（默认）后重启后端
+5. CI 工作流 `refactor-guards.yml` 会跑守卫脚本与回归测试子集
 
 ## 兼容与部署注意事项
 

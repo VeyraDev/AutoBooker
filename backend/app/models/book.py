@@ -35,6 +35,13 @@ class BookWorkflowMode(str, enum.Enum):
     optimize_existing = "optimize_existing"
 
 
+class CreationOrigin(str, enum.Enum):
+    idea_only = "idea_only"
+    material_first = "material_first"
+    outline_first = "outline_first"
+    manuscript_continue = "manuscript_continue"
+
+
 class Book(Base):
     __tablename__ = "books"
 
@@ -69,6 +76,7 @@ class Book(Base):
     preface = Column(JSONB, nullable=True)
     bibliography = Column(JSONB, nullable=True)
     status = Column(Enum(BookStatus, name="book_status"), default=BookStatus.setup, nullable=False)
+    creation_origin = Column(Enum(CreationOrigin, name="creation_origin"), nullable=True)
     last_literature_query = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

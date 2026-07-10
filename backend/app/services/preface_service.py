@@ -19,7 +19,8 @@ DEFAULT_PREFACE: dict[str, Any] = {
 
 
 def get_preface(book: Book) -> dict[str, Any]:
-    raw = book.preface if isinstance(book.preface, dict) else {}
+    preface = getattr(book, "preface", None)
+    raw = preface if isinstance(preface, dict) else {}
     out = {**DEFAULT_PREFACE, **raw}
     return out
 

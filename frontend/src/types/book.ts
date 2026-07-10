@@ -1,4 +1,6 @@
 export type BookType = "nonfiction" | "academic";
+export type CreationOrigin = "idea_only" | "material_first" | "outline_first" | "manuscript_continue";
+
 export type BookWorkflowMode = "from_scratch" | "optimize_existing";
 
 export type BookStatus =
@@ -30,6 +32,7 @@ export interface Book {
   user_id: string;
   title: string;
   workflow_mode: BookWorkflowMode;
+  creation_origin?: CreationOrigin | null;
   original_title?: string | null;
   allow_title_optimization?: boolean;
   cover_url?: string | null;
@@ -64,6 +67,7 @@ export interface BookCreatePayload {
   style_type?: StyleType | null;
   topic_tags?: string[] | null;
   workflow_mode?: BookWorkflowMode;
+  creation_origin?: CreationOrigin;
 }
 
 export interface BookUpdatePayload {
