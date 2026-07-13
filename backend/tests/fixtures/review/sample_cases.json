@@ -1,10 +1,63 @@
 [
   {
-    "text": "研究表明，该系统性能提升明显。",
-    "expected_issue_type": "missing_citation"
+    "name": "figure_caption_ai",
+    "input": {
+      "quote": "表2-3 参数对照",
+      "detector": "ai_detect_v1",
+      "dimension": "ai_signature",
+      "severity": "high"
+    },
+    "expected": "drop"
   },
   {
-    "text": "见图1-1可知，微服务架构更加灵活。",
-    "expected_issue_type": "figure_semantic_mismatch"
+    "name": "no_quote_high",
+    "input": {
+      "quote": "",
+      "severity": "high",
+      "dimension": "logic",
+      "title": "逻辑跳跃"
+    },
+    "expected": "observe"
+  },
+  {
+    "name": "must_fix_locatable",
+    "input": {
+      "quote": "由此可见",
+      "severity": "high",
+      "dimension": "logic",
+      "title": "过渡生硬"
+    },
+    "expected": "keep",
+    "chapter_md": "开头段落。由此可见，需要改进。"
+  },
+  {
+    "name": "style_low_observe",
+    "input": {
+      "quote": "非常重要",
+      "severity": "low",
+      "dimension": "style",
+      "title": "措辞"
+    },
+    "expected": "observe"
+  },
+  {
+    "name": "input_alignment",
+    "input": {
+      "category": "input_alignment",
+      "severity": "medium",
+      "detail": "违反用户要求：不要营销腔",
+      "title": "营销腔"
+    },
+    "expected": "keep"
+  },
+  {
+    "name": "figure_caption_figure_word",
+    "input": {
+      "quote": "Figure 1 Overview",
+      "detector": "ai_detect_v2",
+      "dimension": "ai_signature",
+      "severity": "high"
+    },
+    "expected": "drop"
   }
 ]

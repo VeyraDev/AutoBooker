@@ -10,6 +10,7 @@ import LandingPage from "@/pages/LandingPage";
 import LibraryPage from "@/pages/LibraryPage";
 import LoginPage from "@/pages/LoginPage";
 import OptimizationPage from "@/pages/OptimizationPage";
+import ReviewWorkspacePage from "@/features/review/ReviewWorkspacePage";
 import RegisterPage from "@/pages/RegisterPage";
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="library" element={<LibraryPage />} />
           <Route path="books/:bookId/auto-progress" element={<AutoBookProgressPage />} />
           <Route path="books/:bookId/optimize" element={<OptimizationPage />} />
+          <Route path="books/:bookId/review" element={<ReviewWorkspacePage />} />
           <Route path="books/:bookId" element={<BookEditorPage />} />
         </Route>
       </Route>

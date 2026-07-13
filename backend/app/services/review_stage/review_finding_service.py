@@ -7,6 +7,8 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models.review_stage import BookReviewFinding, ReviewFindingStatus, ReviewTrack
+from app.services.review.review_finding_validator import enrich_finding_metadata, validate_finding
+from app.services.review.review_rule_library import match_basis_refs
 
 
 class ReviewFindingService:
@@ -39,19 +41,40 @@ class ReviewFindingService:
         track: ReviewTrack,
         items: list[dict],
         source_ref: dict | None = None,
+        context_snapshot: dict | None = None,
     ) -> None:
         for fd in items:
+            enriched = enrich_finding_metadata(fd, context_snapshot)
+            validated = validate_finding(enriched, book_level=True)
+            if not validated:
+                continue
+            basis = match_basis_refs(validated, context_snapshot)
+            ref = dict(source_ref or {})
+            if basis:
+                ref["basis_refs"] = basis
+            for key in (
+                "task_id",
+                "product_dimension",
+                "impact_scope",
+                "locatable",
+                "validation_passed",
+                "filter_reason",
+                "why_it_matters",
+                "chapter_index",
+            ):
+                if validated.get(key) is not None:
+                    ref[key] = validated.get(key)
             self.db.add(
                 BookReviewFinding(
                     run_id=run_id,
                     book_id=book_id,
                     track=track,
-                    category=fd["category"],
-                    severity=fd["severity"],
-                    title=fd["title"],
-                    detail=fd["detail"],
-                    suggestion=fd.get("suggestion") or fd["detail"],
+                    category=validated["category"],
+                    severity=validated.get("severity") or fd.get("severity") or "medium",
+                    title=validated["title"],
+                    detail=validated["detail"],
+                    suggestion=validated.get("suggestion") or validated["detail"],
                     status=ReviewFindingStatus.open,
-                    source_ref_json=source_ref,
+                    source_ref_json=ref or None,
                 )
             )

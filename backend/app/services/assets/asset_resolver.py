@@ -15,6 +15,7 @@ from app.models.binary_asset import BinaryAsset, FigureAsset
 from app.models.figure import Figure
 from app.services.assets.figure_asset_service import FigureAssetService
 from app.services.figures.storage.manager import figure_storage
+from app.services.storage_policy import local_business_storage_allowed
 
 _DB_ASSET_RE = re.compile(r"db://binary_assets/([0-9a-f-]+)", re.I)
 _API_ASSET_RE = re.compile(r"/books/([0-9a-f-]+)/assets/([0-9a-f-]+)/content", re.I)
@@ -80,6 +81,8 @@ class AssetResolver:
             )
             if svg_link:
                 fig.svg_url = self.asset_content_url(fig.book_id, svg_link.asset_id)
+            return
+        if not local_business_storage_allowed():
             return
         from app.services.figures.generation import sync_figure_urls_from_disk
 
@@ -158,24 +161,25 @@ class AssetResolver:
                 if export_png_from_svg(svg_path, png_path) and png_path.is_file():
                     yield png_path
                     return
-            from app.services.figures.export_assets import find_figure_asset_on_disk
+            if local_business_storage_allowed():
+                from app.services.figures.export_assets import find_figure_asset_on_disk
 
-            for path in find_figure_asset_on_disk(fig.book_id, fig.id):
-                if path.suffix.lower() == ".png":
-                    yield path
-                    return
-                if path.suffix.lower() == ".svg":
-                    from app.services.figures.render.svg.export_png import export_png_from_svg
-
-                    png_path = _new_temp_path(suffix=".png")
-                    tmp_paths.append(png_path)
-                    if export_png_from_svg(path, png_path) and png_path.is_file():
-                        yield png_path
+                for path in find_figure_asset_on_disk(fig.book_id, fig.id):
+                    if path.suffix.lower() == ".png":
+                        yield path
                         return
-            canonical = figure_storage.png_path(fig.book_id, fig.chapter_index, fig.id)
-            if canonical.is_file():
-                yield canonical
-                return
+                    if path.suffix.lower() == ".svg":
+                        from app.services.figures.render.svg.export_png import export_png_from_svg
+
+                        png_path = _new_temp_path(suffix=".png")
+                        tmp_paths.append(png_path)
+                        if export_png_from_svg(path, png_path) and png_path.is_file():
+                            yield png_path
+                            return
+                canonical = figure_storage.png_path(fig.book_id, fig.chapter_index, fig.id)
+                if canonical.is_file():
+                    yield canonical
+                    return
             yield None
         finally:
             for p in tmp_paths:

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.utils.request_body import parse_json_body
 from app.models.user import User
 from app.schemas.auth import LoginIn, RefreshIn, RegisterIn, TokenOut, UserAiModelsPatch, UserOut
 from app.services.auth_service import (
@@ -26,7 +27,8 @@ def _issue_tokens(user_id: str) -> TokenOut:
 
 
 @router.post("/register", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
-def register(body: RegisterIn, db: Session = Depends(get_db)):
+async def register(request: Request, db: Session = Depends(get_db)):
+    body = await parse_json_body(request, RegisterIn)
     if db.query(User).filter(User.email == body.email).first():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Email already registered")
     user = User(email=body.email, password_hash=hash_password(body.password))
@@ -37,7 +39,8 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenOut)
-def login(body: LoginIn, db: Session = Depends(get_db)):
+async def login(request: Request, db: Session = Depends(get_db)):
+    body = await parse_json_body(request, LoginIn)
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
@@ -45,7 +48,8 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
 
 
 @router.post("/refresh", response_model=TokenOut)
-def refresh(body: RefreshIn):
+async def refresh(request: Request):
+    body = await parse_json_body(request, RefreshIn)
     try:
         user_id = decode_token(body.refresh_token, expected_type="refresh")
     except JWTError:

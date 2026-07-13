@@ -1,13 +1,15 @@
 import { client } from "@/api/client";
 import type { TokenPair, UserAiModelsPatch, UserInfo } from "@/types/auth";
 
+const jsonHeaders = { "Content-Type": "application/json" } as const;
+
 export async function registerApi(email: string, password: string): Promise<TokenPair> {
-  const { data } = await client.post<TokenPair>("/auth/register", { email, password });
+  const { data } = await client.post<TokenPair>("/auth/register", { email, password }, { headers: jsonHeaders });
   return data;
 }
 
 export async function loginApi(email: string, password: string): Promise<TokenPair> {
-  const { data } = await client.post<TokenPair>("/auth/login", { email, password });
+  const { data } = await client.post<TokenPair>("/auth/login", { email, password }, { headers: jsonHeaders });
   return data;
 }
 

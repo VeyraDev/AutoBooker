@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.figure import Figure, FigureSource, FigureStatus, FigureType
+from app.services.storage_policy import local_business_storage_allowed
 
 ANNOTATION_PATTERNS: dict[FigureType, re.Pattern[str]] = {
     FigureType.flowchart: re.compile(r"\[FLOWCHART:\s*(.*?)\]", re.DOTALL),
@@ -674,6 +675,10 @@ def repair_figure_file(fig: Figure, db: Session) -> Figure:
         resolver.sync_figure_urls_from_assets(fig)
         if fig.file_url != before_url or fig.svg_url != before_svg or fig.file_path != before_path:
             changed = True
+        clear_missing_svg()
+        return _commit_figure(fig, db) if changed else fig
+
+    if not local_business_storage_allowed():
         clear_missing_svg()
         return _commit_figure(fig, db) if changed else fig
 

@@ -11,7 +11,10 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    CORS_ORIGINS: str = "http://localhost:5173"
+    CORS_ORIGINS: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:5174,http://127.0.0.1:5174"
+    )
 
     # 千问 DashScope（OpenAI 兼容对话；万相等原生 API）
     DASHSCOPE_API_KEY: str = ""
@@ -93,6 +96,9 @@ class Settings(BaseSettings):
 
     # 社群二维码图片 URL
     ASSETS_COMPAT_STATIC: bool = False
+    """Legacy: mount uploads/figures as static files. Production must keep false."""
+    ALLOW_LOCAL_BUSINESS_STORAGE: bool = False
+    """Legacy dev/migration only. When false, business bytes live in PostgreSQL binary_assets."""
 
     # 可选：提高 GitHub API 限额
     GITHUB_TOKEN: str = ""

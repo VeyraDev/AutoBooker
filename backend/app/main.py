@@ -22,12 +22,19 @@ from app.routers import optimization as optimization_router
 from app.routers import assets as assets_router
 from app.routers import intake as intake_router
 from app.routers import review_stage as review_stage_router
+from app.routers import review_workspace as review_workspace_router
+from app.routers import writing_basis as writing_basis_router
+from app.routers import project_assistant as project_assistant_router
+from app.routers import format_strategy as format_strategy_router
+from app.routers import sources as sources_router
+from app.routers import memories as memories_router
 
 app = FastAPI(title="AutoBooker API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -52,7 +59,13 @@ app.include_router(feedback_router.router)
 app.include_router(optimization_router.router)
 app.include_router(assets_router.router)
 app.include_router(intake_router.router)
+app.include_router(writing_basis_router.router)
+app.include_router(project_assistant_router.router)
+app.include_router(sources_router.router)
+app.include_router(format_strategy_router.router)
 app.include_router(review_stage_router.router)
+app.include_router(review_workspace_router.router)
+app.include_router(memories_router.router)
 
 if settings.ASSETS_COMPAT_STATIC:
     settings.figures_path.mkdir(parents=True, exist_ok=True)

@@ -54,6 +54,7 @@ from app.services.review_scoring import (
     normalize_agent_dimensions,
     standardize_issue,
 )
+from app.services.review.review_finding_validator import enrich_finding_metadata, validate_finding
 from app.services.tiptap_convert import chapter_content_to_markdown
 
 router = APIRouter(prefix="/books", tags=["review"])
@@ -339,7 +340,11 @@ def confirm_review_application(
     issue = db.get(ChapterReviewIssue, app.issue_id) if app.issue_id else None
     review = db.get(ChapterReview, app.review_id) if app.review_id else None
     if issue:
-        review_repository.set_issue_status(db, issue, "resolved")
+        from datetime import datetime, timezone
+
+        issue.applied_at = datetime.now(timezone.utc)
+        issue.resolved_at = None
+        issue.status = "open"
         review = db.get(ChapterReview, issue.review_id)
         book = book_service.get_book_or_404(book_id, user, db)
         if review and app.affected_dimensions:
@@ -358,7 +363,7 @@ def confirm_review_application(
         db.commit()
     return ReviewConfirmApplicationOut(
         application_id=str(app.id),
-        issue_status="resolved" if issue else None,
+        issue_status="applied_pending_recheck" if issue else None,
         score=int(review.total_score or 0) if review else None,
         dimensions=[_dimension_out(d) for d in (review.dimensions or [])] if review else [],
     )
@@ -561,7 +566,15 @@ def _partial_recheck_dimensions(book, ch: Chapter, md: str, db: Session, review:
     db.commit()
 
 
-def _create_review_report(book, ch: Chapter, md: str, db: Session, *, user: User | None = None) -> ChapterReview:
+def _create_review_report(
+    book,
+    ch: Chapter,
+    md: str,
+    db: Session,
+    *,
+    user: User | None = None,
+    review_context_block: str | None = None,
+) -> ChapterReview:
     canonical = canonical_markdown(md)
     digest = snapshot_hash(canonical)
     citations = list_citations_sorted(db, book.id)
@@ -577,6 +590,12 @@ def _create_review_report(book, ch: Chapter, md: str, db: Session, *, user: User
     figures = db.query(Figure).filter(Figure.book_id == book.id, Figure.chapter_index == ch.index).all()
     figure_lines = [f"- {f.figure_type.value}: {(f.caption or f.raw_annotation or '')[:120]}" for f in figures]
 
+    wcb = WritingContextBuilder(db)
+    snap = wcb.build_for_review(book.id)
+    user_material = wcb.to_prompt_block(snap)[:4000] or book.user_material or ""
+    if review_context_block:
+        user_material = f"{user_material}\n\n{review_context_block}".strip()
+
     agent = ReviewAgent(model=_chat_model_for_book(book, user, db))
     result = agent.review_chapter(
         chapter_title=ch.title or f"第{ch.index}章",
@@ -584,7 +603,7 @@ def _create_review_report(book, ch: Chapter, md: str, db: Session, *, user: User
         book_title=book.title or "",
         book_type=book.book_type.value,
         citation_style=book.citation_style.value if book.citation_style else "无",
-        user_material=(WritingContextBuilder(db).to_prompt_block(WritingContextBuilder(db).build_for_review(book.id))[:4000] or book.user_material or ""),
+        user_material=user_material,
         narrative_constitution=(book.narrative_constitution or ""),
         approved_citations=cite_lines,
         figure_summaries=figure_lines,
@@ -633,8 +652,27 @@ def _create_review_report(book, ch: Chapter, md: str, db: Session, *, user: User
     anchored: list[dict[str, Any]] = []
     for issue in issues:
         item = enrich_issue_anchor(canonical, standardize_issue(issue, detector=str(issue.get("detector") or "review_agent")))
-        item["issue_fingerprint"] = issue_fingerprint(item)
-        anchored.append(item)
+        item = enrich_finding_metadata(item, snap, chapter_md=canonical)
+        validated = validate_finding(item, chapter_md=canonical)
+        if not validated:
+            continue
+        validated["issue_fingerprint"] = issue_fingerprint(validated)
+        meta = {
+            k: validated.get(k)
+            for k in (
+                "product_dimension",
+                "impact_scope",
+                "locatable",
+                "validation_passed",
+                "filter_reason",
+                "why_it_matters",
+                "basis_refs",
+            )
+            if validated.get(k) is not None
+        }
+        if meta:
+            validated["quality_evidence"] = meta
+        anchored.append(validated)
 
     dimensions, total, status_text = aggregate_review(detector_dims, anchored)
     detector_coverage = {

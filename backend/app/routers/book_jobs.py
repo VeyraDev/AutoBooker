@@ -104,7 +104,7 @@ def start_auto_generate_for_book(
     if getattr(book, "creation_origin", None) and not WritingContextBuilder(db).auto_progress_allowed(book.id):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "请先完成项目输入并确认写作方案后再启动一键成书",
+            "请先完成项目启动或确认创作意图后再启动一键成书",
         )
     existing = (
         db.query(BookJob)

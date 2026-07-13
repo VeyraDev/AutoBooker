@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -66,24 +67,26 @@ describe("PlanningWizard outline generation", () => {
     const onGenerateOutline = vi.fn().mockResolvedValue(true);
 
     render(
-      <MemoryRouter
-        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-      >
-        <PlanningWizard
-          book={initialBook}
-          bookId={initialBook.id}
-          outline={undefined}
-          outlineRequestPending={false}
-          outlineGeneratingUi={false}
-          onPatchBook={() => undefined}
-          onGenerateOutline={onGenerateOutline}
-          onStartWriting={vi.fn()}
-          onOutlinePatched={() => undefined}
-          onReorder={() => undefined}
-          onDeleteChapter={() => undefined}
-          dragDisabled
-        />
-      </MemoryRouter>,
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter
+          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        >
+          <PlanningWizard
+            book={initialBook}
+            bookId={initialBook.id}
+            outline={undefined}
+            outlineRequestPending={false}
+            outlineGeneratingUi={false}
+            onPatchBook={() => undefined}
+            onGenerateOutline={onGenerateOutline}
+            onStartWriting={vi.fn()}
+            onOutlinePatched={() => undefined}
+            onReorder={() => undefined}
+            onDeleteChapter={() => undefined}
+            dragDisabled
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
 
     const user = userEvent.setup();

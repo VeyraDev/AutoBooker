@@ -46,6 +46,8 @@ WRITER_SYSTEM_PROMPT = """
 发生冲突时，事实与用户资料优先于风格；当前大纲优先于通用写法偏好。
 不得为了满足风格或宪法而增加大纲中没有依据的事实、案例、作者经历、栏目或结论。
 
+{chapter_format_strategy_block}
+
 === 全书叙事宪法 / 体例宪法 ===
 
 以下内容是写作判断依据，不是正文模板，也不是逐项验收清单。
@@ -140,6 +142,7 @@ def build_section_structure_lines(sections: list[dict]) -> str:
 def build_writer_system_prompt(
     *,
     outline_sections: list[dict] | None = None,
+    chapter_format_block: str = "",
     **kwargs: str | int,
 ) -> str:
     """拼接系统提示词；Markdown规则须在format之后追加，避免花括号被误解析。"""
@@ -148,4 +151,15 @@ def build_writer_system_prompt(
     markdown_rules = CHAPTER_WRITER_MARKDOWN_RULES.format(
         section_structure_lines=structure
     )
+    block = (chapter_format_block or "").strip()
+    if block:
+        strategy_section = (
+            "=== 本章栏目策略（已确认，优先执行）===\n"
+            f"{block}\n\n"
+            "规则：仅在本章任务需要时出现对应阅读装置；禁止为凑栏目添加空泛提示框。"
+        )
+    else:
+        strategy_section = ""
+    kwargs = dict(kwargs)
+    kwargs["chapter_format_strategy_block"] = strategy_section
     return WRITER_SYSTEM_PROMPT.format(**kwargs) + "\n\n" + markdown_rules

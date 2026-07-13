@@ -13,6 +13,8 @@ class GenerationContextSnapshot(Base):
     book_id = Column(UUID(as_uuid=True), ForeignKey("books.id", ondelete="CASCADE"), nullable=False, index=True)
     understanding_id = Column(UUID(as_uuid=True), nullable=True)
     writing_plan_id = Column(UUID(as_uuid=True), nullable=True)
+    writing_basis_id = Column(UUID(as_uuid=True), nullable=True)
+    format_strategy_id = Column(UUID(as_uuid=True), nullable=True)
     requirement_ids = Column(JSONB, nullable=False, default=list)
     outline_constraint_ids = Column(JSONB, nullable=False, default=list)
     context_hash = Column(String(64), nullable=False)

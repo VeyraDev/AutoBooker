@@ -32,6 +32,11 @@ from app.models.book_job import BookJob, BookJobStatus, BookJobStep
 from app.models.notification import Notification, NotificationType
 from app.models.feedback import Feedback, FeedbackType, FeedbackStatus
 from app.models.chapter_review import ChapterReview, ChapterReviewIssue, ReviewApplication
+from app.models.writing_basis import WritingBasis, WritingBasisStatus
+from app.models.assistant_turn import AssistantTurn, AssistantTrace
+from app.models.book_format_strategy import BookFormatStrategy, FormatStrategyStatus
+from app.models.review_task import ReviewTask, ReviewTaskGoal, ReviewTaskScope, ReviewTaskStatus
+from app.models.project_memory import ProjectMemory, ProjectMemoryStrength, ProjectMemoryType
 
 __all__ = [
     "User",
@@ -103,4 +108,16 @@ __all__ = [
     "ReviewStageStatus",
     "ReviewTrack",
     "ReviewFindingStatus",
+    "WritingBasis",
+    "WritingBasisStatus",
+    "AssistantTurn",
+    "AssistantTrace",
+    "BookFormatStrategy",
+    "FormatStrategyStatus",
+    "SourceSegment",
+    "SegmentType",
+    "ReviewTask",
+    "ReviewTaskGoal",
+    "ReviewTaskScope",
+    "ReviewTaskStatus",
 ]

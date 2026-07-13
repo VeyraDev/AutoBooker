@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-13
+
+- **存储架构上线约束**：业务二进制资产统一存入 PostgreSQL `binary_assets`（`db://binary_assets/{id}`）；生产环境 `ALLOW_LOCAL_BUSINESS_STORAGE=false`、`ASSETS_COMPAT_STATIC=false`，禁止将上传/配图持久化到 `uploads/`（`storage_policy.py`、`binary_asset_service.py`）。
+- **仓库卫生**：新增 monorepo 根 `.gitignore`；从 git 索引移除误提交的 `backend/uploads/`（20 个运行时文件）；删除废弃 Intake 向导前端、旧 `ReviewStagePage`、`DashboardPage` 与脚本输出物。
+- **外部检索与选题助手（Stage 6）**：项目启动助手可检索研究者公开作品（Semantic Scholar、Crossref、arXiv、维基百科等），生成 2–4 个可成书主题预览；确认后写入写作依据与项目记忆（`external_search_service.py`、`topic_proposal.py`、`tool_orchestrator.py`、`ProjectAssistantPage.tsx`）。
+- **新书稿统一走助手路径**：新建书稿调用 `POST /books/{id}/project-start/bootstrap` 创建 intake 与 WritingBasis 草稿，直接进入 `ProjectAssistantPage`；移除写作页 `?intake=1` 三步向导门控（`NewBookDialog.tsx`、`BookEditorPage.tsx`）。
+- **旧 Intake 写接口下线**：`POST /intake/init`、items/upload、understand、plan 等写端点返回 **410 Gone**，提示使用项目启动助手；`GET /intake` 只读保留 6 个月（`intake.py`）。
+- **历史书稿兼容**：有 confirmed intake/plan 但无 WritingBasis 时，打开书稿懒回填 basis 草稿/快照（`writing_basis_service.materialize_from_confirmed_intake`）。
+- **全链路验收测试**：新增 `test_assistant_acceptance.py`（设计文档 §十四 14 条）、`test_intake_deprecation.py`、`test_external_search_service.py`。
+- **项目长期记忆**：助手多轮对话可将决策、约束、事实等沉淀为 `ProjectMemory`；支持查看、编辑、确认与删除（`project_memory.py`、`memories` API、`MemoryPanel.tsx`）。
+- **对话压缩**：超过 20 轮或历史过长时自动压缩早期对话为结构化记忆，保留最近 8 轮原文（`context_compression_service.py`）。
+- **全局助手工具编排**：写作页底部 `GlobalAssistantDock` 可调用文献检索、审校、图表列表、记忆更新、大纲调整预览等工具；结果自动路由到右侧文献/审校/图表/记忆面板（`tool_orchestrator.py`、`GlobalAssistantDock.tsx`）。
+- **高风险确认门**：大纲调整等操作仅返回预览，需用户确认后才可执行。
+- **写作上下文注入**：章节生成时 `WritingContextBuilder` 会读取已确认项目记忆（`writing_context_builder.py`）。
+
 ## 2026-07-04
 
 - **表格内公式渲染**：Markdown 转 TipTap 时表格单元格支持 `$…$` 行内公式；加载旧章节时不再跳过表格内段落迁移（`markdown_to_tiptap.py`、`migrateMathInTiptapDoc.ts`）。

@@ -54,6 +54,7 @@ def _chapter_to_outline(ch: Chapter) -> OutlineChapterOut:
         key_points=list(meta.get("key_points") or []),
         estimated_words=int(meta.get("estimated_words") or 3000),
         sections=sections,
+        column_labels=[str(x) for x in (meta.get("column_labels") or []) if str(x).strip()],
         word_count=ch.word_count or 0,
         status=ch.status,
     )
@@ -183,6 +184,9 @@ def generate_outline(
                 "sections": sections,
                 "estimated_words": ch.get("estimated_words", 3000),
             }
+            labels = ch.get("column_labels")
+            if isinstance(labels, list) and labels:
+                meta["column_labels"] = [str(x).strip() for x in labels if str(x).strip()][:8]
             db.add(
                 Chapter(
                     book_id=book.id,
@@ -217,6 +221,14 @@ def generate_outline(
         book.status = BookStatus.outline_ready
         db.commit()
         db.refresh(book)
+
+        try:
+            from app.services.writing.format_strategy_service import FormatStrategyService
+
+            FormatStrategyService(db).generate(book, force=True)
+            db.commit()
+        except Exception:
+            logger.exception("format strategy auto-generate failed after outline book=%s", book.id)
 
         chapters = (
             db.query(Chapter).filter(Chapter.book_id == book.id).order_by(Chapter.index.asc()).all()

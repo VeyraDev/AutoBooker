@@ -58,7 +58,7 @@ export interface Book {
 }
 
 export interface BookCreatePayload {
-  title: string;
+  title?: string;
   book_type: BookType;
   discipline?: string | null;
   target_audience?: string | null;

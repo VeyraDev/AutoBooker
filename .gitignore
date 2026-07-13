@@ -1,0 +1,38 @@
+# Monorepo root — backend + frontend shared ignores
+
+# Python
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage
+**/htmlcov/
+**/coverage.xml
+**/*.sqlite3
+
+# Node / frontend build
+**/node_modules/
+**/dist/
+**/.vite/
+
+# Secrets & local env
+**/.env
+**/.env.*
+!**/.env.example
+
+# Runtime uploads (business bytes belong in PostgreSQL binary_assets)
+**/uploads/
+backend/uploads/
+
+# IDE / OS
+**/.idea/
+**/.vscode/
+.DS_Store
+Thumbs.db
+*.log
+
+# Script / analysis outputs
+backend/scripts/*_out.txt
+backend/scripts/*_out/

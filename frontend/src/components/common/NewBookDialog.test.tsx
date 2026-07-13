@@ -10,8 +10,8 @@ import NewBookDialog from "@/components/common/NewBookDialog";
 
 const api = vi.hoisted(() => ({
   createBook: vi.fn(),
-  initIntake: vi.fn(),
-  createOptimizationProject: vi.fn(),
+  bootstrapProjectStart: vi.fn(),
+  startAutoGenerateForBook: vi.fn(),
 }));
 
 vi.mock("@/api/books", () => ({
@@ -19,11 +19,11 @@ vi.mock("@/api/books", () => ({
 }));
 
 vi.mock("@/features/intake/api/intakeApi", () => ({
-  initIntake: api.initIntake,
+  bootstrapProjectStart: api.bootstrapProjectStart,
 }));
 
-vi.mock("@/api/optimization", () => ({
-  createOptimizationProject: api.createOptimizationProject,
+vi.mock("@/api/bookJobs", () => ({
+  startAutoGenerateForBook: api.startAutoGenerateForBook,
 }));
 
 function LocationProbe() {
@@ -53,37 +53,53 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("NewBookDialog one-click workflow", () => {
-  it("creates an intake-backed book before one-click generation can start", async () => {
-    api.createBook.mockResolvedValue({ id: "book-1" });
-    api.initIntake.mockResolvedValue({ intake_id: "intake-1", status: "collecting" });
+describe("NewBookDialog streamlined flow", () => {
+  it("继续完善 creates book and opens assistant route", async () => {
+    api.createBook.mockResolvedValue({ id: "book-1", title: "书稿1" });
+    api.bootstrapProjectStart.mockResolvedValue({
+      intake_id: "intake-1",
+      status: "collecting",
+      writing_basis_id: "basis-1",
+    });
 
     renderDialog();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "我只有想法，想先确定方向" }));
-    await user.click(screen.getByRole("button", { name: "一键成书" }));
     await user.type(
-      screen.getByPlaceholderText("例如：人工智能如何改变商业决策"),
-      "功能测试书稿",
+      screen.getByPlaceholderText(/例如：一本面向产品经理/),
+      "AI 应用实战书",
     );
-    await user.click(screen.getByRole("button", { name: "创建并确认输入" }));
+    await user.click(screen.getByRole("button", { name: "继续完善" }));
 
     await waitFor(() => {
-      expect(api.createBook).toHaveBeenCalledWith({
-        title: "功能测试书稿",
-        book_type: "nonfiction",
-        target_words: expect.any(Number),
-        style_type: "popular_science",
-        workflow_mode: "from_scratch",
+      expect(api.createBook).toHaveBeenCalled();
+      expect(api.bootstrapProjectStart).toHaveBeenCalledWith("book-1", {
         creation_origin: "idea_only",
+        raw_goal_text: "AI 应用实战书",
       });
     });
-    expect(api.initIntake).toHaveBeenCalledWith("book-1", {
-      creation_origin: "idea_only",
-      raw_goal_text: "功能测试书稿",
+    expect(screen.getByTestId("location").textContent).toBe("/app/books/book-1");
+  });
+
+  it("一键生成 starts auto job and navigates to progress page", async () => {
+    api.createBook.mockResolvedValue({ id: "book-2", title: "书稿2" });
+    api.bootstrapProjectStart.mockResolvedValue({
+      intake_id: "intake-2",
+      status: "collecting",
+      writing_basis_id: "basis-2",
     });
-    expect(screen.getByTestId("location").textContent).toBe(
-      "/app/books/book-1?intake=1&auto=1",
+    api.startAutoGenerateForBook.mockResolvedValue({ id: "job-1", book_id: "book-2", status: "pending" });
+
+    renderDialog();
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByPlaceholderText(/例如：一本面向产品经理/),
+      "快速出一本入门书",
     );
+    await user.click(screen.getByRole("button", { name: "一键生成" }));
+
+    await waitFor(() => {
+      expect(api.startAutoGenerateForBook).toHaveBeenCalledWith("book-2");
+    });
+    expect(screen.getByTestId("location").textContent).toBe("/app/books/book-2/auto-progress");
   });
 });

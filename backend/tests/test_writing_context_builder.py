@@ -71,6 +71,7 @@ def test_prompt_block_includes_intent_effects():
 def test_context_hash_changes_when_intent_effect_changes():
     wcb = WritingContextBuilder(_NoDb())  # type: ignore[arg-type]
     base = {
+        "writing_basis_id": None,
         "understanding_id": "u1",
         "writing_plan_id": "p1",
         "requirement_ids": [],
@@ -85,3 +86,47 @@ def test_context_hash_changes_when_intent_effect_changes():
     changed = {**base, "intent_effects": [{"writing_effect": "use cautionary examples"}]}
 
     assert wcb.context_hash(base) != wcb.context_hash(changed)
+
+
+def test_prompt_block_prefers_writing_basis():
+    wcb = WritingContextBuilder(_NoDb())  # type: ignore[arg-type]
+    snap = {
+        "writing_basis_id": "b1",
+        "writing_basis": {
+            "direction": "Practical AI book",
+            "book_promise": "Help teams ship safely",
+            "target_readers": "Product teams",
+            "material_policy": ["Use onboarding notes"],
+            "outline_policy": [],
+            "citation_policy": [],
+            "figure_policy": [],
+        },
+        "understanding_text": "Old understanding text",
+        "plan_text": "Old plan text",
+        "must_keep": [],
+        "must_avoid": [],
+        "material_policy": [],
+        "requirements": [],
+        "material_terms": [],
+        "legacy_user_material": "",
+    }
+    block = wcb.to_prompt_block(snap)
+    assert "【写作依据】" in block
+    assert "Practical AI book" in block
+    assert "Old understanding text" not in block
+
+
+def test_context_hash_changes_when_writing_basis_id_changes():
+    wcb = WritingContextBuilder(_NoDb())  # type: ignore[arg-type]
+    snap1 = {
+        "writing_basis_id": "b1",
+        "understanding_id": "u1",
+        "writing_plan_id": "p1",
+        "requirement_ids": [],
+        "outline_constraint_ids": [],
+        "must_avoid": [],
+        "must_keep": [],
+        "chapter_index": None,
+    }
+    snap2 = {**snap1, "writing_basis_id": "b2"}
+    assert wcb.context_hash(snap1) != wcb.context_hash(snap2)

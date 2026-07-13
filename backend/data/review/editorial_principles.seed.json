@@ -1,0 +1,52 @@
+[
+  {
+    "id": "no_hype_opening",
+    "label": "避免营销腔开场",
+    "description": "正文不应以夸张承诺、趋势口号或空泛愿景开场。"
+  },
+  {
+    "id": "cite_factual_claims",
+    "label": "事实主张需有依据",
+    "description": "涉及数据、效果、对比结论时应有引用或审慎表述。"
+  },
+  {
+    "id": "figure_caption_match",
+    "label": "图题与正文一致",
+    "description": "图题、表题应与正文引用和实际内容一致，不可仅作占位。"
+  },
+  {
+    "id": "no_template_boxes",
+    "label": "避免空泛提示框",
+    "description": "不要为凑格式添加无实质信息的提示、警告或小结框。"
+  },
+  {
+    "id": "term_consistency",
+    "label": "术语全书一致",
+    "description": "关键术语、模块名、缩写首次出现应解释，后续用法保持一致。"
+  },
+  {
+    "id": "chapter_task_focus",
+    "label": "章节任务聚焦",
+    "description": "每章应服务其大纲任务，避免无关扩写或重复上一章内容。"
+  },
+  {
+    "id": "operation_verifiable",
+    "label": "操作步骤可验证",
+    "description": "教程类书稿的操作步骤应可执行、可验证，避免模糊指令。"
+  },
+  {
+    "id": "no_fabricated_cases",
+    "label": "禁止编造案例",
+    "description": "不得虚构作者经历、客户故事、实验数据或文件路径。"
+  },
+  {
+    "id": "outline_alignment",
+    "label": "与大纲一致",
+    "description": "正文结构应覆盖大纲节次，不擅自增删核心论述线。"
+  },
+  {
+    "id": "reader_action_clear",
+    "label": "读者行动清晰",
+    "description": "实操章应让读者知道下一步做什么，概念章应让读者知道理解什么。"
+  }
+]

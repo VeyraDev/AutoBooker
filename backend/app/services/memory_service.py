@@ -69,6 +69,7 @@ def build_book_memory(book_id: uuid.UUID, chapter_index: int, db: Session) -> di
     if not topic_tags_line.strip():
         topic_tags_line = "（未选标签）"
     user_material = "（无）"
+    chapter_format_block = ""
     try:
         from app.services.writing.writing_context_builder import WritingContextBuilder
 
@@ -79,7 +80,9 @@ def build_book_memory(book_id: uuid.UUID, chapter_index: int, db: Session) -> di
             user_material = block[:6000]
         elif (book.user_material or "").strip():
             user_material = book.user_material[:4000]
+        chapter_format_block = wcb.chapter_format_block(book_id, chapter_index)
     except Exception:
+        chapter_format_block = ""
         if (book.user_material or "").strip():
             user_material = book.user_material[:4000]
 
@@ -98,6 +101,7 @@ def build_book_memory(book_id: uuid.UUID, chapter_index: int, db: Session) -> di
         "prev_chapter_hook": prev_chapter_hook,
         "topic_tags_line": topic_tags_line,
         "user_material": user_material,
+        "chapter_format_block": chapter_format_block,
     }
 
 

@@ -31,6 +31,7 @@ type Props = {
     text: string;
     overview?: FigureTableOverviewItem[];
   }) => void;
+  figureListSeed?: { chapter_index?: number; figures?: unknown[] };
 };
 
 function figureError(e: unknown, fallback: string): string {
@@ -91,6 +92,7 @@ export default function FigureQuickPanel({
   bookId,
   chapterIndex,
   initialOverview = [],
+  figureListSeed,
   onFiguresChanged,
   onFigureGenerated,
   getChapterTiptapJson,
@@ -249,6 +251,11 @@ export default function FigureQuickPanel({
     <div className="space-y-4 text-sm">
       <div>
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">图表速览</p>
+        {figureListSeed?.figures?.length ? (
+          <p className="mt-1 text-xs text-violet-700">
+            助手已列出第 {figureListSeed.chapter_index ?? chapterIndex} 章 {figureListSeed.figures.length} 个图表项
+          </p>
+        ) : null}
         {chapterIndex == null ? (
           <p className="mt-2 text-xs text-slate-500">请选择章节后查看本章插图与图表。</p>
         ) : isLoading ? (

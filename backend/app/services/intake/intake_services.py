@@ -446,6 +446,9 @@ class ConstraintSink:
                     )
                 )
 
+        from app.services.writing.writing_basis_service import WritingBasisService
+
+        WritingBasisService(self.db).materialize_and_confirm(book, intake, understanding, plan)
         WritingContextBuilder(self.db).persist_snapshot(
             book.id,
             "intake_confirm",

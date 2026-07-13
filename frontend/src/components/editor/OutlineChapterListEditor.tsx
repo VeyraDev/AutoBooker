@@ -194,6 +194,12 @@ function SortableChapterCard({
             </div>
           )}
 
+          {ch.column_labels && ch.column_labels.length > 0 ? (
+            <p className="outline-column-hint mt-2 text-xs text-slate-500">
+              栏目：{ch.column_labels.join(" · ")}
+            </p>
+          ) : null}
+
           <div className="outline-sections-plain">
             <span className="outline-inline-label">小节</span>
 

@@ -5,13 +5,17 @@ export function autoBookProgressPath(bookId: string): string {
 }
 
 export function bookDestination(
-  book: Pick<Book, "id" | "workflow_mode" | "status">,
+  book: Pick<Book, "id" | "workflow_mode" | "status" | "creation_origin">,
+  options?: { intakeConfirmed?: boolean },
 ): string {
   if (book.workflow_mode === "optimize_existing") {
     return `/app/books/${book.id}/optimize`;
   }
   if (book.status === "auto_generating") {
     return autoBookProgressPath(book.id);
+  }
+  if (book.creation_origin && options?.intakeConfirmed === false) {
+    return `/app/books/${book.id}`;
   }
   return `/app/books/${book.id}`;
 }

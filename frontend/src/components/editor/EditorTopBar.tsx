@@ -23,6 +23,7 @@ export type EditorTopBarProps = {
   savedAt: Date | null;
   onBack: () => void;
   onExport?: (format: ExportFormat) => void;
+  onOpenReview?: () => void;
   /** 批量生成进行中：按钮为「暂停生成」；否则为「全部生成」（始终占位） */
   autoGenerating?: boolean;
   onPauseGeneration?: () => void;
@@ -44,6 +45,7 @@ export default function EditorTopBar({
   savedAt,
   onBack,
   onExport,
+  onOpenReview,
   autoGenerating,
   onPauseGeneration,
   onStartBatchGeneration,
@@ -176,6 +178,12 @@ export default function EditorTopBar({
         onModelChange={onModelChange}
         triggerClassName="input flex h-9 min-w-[8.5rem] max-w-[10.5rem] cursor-pointer items-center justify-between gap-1 py-1 pl-2 pr-2 text-xs"
       />
+
+      {onOpenReview ? (
+        <button type="button" className="btn-secondary h-9 shrink-0 px-2.5 text-xs" onClick={onOpenReview}>
+          审校
+        </button>
+      ) : null}
 
       {onExport ? (
         <div className="relative shrink-0">

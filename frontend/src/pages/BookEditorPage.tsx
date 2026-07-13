@@ -7,9 +7,8 @@ import toast from "react-hot-toast";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { patchUserAiModels } from "@/api/auth";
-import ProjectInputPage from "@/features/intake/components/ProjectInputPage";
+import ProjectAssistantPage from "@/features/assistant/components/ProjectAssistantPage";
 import { useIntake } from "@/features/intake/api/intakeApi";
-import ReviewStagePage from "@/features/reviewStage/ReviewStagePage";
 import { EXPORT_EXT, exportBook, fetchExportNotice, getBook, updateBook, duplicateBook, type ExportFormat } from "@/api/books";
 import { fetchBookJob, startAutoGenerateForBook } from "@/api/bookJobs";
 import {
@@ -46,6 +45,8 @@ import OutlineNavBody from "@/components/editor/OutlineNavBody";
 import type { OutlineSelection } from "@/components/editor/OutlineNavBody";
 import PlanningWizard from "@/components/editor/PlanningWizard";
 import RightPanel, { AuxPanelFab, type RightPanelTab } from "@/components/editor/RightPanel";
+import GlobalAssistantDock from "@/features/assistant/GlobalAssistantDock";
+import type { PanelToolSeed } from "@/features/assistant/toolDispatch";
 import { getChapterGenMode, setChapterGenMode, type ChapterGenMode } from "@/lib/chapterGenMode";
 import { chapterStreamPrimaryIntent } from "@/lib/chapterStreamPrimaryIntent";
 import { useAutoSave } from "@/hooks/useAutoSave";
@@ -154,9 +155,7 @@ export default function BookEditorPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const qc = useQueryClient();
-  const showIntake = searchParams.get("intake") === "1";
   const autoAfterIntake = searchParams.get("auto") === "1";
-  const showReviewStage = searchParams.get("review") === "1";
 
   const [selection, setSelection] = useState<OutlineSelection>({ type: "chapter", index: 1 });
   const [panelCollapsed, setPanelCollapsed] = useState(true);
@@ -183,7 +182,8 @@ export default function BookEditorPage() {
   const [editorSelectionText, setEditorSelectionText] = useState("");
   const [editorChapterContext, setEditorChapterContext] = useState("");
   const [enteringReviewStage, setEnteringReviewStage] = useState(false);
-  const [completingBook, setCompletingBook] = useState(false);
+  const [panelToolSeed, setPanelToolSeed] = useState<PanelToolSeed>({});
+  const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
 
   const editorRef = useRef<ChapterEditorHandle>(null);
   const editorMainScrollRef = useRef<HTMLDivElement>(null);
@@ -254,15 +254,15 @@ export default function BookEditorPage() {
 
   const book = bookQuery.data;
   const intakeGateQuery = useIntake(bookId ?? "", {
-    enabled: Boolean(bookId && (showIntake || book?.creation_origin)),
+    enabled: Boolean(bookId && book?.creation_origin),
   });
   const intakeGate = intakeGateQuery.data?.intake ?? null;
-  const intakeIncomplete = Boolean(book?.creation_origin) && (
-    intakeGateQuery.isLoading ||
-    !intakeGate ||
-    intakeGate.status !== "confirmed"
-  );
-  const shouldShowProjectInput = Boolean(bookId && (showIntake || intakeIncomplete));
+  const projectStartPending =
+    Boolean(book?.creation_origin) &&
+    book?.status === "setup" &&
+    intakeGate?.status !== "confirmed" &&
+    !intakeGateQuery.isLoading;
+  const shouldShowAssistant = Boolean(bookId && projectStartPending);
   const outline = outlineQuery.data;
   const chapters = useMemo(() => outline?.chapters ?? EMPTY_OUTLINE_CHAPTERS, [outline]);
 
@@ -864,22 +864,20 @@ export default function BookEditorPage() {
 
   async function handleProjectInputComplete() {
     if (!bookId) return;
-    if (!autoAfterIntake) {
-      navigate(`/app/books/${bookId}`);
-      return;
-    }
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["intake", bookId] }),
+      qc.invalidateQueries({ queryKey: ["book", bookId] }),
+    ]);
+    if (!autoAfterIntake) return;
     try {
       await startAutoGenerateForBook(bookId);
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ["book", bookId] }),
         qc.invalidateQueries({ queryKey: ["bookJob", bookId] }),
-        qc.invalidateQueries({ queryKey: ["intake", bookId] }),
       ]);
       toast.success("一键成书已开始");
       navigate(autoBookProgressPath(bookId));
     } catch (e) {
-      toast.error(toastAxiosDetail(e, "项目输入已确认，但未能启动一键成书，请稍后重试"));
-      navigate(`/app/books/${bookId}`);
+      toast.error(toastAxiosDetail(e, "未能启动一键成书，请稍后重试"));
     }
   }
 
@@ -1351,7 +1349,7 @@ export default function BookEditorPage() {
     try {
       await updateBook(bookId, { status: "review_ready" });
       await invalidateAll();
-      toast.success("已进入审校阶段，你可以运行审校，也可以直接完成全书。");
+      navigate(`/app/books/${bookId}/review`);
     } catch (e) {
       toast.error(toastAxiosDetail(e, "进入审校阶段失败"));
     } finally {
@@ -1359,18 +1357,9 @@ export default function BookEditorPage() {
     }
   }
 
-  async function handleCompleteBook() {
+  function handleOpenReviewWorkspace() {
     if (!bookId) return;
-    setCompletingBook(true);
-    try {
-      await updateBook(bookId, { status: "completed" });
-      await invalidateAll();
-      toast.success("全书已完成（可在列表查看状态）");
-    } catch (e) {
-      toast.error(toastAxiosDetail(e, "完成全书失败"));
-    } finally {
-      setCompletingBook(false);
-    }
+    navigate(`/app/books/${bookId}/review`);
   }
 
   if (!bookId) {
@@ -1423,8 +1412,12 @@ export default function BookEditorPage() {
     }
     return (
       <div className="planning-setup-shell flex w-full flex-col">
-        {shouldShowProjectInput && bookId ? (
-          <ProjectInputPage bookId={bookId} onComplete={handleProjectInputComplete} />
+        {shouldShowAssistant && bookId ? (
+          <ProjectAssistantPage
+            bookId={bookId}
+            onComplete={handleProjectInputComplete}
+            onExit={() => navigate("/app/books")}
+          />
         ) : (
         <PlanningWizard
           book={book}
@@ -1449,15 +1442,6 @@ export default function BookEditorPage() {
     <>
       {/* WPS 式：顶栏 + 目录 + 正文同色底板无缝拼合；整页文档滚动 + 固定字数页脚 */}
       <section className="editor-writing-shell editor-writing-shell--wps-board editor-page-document-scroll flex w-full min-w-0 flex-col gap-0 overflow-x-hidden">
-        {(showReviewStage || book.status === "review_ready") && bookId ? (
-          <div className="border-b bg-white px-4 py-3">
-            <ReviewStagePage
-              bookId={bookId}
-              completing={completingBook}
-              onCompleteBook={book.status === "review_ready" ? handleCompleteBook : undefined}
-            />
-          </div>
-        ) : null}
         <header className="editor-wps-topbar">
           <EditorTopBar
             title={book.title}
@@ -1472,6 +1456,7 @@ export default function BookEditorPage() {
             savedAt={savedAt}
             onBack={() => navigate("/app/books")}
             onExport={handleExport}
+            onOpenReview={handleOpenReviewWorkspace}
             autoGenerating={autoGenerating}
             onPauseGeneration={() => {
               autoGenAbortRef.current = true;
@@ -1971,6 +1956,8 @@ export default function BookEditorPage() {
                       }
                       editorRef.current?.focusEditor();
                     }}
+                    panelToolSeed={panelToolSeed}
+                    memoryRefreshKey={memoryRefreshKey}
                   />
                 </div>
               ) : null}
@@ -1980,6 +1967,19 @@ export default function BookEditorPage() {
         (selection.type === "chapter" ||
           selection.type === "section" ||
           selection.type === "preface") ? (
+          <>
+          <GlobalAssistantDock
+            bookId={bookId}
+            chapterIndex={chapterIndex}
+            onPanelTab={setPanelTab}
+            onOpenPanel={() => setPanelCollapsed(false)}
+            onPanelSeed={(seed) => {
+              setPanelToolSeed((prev) => (typeof seed === "function" ? seed(prev) : { ...prev, ...seed }));
+              if (typeof seed !== "function" && seed.memoryRefresh) {
+                setMemoryRefreshKey((k) => k + 1);
+              }
+            }}
+          />
           <footer className="editor-global-footer">
             <div className="editor-global-footer-inner">
               <span>
@@ -1996,6 +1996,7 @@ export default function BookEditorPage() {
               </span>
             </div>
           </footer>
+          </>
         ) : null}
 
         <AddChapterDialog open={addOpen} onClose={() => setAddOpen(false)} onSubmit={handleAddChapterSubmit} />

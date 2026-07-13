@@ -1,6 +1,7 @@
-import { CheckCircle2, EyeOff, History, Loader2, MapPin, RotateCcw, ShieldCheck, Wand2 } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, EyeOff, ExternalLink, History, Loader2, MapPin, RotateCcw, ShieldCheck, Wand2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
+import { Link } from "react-router-dom";
 
 import {
   confirmReviewApplication,
@@ -11,8 +12,8 @@ import {
   previewReviewIssueDedupe,
   recheckReview,
   resolveReviewIssue,
-  reviewChapter,
 } from "@/api/review";
+import { runReviewWorkspace } from "@/features/review/reviewWorkspaceApi";
 import { dedupeChapter } from "@/api/chapters";
 import ReviewRadarChart from "@/components/editor/ReviewRadarChart";
 import { cleanSuggestionText } from "@/lib/cleanSuggestion";
@@ -38,6 +39,7 @@ type Props = {
   onAiPreviewReady?: (payload: EditorAiPreviewPayload) => boolean | void;
   onChapterMarkdownReplace?: (markdown: string) => void;
   chapterContext?: string;
+  reviewRunResult?: Record<string, unknown>;
 };
 
 const SEVERITY_CLASS: Record<string, string> = {
@@ -58,6 +60,7 @@ export default function ReviewPanel({
   chapterTitle,
   onAiPreviewReady,
   onChapterMarkdownReplace,
+  reviewRunResult,
 }: Props) {
   const [reviewing, setReviewing] = useState(false);
   const [loadingLatest, setLoadingLatest] = useState(false);
@@ -69,6 +72,8 @@ export default function ReviewPanel({
   const [severityFilter, setSeverityFilter] = useState<"all" | "high" | "medium" | "low">("all");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyRows, setHistoryRows] = useState<ReviewHistoryItem[]>([]);
+  const [radarOpen, setRadarOpen] = useState(false);
+  const [exprOpen, setExprOpen] = useState(false);
 
   useEffect(() => {
     if (chapterIndex == null) {
@@ -94,6 +99,18 @@ export default function ReviewPanel({
   }, [bookId, chapterIndex]);
 
   useEffect(() => {
+    if (!reviewRunResult) return;
+    toast.success(String(reviewRunResult.message ?? "审校已完成，请在工作台查看详情"));
+    if (chapterIndex != null) {
+      setLoadingLatest(true);
+      getLatestReview(bookId, chapterIndex)
+        .then((res) => setReport(res))
+        .catch(() => undefined)
+        .finally(() => setLoadingLatest(false));
+    }
+  }, [reviewRunResult, bookId, chapterIndex]);
+
+  useEffect(() => {
     if (chapterIndex == null) return;
     try {
       sessionStorage.setItem(
@@ -109,6 +126,7 @@ export default function ReviewPanel({
     const issues = report?.issues ?? [];
     return issues.filter((issue) => {
       const status = issue.stale ? "stale" : issue.status ?? "open";
+      if (issue.severity !== "high") return false;
       if (activeDimension && issue.dimension !== activeDimension) return false;
       if (statusFilter !== "all" && status !== statusFilter) return false;
       if (severityFilter !== "all" && issue.severity !== severityFilter) return false;
@@ -136,7 +154,8 @@ export default function ReviewPanel({
     }
     setReviewing(true);
     try {
-      const res = await reviewChapter(bookId, chapterIndex);
+      await runReviewWorkspace(bookId, { scope: "chapter", chapter_index: chapterIndex });
+      const res = await getLatestReview(bookId, chapterIndex);
       setReport(res);
       setActiveDimension(null);
       toast.success("审校完成");
@@ -218,53 +237,16 @@ export default function ReviewPanel({
   return (
     <div className="space-y-5 text-sm">
       <section>
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">表达自然度</p>
-        <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-          优先处理审校标出的表达生硬或模式化片段。修改会先生成预览，确认后再替换正文。
-        </p>
-        {aiOpenIssueCount > 0 ? (
-          <p className="mt-2 rounded border border-teal-100 bg-teal-50 px-2 py-1 text-[11px] leading-relaxed text-teal-800">
-            审校已定位 {aiOpenIssueCount} 个表达生硬或模式化的片段，建议逐条优化所选片段。
-          </p>
-        ) : null}
-        <button
-          type="button"
-          className="btn-primary mt-3 flex h-9 w-full items-center justify-center gap-2 text-xs"
-          disabled={dedupeBusy || chapterIndex == null}
-          onClick={() => void runDedupeChapter()}
-        >
-          {dedupeBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-          优化整章表达
-        </button>
-        {dedupePreview ? (
-          <div className="mt-3 space-y-2 rounded-lg border border-teal-200 bg-teal-50/60 p-3">
-            <p className="text-xs font-medium text-teal-900">改写预览</p>
-            <div className="max-h-40 overflow-y-auto rounded border border-teal-100 bg-white/80 p-2 text-[10px] leading-relaxed text-slate-700 whitespace-pre-wrap">
-              {dedupePreview.suggestion.slice(0, 2400)}
-              {dedupePreview.suggestion.length > 2400 ? "..." : ""}
-            </div>
-            <div className="flex gap-2">
-              <button type="button" className="btn-primary h-8 flex-1 text-[11px]" onClick={applyDedupePreview}>
-                应用替换
-              </button>
-              <button type="button" className="btn-secondary h-8 flex-1 text-[11px]" onClick={() => setDedupePreview(null)}>
-                放弃
-              </button>
-            </div>
-          </div>
-        ) : null}
-      </section>
-
-      <hr className="border-slate-100" />
-
-      <section>
         <div className="flex items-center justify-between gap-2">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">章节审校</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">本章必改项</p>
             {chapterTitle ? <p className="mt-1 text-xs font-medium text-ink">{chapterTitle}</p> : null}
           </div>
           {loadingLatest ? <Loader2 className="h-4 w-4 animate-spin text-slate-400" /> : null}
         </div>
+        <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+          快捷查看当前章必改问题；完整审校请在工作台处理。
+        </p>
         <div className="mt-3 grid grid-cols-2 gap-2">
           <button
             type="button"
@@ -301,11 +283,21 @@ export default function ReviewPanel({
             </div>
             <span className={`text-lg font-semibold ${scoreColor(report.score)}`}>{report.score}</span>
           </div>
-          <ReviewRadarChart
-            dimensions={report.dimension_rows?.length ? report.dimension_rows : report.dimensions ?? {}}
-            activeKey={activeDimension}
-            onSelect={setActiveDimension}
-          />
+          <button
+            type="button"
+            className="flex w-full items-center justify-center gap-1 text-[10px] text-slate-500 hover:text-slate-800"
+            onClick={() => setRadarOpen((v) => !v)}
+          >
+            {radarOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            {radarOpen ? "收起质量雷达" : "展开质量雷达"}
+          </button>
+          {radarOpen ? (
+            <ReviewRadarChart
+              dimensions={report.dimension_rows?.length ? report.dimension_rows : report.dimensions ?? {}}
+              activeKey={activeDimension}
+              onSelect={setActiveDimension}
+            />
+          ) : null}
           <p className="text-xs leading-relaxed text-slate-600">{report.summary}</p>
           <div className="flex flex-wrap items-center gap-1.5">
             {STATUS_OPTIONS.map((s) => (
@@ -372,9 +364,57 @@ export default function ReviewPanel({
         </section>
       ) : (
         <p className="rounded border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
-          暂无审校报告。点击“开始审校”会生成并保存新版 7 维审校报告。
+          暂无审校报告。点击“开始审校”会生成本章审校报告。
         </p>
       )}
+      <Link
+        to={`/app/books/${bookId}/review`}
+        className="flex items-center justify-center gap-1 rounded border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-medium text-teal-900 hover:bg-teal-100"
+      >
+        <ExternalLink className="h-3.5 w-3.5" />
+        在工作台查看全书审校
+      </Link>
+
+      <section className="border-t border-slate-100 pt-3">
+        <button
+          type="button"
+          className="flex w-full items-center justify-center gap-1 text-[10px] text-slate-500 hover:text-slate-800"
+          onClick={() => setExprOpen((v) => !v)}
+        >
+          {exprOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {exprOpen ? "收起表达优化" : "展开表达优化（非审校）"}
+        </button>
+        {exprOpen ? (
+          <div className="mt-3 space-y-2">
+            {aiOpenIssueCount > 0 ? (
+              <p className="rounded border border-teal-100 bg-teal-50 px-2 py-1 text-[11px] text-teal-800">
+                审校已定位 {aiOpenIssueCount} 个表达生硬片段，可逐条优化。
+              </p>
+            ) : null}
+            <button
+              type="button"
+              className="btn-secondary flex h-9 w-full items-center justify-center gap-2 text-xs"
+              disabled={dedupeBusy || chapterIndex == null}
+              onClick={() => void runDedupeChapter()}
+            >
+              {dedupeBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+              优化整章表达
+            </button>
+            {dedupePreview ? (
+              <div className="space-y-2 rounded-lg border border-teal-200 bg-teal-50/60 p-3">
+                <p className="text-xs font-medium text-teal-900">改写预览</p>
+                <div className="max-h-40 overflow-y-auto rounded border border-teal-100 bg-white/80 p-2 text-[10px] whitespace-pre-wrap">
+                  {dedupePreview.suggestion.slice(0, 2400)}
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" className="btn-primary h-8 flex-1 text-[11px]" onClick={applyDedupePreview}>应用替换</button>
+                  <button type="button" className="btn-secondary h-8 flex-1 text-[11px]" onClick={() => setDedupePreview(null)}>放弃</button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
     </div>
   );
 }

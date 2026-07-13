@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.services.markdown_to_tiptap import _parse_inline_bold
 from app.services.publication.publication_styles import DOC_BODY_FONT, FIRST_LINE_INDENT_PT
+from app.services.storage_policy import local_business_storage_allowed
 
 BLACK = RGBColor(0, 0, 0)
 CODE_SHADING = "F5F5F5"
@@ -475,6 +476,8 @@ def _canonical_figure_paths(attrs: dict[str, Any]) -> list[Path]:
         book_uuid = UUID(book_id)
     except ValueError:
         return []
+    if not local_business_storage_allowed():
+        return []
     paths: list[Path] = []
     if chapter_index is not None:
         paths.extend(
@@ -565,7 +568,7 @@ def _figure_raster_for_export_owned(local: Path) -> tuple[Path | None, bool]:
 
         if local.name == "figure.svg":
             canonical_png = local.with_name("figure.png")
-            if export_png_from_svg(local, canonical_png) and canonical_png.is_file():
+            if local_business_storage_allowed() and export_png_from_svg(local, canonical_png) and canonical_png.is_file():
                 return canonical_png, False
 
         cache_path = _new_temp_path(suffix=".svg-raster.png")

@@ -1,0 +1,27 @@
+[
+  {
+    "id": "heading_hierarchy",
+    "label": "标题层级规范",
+    "description": "章节内标题层级应连续，不得跳级。"
+  },
+  {
+    "id": "figure_table_numbering",
+    "label": "图表编号",
+    "description": "图表应有连续编号，正文引用与图题/表题一致。"
+  },
+  {
+    "id": "citation_format",
+    "label": "引用格式",
+    "description": "引用格式应符合书目设定的引用体例。"
+  },
+  {
+    "id": "no_empty_sections",
+    "label": "避免空节",
+    "description": "不应出现只有标题没有正文的空节。"
+  },
+  {
+    "id": "bibliography_integrity",
+    "label": "参考文献完整",
+    "description": "正文引用项应在参考文献中可查。"
+  }
+]

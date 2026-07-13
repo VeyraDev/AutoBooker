@@ -9,17 +9,20 @@ from typing import Any
 from uuid import UUID
 
 from app.config import settings
+from app.services.storage_policy import local_business_storage_allowed
 
 
 class FigureStorageManager:
     def figure_dir(self, book_id: UUID, chapter_id: int | str, figure_id: UUID) -> Path:
         base = settings.figures_path / str(book_id) / str(chapter_id) / str(figure_id)
-        base.mkdir(parents=True, exist_ok=True)
+        if local_business_storage_allowed():
+            base.mkdir(parents=True, exist_ok=True)
         return base
 
     def legacy_dir(self, book_id: UUID) -> Path:
         base = settings.figures_path / str(book_id)
-        base.mkdir(parents=True, exist_ok=True)
+        if local_business_storage_allowed():
+            base.mkdir(parents=True, exist_ok=True)
         return base
 
     def png_path(self, book_id: UUID, chapter_id: int | str, figure_id: UUID) -> Path:
@@ -62,6 +65,8 @@ class FigureStorageManager:
         dsl: dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
     ) -> Path:
+        if not local_business_storage_allowed():
+            raise RuntimeError("Local figure asset writes are disabled; use BinaryAssetService")
         ddir = self.figure_dir(book_id, chapter_id, figure_id)
         if dsl is not None:
             self.dsl_path(book_id, chapter_id, figure_id).write_text(

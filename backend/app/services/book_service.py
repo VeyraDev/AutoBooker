@@ -45,6 +45,19 @@ def _sync_discipline_field(book: Book) -> None:
         book.disciplines = [book.discipline]
 
 
+def allocate_default_book_title(user_id: UUID, db: Session) -> str:
+    for i in range(1, 10_000):
+        candidate = f"书稿{i}"
+        exists = (
+            db.query(Book.id)
+            .filter(Book.user_id == user_id, Book.title == candidate)
+            .first()
+        )
+        if not exists:
+            return candidate
+    return f"书稿{uuid.uuid4().hex[:6]}"
+
+
 def create_book(
     user: User,
     payload: dict,
@@ -60,6 +73,9 @@ def create_book(
     st = data.get("style_type")
     data["style_type"] = coerce_style(bt_val, st).value
     title = str(data.get("title") or "").strip()
+    if not title:
+        title = allocate_default_book_title(user.id, db)
+    data["title"] = title
     data["original_title"] = title
     data.setdefault("allow_title_optimization", False)
     discs = data.get("disciplines")

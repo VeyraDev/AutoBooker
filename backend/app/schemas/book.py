@@ -8,7 +8,7 @@ from app.constants.style_types import StyleType
 
 
 class BookCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=500)
+    title: str | None = Field(default=None, max_length=500)
     book_type: BookType
     discipline: str | None = Field(default=None, max_length=100)
     target_audience: str | None = Field(default=None, max_length=500)

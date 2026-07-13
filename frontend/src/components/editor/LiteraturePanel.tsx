@@ -59,6 +59,8 @@ type Props = {
   onPreviewInsert?: (payload: { sentence: string; node: Record<string, unknown> }) => void;
   onJumpToCitation?: (chapterIndex: number, nodeId: string) => void;
   onCitationDeleted?: (chapterIndex: number) => void;
+  /** 助手工具注入的检索结果 */
+  externalSearchResult?: import("@/types/literature").LiteratureSearchResult;
 };
 
 export default function LiteraturePanel({
@@ -72,6 +74,7 @@ export default function LiteraturePanel({
   onPreviewInsert,
   onJumpToCitation,
   onCitationDeleted,
+  externalSearchResult,
 }: Props) {
   const isSetup = mode === "setup";
   const persistMode = mode;
@@ -129,6 +132,19 @@ export default function LiteraturePanel({
   useEffect(() => {
     if (defaultQuery.trim()) setQuery(defaultQuery.trim());
   }, [defaultQuery]);
+
+  useEffect(() => {
+    if (!externalSearchResult) return;
+    setTabbed({
+      papers: externalSearchResult.papers ?? [],
+      github: externalSearchResult.github ?? [],
+      wiki: externalSearchResult.wiki ?? [],
+      official_docs: externalSearchResult.official_docs ?? [],
+    });
+    setRefinedQueries(externalSearchResult.refined_queries ?? []);
+    setSourceHint(externalSearchResult.source_hint ?? "");
+    setView("search");
+  }, [externalSearchResult]);
 
   useEffect(() => {
     if (hydrated.current) return;

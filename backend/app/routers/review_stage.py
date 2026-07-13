@@ -40,9 +40,15 @@ def run_review_stage(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Legacy API — delegates to ReviewAgentService (use review-workspace/run instead)."""
     book = book_service.get_book_or_404(book_id, user, db)
-    run = ReviewStageService(db).run(book)
-    return {"run_id": str(run.id), "status": run.status.value}
+    from app.services.review.review_agent_service import ReviewAgentService
+
+    agent = ReviewAgentService(db)
+    task = agent.build_task(book, scope="book")
+    result = agent.run_task(book, task, user=user)
+    db.commit()
+    return {"run_id": result.get("run_id"), "status": result.get("status"), "task_id": result.get("task_id")}
 
 
 @router.get("/{book_id}/review-stage/summary")

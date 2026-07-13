@@ -1,9 +1,12 @@
 import { ChevronLeft, ChevronDown } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
 import OutlineReviewPanel from "@/components/editor/OutlineReviewPanel";
 import SetupView, { type SetupViewActions } from "@/components/editor/SetupView";
+import FormatStrategyPanel, { useFormatStrategyConfirmed } from "@/features/outline/FormatStrategyPanel";
+import { confirmFormatStrategy } from "@/features/outline/formatStrategyApi";
 import { setChapterGenMode, type ChapterGenMode } from "@/lib/chapterGenMode";
 import type { Book } from "@/types/book";
 import type { OutlineBookResponse } from "@/types/outline";
@@ -72,7 +75,10 @@ export default function PlanningWizard({
   const [step1SaveOnlyFab, setStep1SaveOnlyFab] = useState(false);
   const [startMenuOpen, setStartMenuOpen] = useState(false);
   const [preparingOutline, setPreparingOutline] = useState(false);
+  const [confirmingOutline, setConfirmingOutline] = useState(false);
   const setupActionsRef = useRef<SetupViewActions | null>(null);
+  const qc = useQueryClient();
+  const formatStrategyConfirmed = useFormatStrategyConfirmed(bookId);
 
   useEffect(() => {
     if (outline && outline.chapters.length > 0) {
@@ -241,6 +247,13 @@ export default function PlanningWizard({
                 >
                   ← 返回书稿设定
                 </button>
+                {outline ? (
+                  <FormatStrategyPanel
+                    bookId={bookId}
+                    chapters={outline.chapters}
+                    onConfirmed={() => void onOutlinePatched()}
+                  />
+                ) : null}
               </>
             }
           />
@@ -248,8 +261,32 @@ export default function PlanningWizard({
 
         {wizardStep === 2 && !outlineGeneratingUi && outline && outline.chapters.length > 0 && (
           <div className="mt-10 flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 pb-12 pt-8 sm:pb-16">
-            <button type="button" className="btn-primary text-sm" onClick={() => setWizardStep(3)}>
-              确认大纲
+            <button
+              type="button"
+              className="btn-primary text-sm disabled:opacity-50"
+              disabled={confirmingOutline}
+              onClick={() => {
+                void (async () => {
+                  if (!formatStrategyConfirmed) {
+                    setConfirmingOutline(true);
+                    try {
+                      await confirmFormatStrategy(bookId);
+                      await qc.invalidateQueries({ queryKey: ["format-strategy", bookId] });
+                      await onOutlinePatched();
+                      toast.success("栏目策略已确认");
+                    } catch {
+                      toast.error("请先确认栏目策略，或点击「重新生成」");
+                      setConfirmingOutline(false);
+                      return;
+                    } finally {
+                      setConfirmingOutline(false);
+                    }
+                  }
+                  setWizardStep(3);
+                })();
+              }}
+            >
+              {confirmingOutline ? "确认中…" : formatStrategyConfirmed ? "确认大纲" : "确认大纲与栏目"}
             </button>
           </div>
         )}

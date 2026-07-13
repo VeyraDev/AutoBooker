@@ -66,7 +66,21 @@ class ReviewStageService:
             track=ReviewTrack.publication_standard,
             items=pub_findings_data,
             source_ref=context_ref,
+            context_snapshot=snap,
         )
+
+        from app.services.review.format_column_reviewer import run_format_column_review
+
+        format_findings = run_format_column_review(chapters, snap)
+        if format_findings:
+            self.findings.persist_batch(
+                run_id=run.id,
+                book_id=book.id,
+                track=ReviewTrack.publication_standard,
+                items=format_findings,
+                source_ref=context_ref,
+                context_snapshot=snap,
+            )
 
         run.writing_quality_status = ReviewStageStatus(wq_summary["status"])
         run.publication_standard_status = ReviewStageStatus(pub_summary["status"])

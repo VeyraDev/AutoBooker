@@ -68,11 +68,29 @@ def _notify(db, user_id: UUID, title: str, body: str, payload: dict | None = Non
     db.commit()
 
 
-def _infer_book_settings(book: Book, model: str) -> None:
+def _infer_book_settings(book: Book, model: str, db=None) -> None:
     client = LLMClient()
-    prompt = f"""根据书名与体裁推断书稿基础设定，输出 JSON：
+    seed = book.title
+    if db is not None:
+        from app.models.intake import IntakeStatus, ProjectIntake
+
+        intake = (
+            db.query(ProjectIntake)
+            .filter(
+                ProjectIntake.book_id == book.id,
+                ProjectIntake.status != IntakeStatus.superseded,
+            )
+            .order_by(ProjectIntake.created_at.desc())
+            .first()
+        )
+        if intake and (intake.raw_goal_text or "").strip():
+            seed = intake.raw_goal_text.strip()[:4000]
+    if (book.topic_brief or "").strip():
+        seed = f"{seed}\n{(book.topic_brief or '').strip()[:2000]}"
+    prompt = f"""根据用户创作意图推断书稿基础设定，输出 JSON：
 {{"target_audience":"...", "topic_tags":["..."], "citation_style":"apa|gb_t7714|none", "topic_brief":"选题要点，非用户资料"}}
-书名：{book.title}
+创作意图：
+{seed}
 类型：{book.book_type.value}
 体裁：{book.style_type or ''}
 学科：{book.discipline or ''}"""
@@ -145,7 +163,7 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
 
         _update_job(db, job, step=BookJobStep.setting, pct=10)
         patch_job_checkpoint(db, job, stage_message="正在推断书稿设定")
-        _infer_book_settings(book, writing_model)
+        _infer_book_settings(book, writing_model, db)
         db.commit()
 
         _update_job(db, job, step=BookJobStep.literature, pct=25)
@@ -199,6 +217,9 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
                 "sections": ch.get("sections", []),
                 "estimated_words": ch.get("estimated_words", 3000),
             }
+            labels = ch.get("column_labels")
+            if isinstance(labels, list) and labels:
+                meta["column_labels"] = [str(x).strip() for x in labels if str(x).strip()][:8]
             db.add(
                 Chapter(
                     book_id=book.id,
