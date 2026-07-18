@@ -58,6 +58,7 @@ export type TurnListItem = {
   user_message: string;
   assistant_message: string;
   created_at: string;
+  search_result?: Record<string, unknown> | null;
 };
 
 export type SettingOrigin = {

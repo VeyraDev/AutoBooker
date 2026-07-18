@@ -17,7 +17,11 @@ from app.models.book import Book, BookType, CitationStyle
 from app.models.material import ConfirmationStatus, WritingRequirement
 from app.models.user import User
 from app.prompts.assistant.global_system import global_turn_output_instruction
-from app.prompts.assistant.startup_system import STARTUP_ASSISTANT_SYSTEM, startup_turn_output_instruction
+from app.prompts.assistant.startup_system import (
+    QUICK_FILL_INSTRUCTION,
+    STARTUP_ASSISTANT_SYSTEM,
+    startup_turn_output_instruction,
+)
 from app.services.assistant.book_settings_context import (
     BOOK_SETTING_KEYS,
     build_startup_context,
@@ -30,7 +34,6 @@ from app.services.assistant.context_compression_service import ContextCompressio
 from app.services.assistant.external_search_service import ExternalSearchService
 from app.services.assistant.project_memory_service import ProjectMemoryService
 from app.services.assistant.quick_fill_ops import record_quick_fill, snapshot_settings, undo_quick_fill
-from app.services.assistant.search_intent_service import prepare_search
 from app.services.assistant.tool_orchestrator import ToolOrchestrator
 from app.services.literature_search_service import LiteratureSearchService
 from app.services.sources.source_library_service import SourceLibraryService
@@ -40,6 +43,105 @@ from app.utils.json_llm import parse_llm_json
 logger = logging.getLogger(__name__)
 
 _VALID_STYLES = {s.value for s in StyleType}
+_MAX_TOOL_ITERS = 4
+_TOOL_RESULT_CHARS = 10000
+
+
+def _trim_papers(items: Any, limit: int = 30) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not isinstance(items, list):
+        return out
+    for p in items[:limit]:
+        if not isinstance(p, dict):
+            continue
+        out.append(
+            {
+                "title": p.get("title"),
+                "authors": list(p.get("authors") or [])[:5],
+                "year": p.get("year"),
+                "source": p.get("source"),
+                "source_label": p.get("source_label"),
+                "url": p.get("url"),
+                "doi": p.get("doi"),
+                "external_id": p.get("external_id"),
+                "abstract_preview": (str(p.get("abstract_preview") or "")[:200] or None),
+            }
+        )
+    return out
+
+
+def _compact_search_result(sr: dict[str, Any]) -> dict[str, Any]:
+    result = sr.get("result") if isinstance(sr.get("result"), dict) else {}
+    compact_result: dict[str, Any] = {
+        "papers": _trim_papers(result.get("papers")),
+        "github": _trim_papers(result.get("github")),
+        "wiki": _trim_papers(result.get("wiki")),
+        "official_docs": _trim_papers(result.get("official_docs")),
+        "items": _trim_papers(result.get("items")),
+        "refined_queries": list(result.get("refined_queries") or [])[:8],
+        "warnings": list(result.get("warnings") or [])[:5],
+        "source_hint": result.get("source_hint"),
+        "query": result.get("query") or sr.get("raw_query"),
+    }
+    # person_works fields
+    for key in ("person", "institution", "role", "candidates", "works", "research_directions", "source_scope", "needs_disambiguation"):
+        if key in result:
+            compact_result[key] = result.get(key)
+    return {
+        "ok": sr.get("ok", True),
+        "mode": sr.get("mode"),
+        "search_type": sr.get("search_type"),
+        "raw_query": sr.get("raw_query"),
+        "queries": list(sr.get("queries") or [])[:8],
+        "summary": sr.get("summary") or "",
+        "auto_ingested": False,
+        "result": compact_result,
+    }
+
+
+def extract_search_result_from_turn(turn: AssistantTurn) -> dict[str, Any] | None:
+    """Recover search payload from persisted turn (basis_patch or tool_calls)."""
+    meta = turn.basis_patch if isinstance(turn.basis_patch, dict) else {}
+    stored = meta.get("search_result")
+    if isinstance(stored, dict) and (stored.get("result") or stored.get("summary")):
+        return stored
+    tools = turn.tool_calls if isinstance(turn.tool_calls, list) else []
+    for r in tools:
+        if not isinstance(r, dict) or not r.get("ok"):
+            continue
+        if r.get("name") not in {"search_references", "search_literature", "search_person_works"}:
+            continue
+        payload = r.get("data") if isinstance(r.get("data"), dict) else {}
+        wrapped = {
+            "ok": True,
+            "mode": payload.get("mode") or "user_query",
+            "search_type": payload.get("search_type")
+            or ("person_works" if r.get("name") == "search_person_works" else "literature"),
+            "raw_query": payload.get("raw_query") or "",
+            "queries": payload.get("queries") or payload.get("queries_used") or [],
+            "summary": payload.get("summary") or "",
+            "result": payload.get("result") if "result" in payload else payload,
+            "auto_ingested": False,
+        }
+        return _compact_search_result(wrapped)
+    return None
+
+
+_STARTUP_TOOL_NAMES = frozenset(
+    {
+        "retrieve_source_context",
+        "inspect_workbook",
+        "read_sheet_range",
+        "search_references",
+        "suggest_book_settings",
+        "assess_outline_sources",
+        # legacy still accepted inside loop
+        "prepare_search",
+        "search_literature",
+        "search_person_works",
+        "list_sources",
+    }
+)
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -402,8 +504,8 @@ class ProjectAssistantService:
         history = self._compression.recent_turns(book.id, limit=8)
         recent = []
         for turn in history:
-            recent.append({"role": "user", "text": (turn.user_message or "")[:1500]})
-            recent.append({"role": "assistant", "text": (turn.assistant_message or "")[:1500]})
+            recent.append({"role": "user", "text": (turn.user_message or "")[:800]})
+            recent.append({"role": "assistant", "text": (turn.assistant_message or "")[:800]})
         ctx = build_startup_context(
             self.db,
             book,
@@ -414,16 +516,20 @@ class ProjectAssistantService:
         if chapter_index is not None:
             return f"""当前章节：第 {chapter_index} 章
 上下文：
-{json.dumps(ctx, ensure_ascii=False)[:14000]}
+{json.dumps(ctx, ensure_ascii=False)[:8000]}
 
 用户本轮输入：
 {message}
 
 {global_turn_output_instruction()}"""
-        return f"""当前书稿设定上下文（JSON）：
-{json.dumps(ctx, ensure_ascii=False)[:14000]}
-
-{startup_turn_output_instruction()}"""
+        parts = [
+            "当前书稿设定上下文（轻量目录；详细内容请用工具读取）：",
+            json.dumps(ctx, ensure_ascii=False)[:6000],
+        ]
+        if assistant_mode == "quick_fill":
+            parts.extend(["", QUICK_FILL_INSTRUCTION])
+        parts.extend(["", startup_turn_output_instruction()])
+        return "\n".join(parts)
 
     def _parse_turn_response(self, raw: str) -> dict[str, Any]:
         text = (raw or "").strip()
@@ -439,11 +545,196 @@ class ProjectAssistantService:
                 "book_settings_patch": {},
                 "setting_decisions": [],
                 "extracted_requirements": [],
-                "file_judgements": [],
-                "outline_route": {"mode": "from_settings", "needs_confirmation": False},
-                "search_request": {"required": False},
+                "tool_calls": [],
+                "outline_route": None,
                 "clarification": {"required": False},
             }
+
+    @staticmethod
+    def _normalize_tool_calls(data: dict[str, Any]) -> list[dict[str, Any]]:
+        calls = [c for c in _as_list(data.get("tool_calls")) if isinstance(c, dict) and c.get("name")]
+        # Legacy: search_request → search_references tool
+        search_req = _as_dict(data.get("search_request"))
+        if search_req.get("required") and not any(
+            str(c.get("name")) in {"search_references", "search_literature", "search_person_works"} for c in calls
+        ):
+            calls.append(
+                {
+                    "name": "search_references",
+                    "arguments": {
+                        "mode": search_req.get("mode") or "user_query",
+                        "raw_query": search_req.get("raw_query") or "",
+                        "search_type": search_req.get("search_type") or "auto",
+                    },
+                }
+            )
+        return calls
+
+    def _run_startup_tool_loop(
+        self,
+        book: Book,
+        user: User,
+        *,
+        message: str,
+        mode: str,
+        model: str,
+        chapter_index: int | None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+        """Assistant ↔ tools ↔ assistant until final JSON (no tool_calls)."""
+        system = self._system_prompt(chapter_index)
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": system},
+            {
+                "role": "user",
+                "content": self._build_user_prompt(
+                    book, message, assistant_mode=mode, chapter_index=chapter_index
+                ),
+            },
+        ]
+        executed_tools: list[dict[str, Any]] = []
+        search_result: dict[str, Any] | None = None
+        data: dict[str, Any] = {}
+
+        for iteration in range(_MAX_TOOL_ITERS):
+            raw = self.llm.chat_completion(
+                messages,
+                model=model,
+                max_tokens=4000,
+                temperature=0.4,
+                disable_thinking=True,
+            )
+            data = self._parse_turn_response(raw)
+            tool_calls = self._normalize_tool_calls(data)
+            # Chapter / global mode keeps single-shot + existing orchestrator outside
+            if chapter_index is not None:
+                return data, tool_calls, None
+            if not tool_calls:
+                break
+
+            # Prefer startup tools; still allow listed legacy names
+            safe_calls = [
+                c
+                for c in tool_calls
+                if str(c.get("name") or "") in _STARTUP_TOOL_NAMES
+            ] or tool_calls
+            batch = self._tools.execute(book, user, safe_calls, chapter_index=chapter_index)
+            executed_tools.extend(batch)
+            for r in batch:
+                if r.get("name") in {"search_references", "search_literature", "search_person_works"} and r.get("ok"):
+                    payload = r.get("data") if isinstance(r.get("data"), dict) else {}
+                    search_result = {
+                        "ok": True,
+                        "mode": payload.get("mode") or "user_query",
+                        "search_type": payload.get("search_type")
+                        or ("person_works" if r.get("name") == "search_person_works" else "literature"),
+                        "raw_query": payload.get("raw_query") or "",
+                        "queries": payload.get("queries") or payload.get("queries_used") or [],
+                        "result": payload.get("result") if "result" in payload else payload,
+                        "auto_ingested": False,
+                        "progress": payload.get("progress") or [],
+                        "summary": payload.get("summary") or "",
+                    }
+                # Merge suggest_book_settings into patch hints for the next model turn
+                if r.get("name") == "suggest_book_settings" and r.get("ok"):
+                    payload = r.get("data") if isinstance(r.get("data"), dict) else {}
+                    sugg = payload.get("suggestions") if isinstance(payload.get("suggestions"), dict) else {}
+                    if sugg and not _as_dict(data.get("book_settings_patch")):
+                        data["book_settings_patch"] = dict(sugg)
+                    if payload.get("decisions") and not _as_list(data.get("setting_decisions")):
+                        data["setting_decisions"] = list(payload["decisions"])
+
+            compact = []
+            for r in batch:
+                compact.append(
+                    {
+                        "name": r.get("name"),
+                        "ok": r.get("ok"),
+                        "error": r.get("error"),
+                        "data": r.get("data"),
+                        "summary": (r.get("data") or {}).get("summary")
+                        if isinstance(r.get("data"), dict)
+                        else None,
+                    }
+                )
+            tool_payload = json.dumps(compact, ensure_ascii=False)[:_TOOL_RESULT_CHARS]
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "assistant_message": data.get("assistant_message") or "",
+                            "tool_calls": safe_calls,
+                            "thinking_notes": data.get("thinking_notes") or [],
+                        },
+                        ensure_ascii=False,
+                    )[:4000],
+                }
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"工具结果（第 {iteration + 1} 轮）：\n{tool_payload}\n\n"
+                        "请基于真实工具结果继续。"
+                        "若仍需工具，再次输出带 tool_calls 的 JSON；"
+                        "若已足够，输出最终 JSON（tool_calls 为空），并解释结果、更新 book_settings_patch。"
+                    ),
+                }
+            )
+        else:
+            # Hit max iterations with pending tools — force a finalization turn without tools
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "已达到工具调用上限。请基于已有工具结果输出最终 JSON，tool_calls 必须为空。",
+                }
+            )
+            raw = self.llm.chat_completion(
+                messages,
+                model=model,
+                max_tokens=4000,
+                temperature=0.4,
+                disable_thinking=True,
+            )
+            data = self._parse_turn_response(raw)
+
+        # If final response still asks for search_request without having searched, one more forced tool+reply
+        leftover = self._normalize_tool_calls(data)
+        if leftover and chapter_index is None:
+            batch = self._tools.execute(book, user, leftover, chapter_index=chapter_index)
+            executed_tools.extend(batch)
+            for r in batch:
+                if r.get("name") in {"search_references", "search_literature", "search_person_works"} and r.get("ok"):
+                    payload = r.get("data") if isinstance(r.get("data"), dict) else {}
+                    search_result = {
+                        "ok": True,
+                        "mode": payload.get("mode") or "user_query",
+                        "search_type": payload.get("search_type") or "literature",
+                        "raw_query": payload.get("raw_query") or "",
+                        "queries": payload.get("queries") or [],
+                        "result": payload.get("result") if "result" in payload else payload,
+                        "auto_ingested": False,
+                        "progress": payload.get("progress") or [],
+                        "summary": payload.get("summary") or "",
+                    }
+            tool_payload = json.dumps(batch, ensure_ascii=False)[:_TOOL_RESULT_CHARS]
+            messages.append({"role": "assistant", "content": json.dumps({"tool_calls": leftover}, ensure_ascii=False)[:2000]})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"工具结果：\n{tool_payload}\n\n请输出最终 JSON，tool_calls 为空，并解释工具结果。",
+                }
+            )
+            raw = self.llm.chat_completion(
+                messages,
+                model=model,
+                max_tokens=4000,
+                temperature=0.4,
+                disable_thinking=True,
+            )
+            data = self._parse_turn_response(raw)
+
+        return data, executed_tools, search_result
 
     def run_turn(
         self,
@@ -461,7 +752,7 @@ class ProjectAssistantService:
         if not message and mode != "quick_fill":
             raise ValueError("message required")
         if not message and mode == "quick_fill":
-            message = "（用户触发快速补齐：请根据当前全部有效上下文集中判断并更新正式书稿设定。）"
+            message = "（用户触发快速补齐）"
 
         history_chars = self._compression.history_char_count(book.id)
         compressed = self._compression.compress_if_needed(book, user, history_chars=history_chars)
@@ -469,23 +760,59 @@ class ProjectAssistantService:
         before_snap = snapshot_settings(book) if mode == "quick_fill" else None
         basis = self._basis.get_draft_or_create(book)
         model = resolve_assistant_model(user)
-        raw = self.llm.chat_completion(
-            [
-                {"role": "system", "content": self._system_prompt(chapter_index)},
-                {
-                    "role": "user",
-                    "content": self._build_user_prompt(
-                        book, message, assistant_mode=mode, chapter_index=chapter_index
-                    ),
-                },
-            ],
-            model=model,
-            max_tokens=4000,
-            temperature=0.4,
-            disable_thinking=True,
-        )
-        data = self._parse_turn_response(raw)
+
+        if chapter_index is not None:
+            # Keep chapter assistant on single-shot + legacy tool_calls (global prompt)
+            raw = self.llm.chat_completion(
+                [
+                    {"role": "system", "content": self._system_prompt(chapter_index)},
+                    {
+                        "role": "user",
+                        "content": self._build_user_prompt(
+                            book, message, assistant_mode=mode, chapter_index=chapter_index
+                        ),
+                    },
+                ],
+                model=model,
+                max_tokens=4000,
+                temperature=0.4,
+                disable_thinking=True,
+            )
+            data = self._parse_turn_response(raw)
+            tool_calls = _as_list(data.get("tool_calls"))
+            executed_tools = (
+                self._tools.execute(book, user, tool_calls, chapter_index=chapter_index) if tool_calls else []
+            )
+            search_result = None
+        else:
+            data, executed_tools, search_result = self._run_startup_tool_loop(
+                book,
+                user,
+                message=message,
+                mode=mode,
+                model=model,
+                chapter_index=None,
+            )
+
+        # Merge suggestions from tool results if model forgot to copy into patch
+        for r in executed_tools:
+            if r.get("name") == "suggest_book_settings" and r.get("ok"):
+                payload = r.get("data") if isinstance(r.get("data"), dict) else {}
+                sugg = payload.get("suggestions") if isinstance(payload.get("suggestions"), dict) else {}
+                patch = _as_dict(data.get("book_settings_patch"))
+                if sugg:
+                    merged = {**sugg, **{k: v for k, v in patch.items() if v is not None}}
+                    data["book_settings_patch"] = merged
+                if payload.get("decisions") and not _as_list(data.get("setting_decisions")):
+                    data["setting_decisions"] = list(payload["decisions"])
+
         assistant_message = str(data.get("assistant_message") or "").strip()
+        if not assistant_message:
+            # Recover a minimal message from search/suggest tools
+            for r in reversed(executed_tools):
+                if r.get("ok") and isinstance(r.get("data"), dict) and r["data"].get("summary"):
+                    assistant_message = str(r["data"]["summary"])
+                    break
         if not assistant_message:
             raise RuntimeError("模型未返回有效内容，请稍后重试")
 
@@ -511,29 +838,17 @@ class ProjectAssistantService:
         _silent_sync_basis(book, basis)
         self.db.flush()
 
-        search_result: dict[str, Any] | None = None
-        search_req = _as_dict(data.get("search_request"))
-        if search_req.get("required") and chapter_index is None:
-            search_result = self._execute_search_request(book, user, search_req, user_message=message)
-
-        # Legacy tool_calls still accepted but not required
-        tool_calls = _as_list(data.get("tool_calls"))
-        executed_tools: list[dict[str, Any]] = []
-        if tool_calls:
-            executed_tools = self._tools.execute(book, user, tool_calls, chapter_index=chapter_index)
-
         turn_meta = {
             "book_settings_patch": filtered,
             "setting_decisions": setting_decisions,
             "assistant_mode": mode,
+            "tool_iterations": len(executed_tools),
         }
+        if search_result:
+            turn_meta["search_result"] = _compact_search_result(search_result)
         turn = AssistantTurn(
             book_id=book.id,
-            user_message=(
-                "[quick_fill]"
-                if mode == "quick_fill" and message.startswith("（用户触发")
-                else message
-            ),
+            user_message=("[quick_fill]" if mode == "quick_fill" else message),
             assistant_message=assistant_message,
             basis_patch=turn_meta,
             tool_calls=executed_tools or None,
@@ -541,7 +856,6 @@ class ProjectAssistantService:
         self.db.add(turn)
         self.db.flush()
 
-        # Persist file judgements + decisions on settings for UI
         settings = dict(book.ai_inferred_settings) if isinstance(book.ai_inferred_settings, dict) else {}
         if file_judgements:
             settings["file_judgements"] = file_judgements
@@ -556,7 +870,6 @@ class ProjectAssistantService:
                 book, before=before_snap, after=after_snap, turn_id=str(turn.id)
             )
 
-        # 思考过程只展示过程性短句，不再把 setting_decisions（含字段名/结果）塞进「思考过程」
         traces_out: list[AssistantTrace] = []
         thinking_notes = [
             str(x).strip()
@@ -564,7 +877,6 @@ class ProjectAssistantService:
             if str(x).strip()
         ][:12]
         for note in thinking_notes:
-            # Skip notes that look like leaked machine fields / patch dumps
             if any(
                 token in note
                 for token in (
@@ -588,6 +900,23 @@ class ProjectAssistantService:
             )
             self.db.add(trace)
             traces_out.append(trace)
+        # Surface search progress as light traces
+        if search_result and isinstance(search_result.get("progress"), list):
+            for step in search_result["progress"][:6]:
+                if not isinstance(step, dict):
+                    continue
+                msg = str(step.get("message") or step.get("stage") or "").strip()
+                if not msg:
+                    continue
+                trace = AssistantTrace(
+                    turn_id=turn.id,
+                    claim=msg[:500],
+                    evidence=None,
+                    reason_summary=None,
+                    confidence=None,
+                )
+                self.db.add(trace)
+                traces_out.append(trace)
         self.db.flush()
 
         refreshed = self._basis.get_draft(book.id) or basis
@@ -626,70 +955,6 @@ class ProjectAssistantService:
             ],
         }
 
-    def _execute_search_request(
-        self,
-        book: Book,
-        user: User,
-        search_req: dict[str, Any],
-        *,
-        user_message: str,
-    ) -> dict[str, Any]:
-        mode = str(search_req.get("mode") or "user_query").strip()
-        search_type = str(search_req.get("search_type") or "auto").strip()
-        raw_query = str(search_req.get("raw_query") or "").strip()
-        if mode == "book_support":
-            raw_query = _book_support_query(book) or raw_query
-        elif not raw_query:
-            raw_query = user_message
-        if not raw_query:
-            return {"ok": False, "error": "empty search query", "mode": mode}
-
-        hint = search_type if search_type in {"person_works", "literature"} else (
-            "person_works" if mode == "user_query" and any(
-                k in raw_query for k in ("教授", "博士", "作者", "学者", "researcher", "professor")
-            ) else "literature"
-        )
-        try:
-            prepared = prepare_search(raw_query, search_type_hint=hint)
-        except Exception as exc:
-            logger.warning("prepare_search failed: %s", exc)
-            return {"ok": False, "error": str(exc), "mode": mode, "raw_query": raw_query}
-
-        intent = prepared.get("intent") or {}
-        queries = list(prepared.get("queries") or [])
-        st = str(intent.get("search_type") or hint)
-        try:
-            if st == "person_works":
-                data = self._external.search_person_works(
-                    str(intent.get("person_name") or raw_query),
-                    intent=intent,
-                    queries=queries,
-                    prepare_if_missing=False,
-                )
-                # Do NOT auto-paste into source library
-                return {
-                    "ok": True,
-                    "mode": mode,
-                    "search_type": "person_works",
-                    "raw_query": raw_query,
-                    "queries": queries,
-                    "result": data,
-                    "auto_ingested": False,
-                }
-            data = self._literature.search(book, query=queries[0] if queries else raw_query)
-            return {
-                "ok": True,
-                "mode": mode,
-                "search_type": "literature",
-                "raw_query": raw_query,
-                "queries": queries,
-                "result": data,
-                "auto_ingested": False,
-            }
-        except Exception as exc:
-            logger.warning("search execution failed: %s", exc)
-            return {"ok": False, "error": str(exc), "mode": mode, "raw_query": raw_query, "queries": queries}
-
     def undo_quick_fill(self, book: Book, operation_id: str | None = None) -> dict[str, Any]:
         result = undo_quick_fill(book, operation_id)
         basis = self._basis.get_draft_or_create(book)
@@ -718,6 +983,21 @@ class ProjectAssistantService:
             .limit(page_size)
             .all()
         )
+
+    def list_turns_with_search(self, book_id: UUID, *, page: int = 1, page_size: int = 20) -> list[dict[str, Any]]:
+        rows = self.list_turns(book_id, page=page, page_size=page_size)
+        out: list[dict[str, Any]] = []
+        for turn in rows:
+            out.append(
+                {
+                    "id": turn.id,
+                    "user_message": turn.user_message,
+                    "assistant_message": turn.assistant_message,
+                    "created_at": turn.created_at,
+                    "search_result": extract_search_result_from_turn(turn),
+                }
+            )
+        return out
 
     def list_traces(self, book_id: UUID, *, turn_id: UUID | None = None) -> list[AssistantTrace]:
         q = self.db.query(AssistantTrace).join(AssistantTurn, AssistantTrace.turn_id == AssistantTurn.id).filter(

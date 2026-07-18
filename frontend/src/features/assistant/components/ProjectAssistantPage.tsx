@@ -214,6 +214,10 @@ export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Pro
             turnTracesById={conv.turnTracesById}
             onSend={conv.sendMessage}
             onQuickFill={conv.quickFill}
+            onLiteratureAdded={() => {
+              void conv.refreshSources();
+              void qc.invalidateQueries({ queryKey: ["citations", bookId] });
+            }}
           />
           <div className="flex w-72 shrink-0 flex-col border-l border-slate-200 bg-white">
             <SourceLibraryPanel
@@ -221,7 +225,6 @@ export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Pro
               sources={conv.sources}
               loading={conv.sourcesLoading}
               error={conv.sourcesError}
-              externalSearch={conv.externalSearch as Record<string, unknown> | null}
               onRefresh={() => conv.refreshSources()}
               onSourceUploaded={conv.prependSource}
               onSourceRemoved={conv.removeSource}

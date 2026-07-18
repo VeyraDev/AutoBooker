@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import AssistantMarkdown from "@/features/assistant/components/AssistantMarkdown";
+import LiteratureSearchCard from "@/features/assistant/components/LiteratureSearchCard";
 import TurnReasoningDrawer from "@/features/assistant/components/TurnReasoningDrawer";
 import type { AssistantTrace, TurnListItem } from "@/features/assistant/api/assistantApi";
 import type { PendingTurn } from "@/features/assistant/hooks/useAssistantConversation";
@@ -19,6 +20,7 @@ type Props = {
   turnTracesById?: Record<string, AssistantTrace[]>;
   onSend: (message: string) => Promise<unknown>;
   onQuickFill?: () => Promise<unknown>;
+  onLiteratureAdded?: () => void | Promise<void>;
 };
 
 function sendErrorMessage(error: unknown): string {
@@ -53,6 +55,7 @@ export default function ConversationPanel({
   turnTracesById = {},
   onSend,
   onQuickFill,
+  onLiteratureAdded,
 }: Props) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -97,6 +100,14 @@ export default function ConversationPanel({
                 inlineTraces={turnTracesById[turn.id]}
               />
               <AssistantMarkdown content={turn.assistant_message} />
+              {turn.search_result ? (
+                <LiteratureSearchCard
+                  bookId={bookId}
+                  payload={turn.search_result}
+                  compact
+                  onAdded={onLiteratureAdded}
+                />
+              ) : null}
             </div>
           </div>
         ))}
@@ -121,6 +132,14 @@ export default function ConversationPanel({
                     />
                   ) : null}
                   <AssistantMarkdown content={streamingText ?? ""} />
+                  {pendingTurn.searchResult ? (
+                    <LiteratureSearchCard
+                      bookId={bookId}
+                      payload={pendingTurn.searchResult}
+                      compact
+                      onAdded={onLiteratureAdded}
+                    />
+                  ) : null}
                   {!streaming ? null : (
                     <span className="inline-block h-4 w-0.5 animate-pulse bg-indigo-400 align-middle" aria-hidden />
                   )}

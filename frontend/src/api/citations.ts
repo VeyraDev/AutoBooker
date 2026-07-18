@@ -120,3 +120,7 @@ export async function listCitationOccurrences(bookId: string): Promise<CitationO
 export async function deleteCitationOccurrence(bookId: string, occurrenceId: string): Promise<void> {
   await client.delete(`/books/${bookId}/citation-occurrences/${occurrenceId}`);
 }
+
+export async function deleteCitation(bookId: string, citationId: string): Promise<void> {
+  await client.delete(`/books/${bookId}/citations/${citationId}`);
+}

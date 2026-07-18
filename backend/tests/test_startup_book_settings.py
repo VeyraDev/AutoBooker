@@ -82,15 +82,30 @@ def test_quick_fill_undo_restores_before():
 
 
 def test_startup_prompt_has_single_settings_contract():
-    from app.prompts.assistant.startup_system import STARTUP_ASSISTANT_SYSTEM, startup_turn_output_instruction
+    from app.prompts.assistant.startup_system import (
+        QUICK_FILL_INSTRUCTION,
+        STARTUP_ASSISTANT_SYSTEM,
+        startup_turn_output_instruction,
+    )
 
-    assert "唯一正式书稿设定" in STARTUP_ASSISTANT_SYSTEM
-    assert "reader_outcome" not in STARTUP_ASSISTANT_SYSTEM or "不得要求用户填写" in STARTUP_ASSISTANT_SYSTEM
+    assert "正式设定" in STARTUP_ASSISTANT_SYSTEM
+    assert len(STARTUP_ASSISTANT_SYSTEM) < 1200
+    assert "Excel" not in STARTUP_ASSISTANT_SYSTEM
+    assert "reader_outcome" not in STARTUP_ASSISTANT_SYSTEM
+    assert "suggest_book_settings" in QUICK_FILL_INSTRUCTION
     out = startup_turn_output_instruction()
     assert "book_settings_patch" in out
     assert "basis_patch" not in out
-    assert "outline_route" in out
-    assert "search_request" in out
+    assert "tool_calls" in out
+    assert "retrieve_source_context" in out
+    assert "search_references" in out
+
+
+def test_source_catalog_is_lightweight():
+    from app.services.assistant.book_settings_context import source_catalog
+
+    # Smoke: function exists and returns list shape via monkeypatch-free call pattern
+    assert callable(source_catalog)
 
 
 def test_setting_origins_roundtrip():

@@ -126,7 +126,7 @@ def list_turns(
     db: Session = Depends(get_db),
 ):
     book_service.get_book_or_404(book_id, user, db)
-    rows = ProjectAssistantService(db).list_turns(book_id, page=page)
+    rows = ProjectAssistantService(db).list_turns_with_search(book_id, page=page)
     return rows
 
 

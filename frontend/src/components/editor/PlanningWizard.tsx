@@ -26,6 +26,8 @@ type Props = {
   onReorder: (items: { chapter_id: string; new_index: number }[]) => void | Promise<void>;
   onDeleteChapter: (chapterIndex: number) => void | Promise<void>;
   dragDisabled: boolean;
+  /** 优先跳转启动助手设定页；未提供时回退到本向导 Step1（旧 SetupView） */
+  onBackToBookSettings?: () => void;
 };
 
 function StepIndicator({ step }: { step: 1 | 2 | 3 }) {
@@ -66,6 +68,7 @@ export default function PlanningWizard({
   onReorder,
   onDeleteChapter,
   dragDisabled,
+  onBackToBookSettings,
 }: Props) {
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(() => {
     if (
@@ -250,6 +253,10 @@ export default function PlanningWizard({
                   type="button"
                   className="btn-secondary mt-4 w-full text-sm"
                   onClick={() => {
+                    if (onBackToBookSettings) {
+                      onBackToBookSettings();
+                      return;
+                    }
                     setStep1SaveOnlyFab(true);
                     setWizardStep(1);
                   }}

@@ -1,4 +1,4 @@
-"""Assemble structured context for startup assistant turns."""
+"""Assemble lightweight context for startup assistant turns."""
 
 from __future__ import annotations
 
@@ -88,34 +88,44 @@ def confirmed_requirements(db: Session, book_id: UUID) -> list[dict[str, Any]]:
     ]
 
 
-def uploaded_sources(db: Session, book: Book) -> list[dict[str, Any]]:
+def source_catalog(db: Session, book: Book) -> list[dict[str, Any]]:
+    """Lightweight per-turn directory — no long summaries."""
     lib = SourceLibraryService(db)
     items = lib.list_sources(book)
     out: list[dict[str, Any]] = []
-    for item in items[:30]:
+    for item in items[:40]:
         if not isinstance(item, dict):
             continue
-        out.append(
-            {
-                "source_id": str(item.get("id") or ""),
-                "filename": str(item.get("title") or ""),
-                "parse_status": str(item.get("status") or "parsed"),
-                "content_summary": str(item.get("summary") or "")[:1500],
-                "structured_profile": item.get("structured_profile")
-                if isinstance(item.get("structured_profile"), dict)
-                else {},
-                "usage_limits": [],
-                "detected_roles": list(item.get("detected_roles") or []),
-            }
-        )
+        filename = str(item.get("title") or "")
+        summary = str(item.get("summary") or "").strip()
+        short = summary[:80] + ("…" if len(summary) > 80 else "")
+        ft = ""
+        if "." in filename:
+            ft = filename.rsplit(".", 1)[-1].lower()
+        roles = list(item.get("detected_roles") or [])
+        entry: dict[str, Any] = {
+            "source_id": str(item.get("id") or ""),
+            "filename": filename,
+            "file_type": ft or str(item.get("type") or ""),
+            "parse_status": str(item.get("status") or "parsed"),
+            "detected_roles": roles,
+            "short_summary": short,
+        }
+        if ft in {"xlsx", "xlsm", "xls"}:
+            entry["sheet_hint"] = "use inspect_workbook / read_sheet_range"
+        out.append(entry)
     return out
+
+
+def uploaded_sources(db: Session, book: Book) -> list[dict[str, Any]]:
+    """Backward-compatible alias → lightweight catalog."""
+    return source_catalog(db, book)
 
 
 def _segment_outline_stats(text: str) -> dict[str, Any]:
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     chapter_lines = [ln for ln in lines if _CHAPTER_RE.search(ln)]
     has_titles = len(chapter_lines) >= 2
-    # Heuristic: summaries if many non-chapter lines after chapters
     prose = [ln for ln in lines if ln not in chapter_lines and len(ln) > 20]
     has_summaries = len(prose) >= max(2, len(chapter_lines) // 2)
     section_hits = sum(1 for ln in lines if re.search(r"第.+节|^\d+\.\d+", ln))
@@ -154,16 +164,36 @@ def outline_candidates(db: Session, book_id: UUID) -> list[dict[str, Any]]:
         stats = _segment_outline_stats(text)
         if stats["chapter_count"] < 2 and st != "outline":
             continue
+        mode = "from_settings"
+        if stats["has_chapter_titles"] and stats["has_sections"] and not stats["has_chapter_summaries"]:
+            mode = "complete_existing_outline"
+        elif stats["has_chapter_titles"] and stats["has_chapter_summaries"]:
+            mode = "use_existing_outline"
         out.append(
             {
-                "source_id": str(seg.id),
+                "source_id": str(seg.source_id),
+                "segment_id": str(seg.id),
                 "segment_type": st,
                 **stats,
+                "recommended_mode": mode,
             }
         )
         if len(out) >= 8:
             break
     return out
+
+
+def assess_outline_sources(
+    db: Session,
+    book: Book,
+    *,
+    source_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    cands = outline_candidates(db, book.id)
+    if source_ids:
+        allow = {str(x) for x in source_ids}
+        cands = [c for c in cands if c.get("source_id") in allow or c.get("segment_id") in allow]
+    return {"candidates": cands, "count": len(cands)}
 
 
 def build_startup_context(
@@ -177,17 +207,16 @@ def build_startup_context(
     memory_svc = ProjectMemoryService(db)
     memories = memory_svc.list_memories(book.id)
     confirmed = [
-        {"memory_type": getattr(m.memory_type, "value", m.memory_type), "content": m.content}
+        {"memory_type": getattr(m.memory_type, "value", m.memory_type), "content": (m.content or "")[:300]}
         for m in memories
         if getattr(m, "confirmed", False)
-    ][:30]
+    ][:20]
     return {
         "assistant_mode": assistant_mode,
         "current_book_settings": current_book_settings(book),
         "setting_origins": get_setting_origins(book),
         "confirmed_requirements": confirmed_requirements(db, book.id),
-        "uploaded_sources": uploaded_sources(db, book),
-        "outline_candidates": outline_candidates(db, book.id),
+        "source_catalog": source_catalog(db, book),
         "confirmed_project_memory": confirmed,
         "recent_conversation": recent_conversation,
         "user_message": user_message,
@@ -196,4 +225,12 @@ def build_startup_context(
             if isinstance(book.ai_inferred_settings, dict)
             else None
         ),
+        "tool_hints": [
+            "retrieve_source_context",
+            "inspect_workbook",
+            "read_sheet_range",
+            "search_references",
+            "suggest_book_settings",
+            "assess_outline_sources",
+        ],
     }

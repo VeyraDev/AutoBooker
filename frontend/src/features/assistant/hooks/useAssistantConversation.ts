@@ -18,6 +18,7 @@ import {
   type TurnResponse,
   type WritingBasis,
 } from "@/features/assistant/api/assistantApi";
+import { normalizeSearchPayload } from "@/features/assistant/components/LiteratureSearchCard";
 import { useStreamingReveal } from "@/lib/useStreamingReveal";
 
 export type PendingTurn = {
@@ -26,6 +27,7 @@ export type PendingTurn = {
   assistantMessage: string;
   turnId?: string;
   traces?: AssistantTrace[];
+  searchResult?: Record<string, unknown> | null;
 };
 
 type Options = {
@@ -69,6 +71,16 @@ export function useAssistantConversation(bookId: string, options?: Options) {
   const [lastSettingOrigins, setLastSettingOrigins] = useState<Record<string, SettingOrigin>>({});
   const [lastConfirmedRequirements, setLastConfirmedRequirements] = useState<ExtractedRequirement[]>([]);
   const [lastOutlineRoute, setLastOutlineRoute] = useState<OutlineRoute | null>(null);
+  const [externalSearch, setExternalSearch] = useState<Record<string, unknown> | null>(null);
+
+  // Rehydrate literature panel from persisted turn search (survives refresh / HMR)
+  useEffect(() => {
+    const rows = turnsQuery.data ?? [];
+    const hit = rows.find((t) => t.search_result);
+    if (!hit?.search_result) return;
+    const normalized = normalizeSearchPayload(hit.search_result);
+    if (normalized) setExternalSearch(normalized);
+  }, [turnsQuery.data]);
 
   const applyTurnSuccess = useCallback(
     async (data: TurnResponse) => {
@@ -87,6 +99,33 @@ export function useAssistantConversation(bookId: string, options?: Options) {
       if (data.outline_route) {
         setLastOutlineRoute(data.outline_route);
       }
+      const fromSearch = data.search_result?.result;
+      const fromTool =
+        data.tool_results?.find(
+          (r) =>
+            (r.name === "search_person_works" || r.name === "search_references" || r.name === "search_literature") &&
+            r.ok,
+        )?.data;
+      const nested =
+        fromTool && typeof fromTool === "object" && "result" in fromTool
+          ? (fromTool as { result?: unknown }).result
+          : null;
+      const next =
+        (fromSearch && typeof fromSearch === "object" ? (fromSearch as Record<string, unknown>) : null) ??
+        (nested && typeof nested === "object" ? (nested as Record<string, unknown>) : null) ??
+        (fromTool && typeof fromTool === "object" ? (fromTool as Record<string, unknown>) : null);
+      let searchPayload: Record<string, unknown> | null = null;
+      if (data.search_result && typeof data.search_result === "object") {
+        searchPayload = normalizeSearchPayload(data.search_result as Record<string, unknown>);
+      } else if (next) {
+        const meta =
+          fromTool && typeof fromTool === "object" ? (fromTool as Record<string, unknown>) : {};
+        searchPayload = normalizeSearchPayload({
+          ...meta,
+          result: next,
+        });
+      }
+      if (searchPayload) setExternalSearch(searchPayload);
       setPendingTurn((prev) =>
         prev
           ? {
@@ -95,6 +134,7 @@ export function useAssistantConversation(bookId: string, options?: Options) {
               assistantMessage: data.assistant_message,
               turnId: data.turn_id,
               traces: data.traces,
+              searchResult: searchPayload ?? prev.searchResult ?? null,
             }
           : null,
       );
@@ -231,9 +271,7 @@ export function useAssistantConversation(bookId: string, options?: Options) {
     pendingConfirmations: (lastResponse?.pending_confirmations ?? []) as ConfirmationPreview[],
     topicProposal: lastResponse?.tool_results?.find((r) => r.name === "propose_book_topics" && r.ok)?.data
       ?.proposal as Record<string, unknown> | undefined,
-    externalSearch:
-      lastResponse?.search_result?.result ??
-      lastResponse?.tool_results?.find((r) => r.name === "search_person_works" && r.ok)?.data,
+    externalSearch,
     turnTracesById: lastTurnTraces,
     lastQuickFillOpId,
     lastSettingOrigins,

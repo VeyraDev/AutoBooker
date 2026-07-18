@@ -52,7 +52,6 @@ vi.mock("@/features/assistant/hooks/useAssistantConversation", () => ({
     sendError: null,
     pendingConfirmations: [],
     topicProposal: undefined,
-    externalSearch: null,
     toolResults: [],
     turnTracesById: {},
     lastQuickFillOpId: null,

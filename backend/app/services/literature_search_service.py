@@ -32,18 +32,23 @@ class LiteratureSearchService:
         self,
         book: Book,
         *,
-        query: str,
+        query: str | None = None,
+        queries: list[str] | None = None,
         chapter_index: int | None = None,
         rows: int = 8,
         skip_refine: bool = False,
     ) -> dict:
         profile = literature_profile(book.book_type, book.style_type)
         agent = LiteratureAgent()
-        raw_q = query.strip()
+        prepared = [str(q).strip() for q in (queries or []) if str(q).strip()][:8]
+        raw_q = (query or (prepared[0] if prepared else "")).strip()
         must_inc: list[str] = []
         must_exc: list[str] = []
 
-        if _should_skip_auto_refine(raw_q):
+        if prepared and (skip_refine or len(prepared) > 1):
+            # Multi-query from search_intent / assistant: execute all as provided
+            queries = prepared
+        elif _should_skip_auto_refine(raw_q):
             queries = [raw_q]
         else:
             refined = refine_literature_query(
@@ -57,6 +62,13 @@ class LiteratureSearchService:
             must_exc = refined.get("must_exclude") or []
             if skip_refine and raw_q:
                 queries = [raw_q]
+            if prepared:
+                # Merge prepared queries ahead of refined ones
+                merged: list[str] = []
+                for q in prepared + list(queries or []):
+                    if q and q not in merged:
+                        merged.append(q)
+                queries = merged[:8]
 
         if not queries:
             queries = [raw_q] if raw_q else []

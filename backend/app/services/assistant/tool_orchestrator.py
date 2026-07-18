@@ -17,9 +17,13 @@ from app.prompts.assistant.topic_proposal import (
     format_topics_preview,
     parse_topic_proposal,
 )
+from app.services.assistant.book_settings_context import assess_outline_sources, current_book_settings
 from app.services.assistant.external_search_service import ExternalSearchService
 from app.services.assistant.project_memory_service import ProjectMemoryService
 from app.services.assistant.search_intent_service import prepare_search, refine_search_intent, refine_search_queries
+from app.services.assistant.source_retrieve_service import retrieve_source_context
+from app.services.assistant.suggest_book_settings import suggest_book_settings
+from app.services.assistant.workbook_service import inspect_workbook, read_sheet_range
 from app.services.figure_service import get_chapter_figures
 from app.services.literature_search_service import LiteratureSearchService
 from app.services.outline_text import serialize_book_outline_markdown
@@ -289,15 +293,98 @@ class ToolOrchestrator:
                         query = str((queries_arg or [""])[0] or "").strip()
                     if not query and not queries_arg:
                         raise ValueError("先 prepare_search，或提供 query / queries")
-                    # Prefer first prepared query; optional multi-query merge later
                     if queries_arg and not query:
                         query = str(queries_arg[0]).strip()
                     ch_idx = args.get("chapter_index", chapter_index)
                     ch_idx = int(ch_idx) if ch_idx is not None else None
-                    data = self._literature.search(book, query=query, chapter_index=ch_idx)
+                    data = self._literature.search(
+                        book,
+                        query=query,
+                        queries=[str(q) for q in (queries_arg or []) if str(q).strip()][:8] or None,
+                        chapter_index=ch_idx,
+                        skip_refine=bool(queries_arg),
+                    )
                     if queries_arg:
                         data = {**data, "queries_used": [str(q) for q in queries_arg if str(q).strip()][:8]}
                     results.append(_tool_result(name, ok=True, panel_hint="literature", data=data))
+                elif name == "search_references":
+                    data = self._search_references(
+                        book,
+                        user,
+                        args,
+                        chapter_index=chapter_index,
+                        last_prepare=last_prepare,
+                    )
+                    if data.get("prepare"):
+                        last_prepare = data["prepare"]
+                    last_search = data.get("result") if isinstance(data.get("result"), dict) else data
+                    results.append(_tool_result(name, ok=True, panel_hint="literature", data=data))
+                elif name == "retrieve_source_context":
+                    q = str(args.get("query") or "").strip()
+                    if not q:
+                        raise ValueError("query required")
+                    sids = args.get("source_ids") if isinstance(args.get("source_ids"), list) else None
+                    top_k = int(args.get("top_k") or 12)
+                    data = retrieve_source_context(
+                        self.db,
+                        book,
+                        query=q,
+                        source_ids=[str(x) for x in sids] if sids else None,
+                        top_k=top_k,
+                    )
+                    results.append(_tool_result(name, ok=True, panel_hint="sources", data=data))
+                elif name == "inspect_workbook":
+                    sid = str(args.get("source_id") or "").strip()
+                    if not sid:
+                        raise ValueError("source_id required")
+                    data = inspect_workbook(self.db, book, source_id=sid)
+                    results.append(_tool_result(name, ok=True, panel_hint="sources", data=data))
+                elif name == "read_sheet_range":
+                    sid = str(args.get("source_id") or "").strip()
+                    sheet = str(args.get("sheet_name") or "").strip()
+                    if not sid or not sheet:
+                        raise ValueError("source_id and sheet_name required")
+                    data = read_sheet_range(
+                        self.db,
+                        book,
+                        source_id=sid,
+                        sheet_name=sheet,
+                        cell_range=str(args.get("cell_range") or "A1:N50"),
+                    )
+                    results.append(_tool_result(name, ok=True, panel_hint="sources", data=data))
+                elif name == "suggest_book_settings":
+                    model = resolve_assistant_model(user)
+                    fields = args.get("fields_to_complete")
+                    fields_list = [str(x) for x in fields] if isinstance(fields, list) else None
+                    sids = args.get("relevant_source_ids")
+                    sid_list = [str(x) for x in sids] if isinstance(sids, list) else None
+                    data = suggest_book_settings(
+                        self.db,
+                        book,
+                        model=model,
+                        fields_to_complete=fields_list,
+                        relevant_source_ids=sid_list,
+                        mode=str(args.get("mode") or "quick_fill"),
+                    )
+                    results.append(
+                        _tool_result(
+                            name,
+                            ok=True,
+                            panel_hint="basis",
+                            data={
+                                **data,
+                                "current_book_settings": current_book_settings(book),
+                            },
+                        )
+                    )
+                elif name == "assess_outline_sources":
+                    sids = args.get("source_ids") if isinstance(args.get("source_ids"), list) else None
+                    data = assess_outline_sources(
+                        self.db,
+                        book,
+                        source_ids=[str(x) for x in sids] if sids else None,
+                    )
+                    results.append(_tool_result(name, ok=True, panel_hint="outline", data=data))
                 elif name == "run_review":
                     scope = str(args.get("scope") or "chapter").strip()
                     ch_idx = args.get("chapter_index", chapter_index)
@@ -383,6 +470,105 @@ class ToolOrchestrator:
             except Exception as exc:
                 results.append(_tool_result(name, ok=False, error=str(exc)))
         return results
+
+    def _search_references(
+        self,
+        book: Book,
+        user: User,
+        args: dict[str, Any],
+        *,
+        chapter_index: int | None,
+        last_prepare: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Business-level search: intent → queries → multi-source → return candidates (no ingest)."""
+        mode = str(args.get("mode") or "user_query").strip() or "user_query"
+        raw_query = str(args.get("raw_query") or args.get("query") or "").strip()
+        progress: list[dict[str, Any]] = [{"stage": "intent", "message": "正在识别人物、机构和研究主题"}]
+
+        if mode == "book_support" and not raw_query:
+            bits = [
+                book.title or "",
+                book.topic_brief or "",
+                " ".join(book.disciplines or []) if book.disciplines else (book.discipline or ""),
+                " ".join(book.topic_tags or []) if book.topic_tags else "",
+            ]
+            raw_query = " ".join(b for b in bits if b).strip()[:500]
+        if not raw_query:
+            raise ValueError("raw_query required")
+
+        model = resolve_assistant_model(user)
+        hint = str(args.get("search_type") or "").strip() or None
+        source_types = args.get("source_types") if isinstance(args.get("source_types"), list) else []
+        if not hint and source_types:
+            joined = " ".join(str(x) for x in source_types).lower()
+            if "person" in joined or "作者" in joined:
+                hint = "person_works"
+        prepared = prepare_search(raw_query, search_type_hint=hint, model=model)
+        intent = prepared.get("intent") or {}
+        queries = list(prepared.get("queries") or [])
+        progress.append(
+            {
+                "stage": "queries",
+                "message": f"已生成 {len(queries)} 组查询",
+                "queries": queries[:8],
+            }
+        )
+        st = str(intent.get("search_type") or hint or "literature")
+        ch_idx = args.get("chapter_index", chapter_index)
+        ch_idx = int(ch_idx) if ch_idx is not None else None
+
+        if st == "person_works":
+            result = self._external.search_person_works(
+                str(intent.get("person_name") or raw_query),
+                intent=intent,
+                queries=queries,
+                prepare_if_missing=False,
+            )
+            progress.append(
+                {
+                    "stage": "completed",
+                    "found": len(result.get("works") or []),
+                    "candidates": len(result.get("candidates") or []),
+                }
+            )
+            return {
+                "mode": mode,
+                "search_type": "person_works",
+                "raw_query": raw_query,
+                "queries": queries,
+                "prepare": prepared,
+                "progress": progress,
+                "result": result,
+                "auto_ingested": False,
+                "summary": (
+                    f"执行了 {len(queries) or 1} 组查询，作品 {len(result.get('works') or [])} 条，"
+                    f"候选身份 {len(result.get('candidates') or [])} 个。结果未自动入库。"
+                ),
+            }
+
+        lit = self._literature.search(
+            book,
+            query=raw_query,
+            queries=queries or None,
+            chapter_index=ch_idx,
+            skip_refine=bool(queries),
+        )
+        items = lit.get("items") or lit.get("papers") or []
+        progress.append({"stage": "completed", "remaining": len(items), "queries_run": len(queries) or 1})
+        return {
+            "mode": mode,
+            "search_type": "literature",
+            "raw_query": raw_query,
+            "queries": queries or lit.get("refined_queries") or [],
+            "prepare": prepared,
+            "progress": progress,
+            "result": lit,
+            "auto_ingested": False,
+            "summary": (
+                f"执行了 {len(queries) or 1} 组查询，共返回 {len(items)} 条候选。"
+                f"结果未自动入库，请用户筛选后加入资料库。"
+            ),
+        }
 
     @staticmethod
     def _format_search_paste(data: dict[str, Any]) -> str:

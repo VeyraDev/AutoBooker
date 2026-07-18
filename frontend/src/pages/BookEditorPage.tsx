@@ -226,6 +226,8 @@ export default function BookEditorPage() {
   const [enteringReviewStage, setEnteringReviewStage] = useState(false);
   const [panelToolSeed, setPanelToolSeed] = useState<PanelToolSeed>({});
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
+  /** 大纲页点「返回书稿设定」时强制回到启动助手，而不是旧 SetupView */
+  const [forceAssistantSettings, setForceAssistantSettings] = useState(false);
 
   const editorRef = useRef<ChapterEditorHandle>(null);
   const editorMainScrollRef = useRef<HTMLDivElement>(null);
@@ -308,7 +310,12 @@ export default function BookEditorPage() {
     (intakeGateQuery.isLoading ||
       intakeGateQuery.isPending ||
       intakeGate?.status !== "confirmed");
-  const shouldShowAssistant = Boolean(bookId && projectStartPending);
+  // 有 creation_origin 的书稿：启动助手是正式设定入口（含大纲后返回）
+  const shouldShowAssistant = Boolean(
+    bookId &&
+      book?.creation_origin &&
+      (projectStartPending || forceAssistantSettings),
+  );
   const outline = outlineQuery.data;
   const chapters = useMemo(() => outline?.chapters ?? EMPTY_OUTLINE_CHAPTERS, [outline]);
 
@@ -944,6 +951,7 @@ export default function BookEditorPage() {
 
   async function handleProjectInputComplete() {
     if (!bookId) return;
+    setForceAssistantSettings(false);
     // 保留刚写入的 outline 缓存，避免失效后短暂无章节而闪回设定页
     await Promise.all([
       qc.invalidateQueries({ queryKey: ["intake", bookId] }),
@@ -1519,6 +1527,9 @@ export default function BookEditorPage() {
           onReorder={handleReorder}
           onDeleteChapter={(idx) => void handleDeleteChapter(idx)}
           dragDisabled={dragDisabled}
+          onBackToBookSettings={
+            book.creation_origin ? () => setForceAssistantSettings(true) : undefined
+          }
         />
         )}
       </div>

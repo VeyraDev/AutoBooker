@@ -124,6 +124,7 @@ class TurnListItem(BaseModel):
     user_message: str
     assistant_message: str
     created_at: datetime
+    search_result: dict[str, Any] | None = None
 
     model_config = {"from_attributes": True}
 
