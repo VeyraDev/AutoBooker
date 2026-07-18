@@ -30,7 +30,7 @@ export default function AdvancedSettingsDrawer({ open, book, onClose }: Props) {
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>
             <h2 className="text-base font-medium text-ink">高级编辑</h2>
-            <p className="text-xs text-slate-500">与项目要点同一套书稿设定；含书名、读者、体裁、策划细节与资料</p>
+            <p className="text-xs text-slate-500">与项目要点同一套正式书稿设定</p>
           </div>
           <button
             type="button"

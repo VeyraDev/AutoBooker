@@ -143,7 +143,46 @@ def generate_outline(
         from app.services.sources.source_outline_bridge import (
             materials_from_outline_contract,
             merge_primary_outline,
+            prepare_outline_context,
+            USAGE_PRIMARY_OUTLINE,
+            confirm_source_usage,
         )
+
+        ai_settings = book.ai_inferred_settings if isinstance(book.ai_inferred_settings, dict) else {}
+        outline_route = ai_settings.get("outline_route") if isinstance(ai_settings.get("outline_route"), dict) else {}
+        route_mode = str(outline_route.get("mode") or "from_settings")
+        if outline_route.get("needs_confirmation") and not body.confirmed_source_id and not body.force:
+            book.status = previous_status
+            db.commit()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "outline_route_needs_confirmation",
+                    "message": "存在多份可能的主大纲，请先确认使用哪一份",
+                    "outline_route": outline_route,
+                    "candidate_source_ids": outline_route.get("candidate_source_ids") or [],
+                },
+            )
+
+        source_id = (body.confirmed_source_id or outline_route.get("source_id") or "").strip() or None
+        if route_mode in {"complete_existing_outline", "use_existing_outline"} and source_id:
+            try:
+                from uuid import UUID as _UUID
+
+                confirm_source_usage(
+                    db, book, segment_id=_UUID(source_id), usage=USAGE_PRIMARY_OUTLINE
+                )
+            except Exception:
+                logger.warning("confirm primary outline source failed source_id=%s", source_id)
+            prepare_outline_context(
+                db,
+                book,
+                mode="generate" if route_mode == "complete_existing_outline" else "use_existing",
+                primary_segment_ids=[source_id],
+                manuscript_policy="omit",
+                must_keep_chapter_titles=True,
+            )
+            db.flush()
 
         project_seed = resolve_project_seed(book, db)
         outline_topic = (body.topic_override or "").strip() or (book.topic_brief or "").strip() or project_seed[:500]

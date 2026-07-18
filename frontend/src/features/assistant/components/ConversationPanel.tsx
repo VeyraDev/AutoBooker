@@ -18,6 +18,7 @@ type Props = {
   error?: unknown;
   turnTracesById?: Record<string, AssistantTrace[]>;
   onSend: (message: string) => Promise<unknown>;
+  onQuickFill?: () => Promise<unknown>;
 };
 
 function sendErrorMessage(error: unknown): string {
@@ -51,6 +52,7 @@ export default function ConversationPanel({
   error,
   turnTracesById = {},
   onSend,
+  onQuickFill,
 }: Props) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -135,7 +137,18 @@ export default function ConversationPanel({
         <div ref={bottomRef} />
       </div>
       <div className="border-t border-slate-200 p-3">
-        <div className="flex gap-2">
+        <div className="flex items-end gap-2">
+          {onQuickFill ? (
+            <button
+              type="button"
+              className="shrink-0 rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              disabled={busy}
+              title="根据当前对话与资料集中判断正式设定"
+              onClick={() => void onQuickFill()}
+            >
+              快速补齐
+            </button>
+          ) : null}
           <textarea
             className="min-h-[44px] flex-1 rounded border border-slate-200 p-2 text-sm"
             rows={2}

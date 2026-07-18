@@ -50,9 +50,10 @@ type Props = {
   bookId: string;
   finding: WorkspaceFinding | null;
   onUpdated: () => void;
+  onJumpToSource?: (finding: WorkspaceFinding) => void;
 };
 
-export default function ReviewFindingDetail({ bookId, finding, onUpdated }: Props) {
+export default function ReviewFindingDetail({ bookId, finding, onUpdated, onJumpToSource }: Props) {
   const [busy, setBusy] = useState<"apply" | "resolve" | "dismiss" | "recheck" | "undo" | null>(null);
   const [previewMd, setPreviewMd] = useState<string | null>(null);
   const [applicationId, setApplicationId] = useState<string | null>(null);
@@ -78,6 +79,7 @@ export default function ReviewFindingDetail({ bookId, finding, onUpdated }: Prop
       : finding.tier === "needs_verification" || finding.prefer_evidence_binding
         ? DEFAULT_DATA_OPTIONS
         : [];
+  const evidenceItems = finding.evidence_items ?? [];
 
   async function handleApply(optionId?: string) {
     if (finding?.source !== "chapter") {
@@ -170,6 +172,13 @@ export default function ReviewFindingDetail({ bookId, finding, onUpdated }: Prop
   }
 
   const fixCapability = finding.fix_capability ?? (actionOptions.length > 0 ? "choice_then_apply" : null);
+  const hasLocation =
+    finding.source === "chapter" &&
+    (finding.chapter_index != null ||
+      finding.paragraph_index != null ||
+      finding.paragraph_id ||
+      finding.char_start != null ||
+      finding.quote);
   const canApply =
     finding.source === "chapter" &&
     finding.locatable &&
@@ -209,6 +218,32 @@ export default function ReviewFindingDetail({ bookId, finding, onUpdated }: Prop
           ) : null}
         </section>
         <section>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">定位</p>
+          {hasLocation ? (
+            <div className="mt-1 rounded border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-950">
+              <p>
+                {finding.chapter_index != null ? `第 ${finding.chapter_index} 章` : "章节级定位"}
+                {finding.chapter_title ? ` · ${finding.chapter_title}` : ""}
+              </p>
+              <p className="mt-0.5 text-[11px] text-emerald-800">
+                {finding.paragraph_index != null ? `段落 ${finding.paragraph_index + 1}` : "段落待匹配"}
+                {finding.char_start != null && finding.char_end != null ? ` · 字符 ${finding.char_start}-${finding.char_end}` : ""}
+              </p>
+              {onJumpToSource && finding.chapter_index != null ? (
+                <button
+                  type="button"
+                  className="mt-2 rounded border border-emerald-200 bg-white px-2 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-50"
+                  onClick={() => onJumpToSource(finding)}
+                >
+                  跳转到正文
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <p className="mt-1 text-xs text-slate-400">暂未生成可跳转定位</p>
+          )}
+        </section>
+        <section>
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400">原文证据</p>
           {finding.quote ? (
             <p className="mt-1 rounded border border-slate-100 bg-slate-50 p-3 text-xs italic text-slate-800">{finding.quote}</p>
@@ -226,9 +261,32 @@ export default function ReviewFindingDetail({ bookId, finding, onUpdated }: Prop
                 </li>
               ))}
             </ul>
-          ) : (
+          ) : null}
+          {evidenceItems.length ? (
+            <div className="mt-2 space-y-2">
+              {evidenceItems.map((item, index) => (
+                <div key={`${item.type}-${index}`} className="rounded border border-sky-100 bg-sky-50/60 px-3 py-2 text-xs text-sky-950">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{item.label}</span>
+                    {item.source ? <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] text-sky-700">{item.source}</span> : null}
+                  </div>
+                  <p className="mt-1 leading-relaxed">{item.detail}</p>
+                  {item.examples?.length ? (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {item.examples.slice(0, 4).map((example) => (
+                        <span key={example} className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] text-sky-800">
+                          {example}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {!finding.basis_refs.length && !evidenceItems.length ? (
             <p className="mt-1 text-xs text-slate-400">暂无结构化依据来源</p>
-          )}
+          ) : null}
         </section>
         <section>
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400">影响</p>

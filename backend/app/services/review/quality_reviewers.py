@@ -16,6 +16,7 @@ from app.models.book import Book
 from app.models.chapter import Chapter
 from app.services.citation_service import is_bibliography_chapter
 from app.services.review.data_evidence_policy import default_data_action_options
+from app.services.review.title_benchmarks import title_benchmark_for_style, title_limits_from_benchmark
 from app.services.review_anchor import parse_paragraphs
 from app.services.tiptap_convert import chapter_content_to_markdown
 
@@ -218,7 +219,10 @@ def _review_title(
     if not title:
         return []
     findings: list[dict[str, Any]] = []
-    min_len, max_len, hard_max = _title_limits(book_style)
+    benchmark = title_benchmark_for_style(book_style)
+    min_len, max_len, hard_max = title_limits_from_benchmark(book_style, benchmark)
+    benchmark_note = benchmark.note()
+    benchmark_evidence = {"title_benchmark": benchmark.evidence()}
     normalized_len = _cjk_len(title)
     marketing = [w for w in _MARKETING_WORDS if w in title]
     abstract_hits = [w for w in _ABSTRACT_TITLE_WORDS if w in title]
@@ -235,6 +239,7 @@ def _review_title(
                 detail=(
                     f"标题「{title}」长度约 {normalized_len} 个中文字符"
                     + (f"，且包含营销化词语：{ '、'.join(marketing) }。" if marketing else "。")
+                    + benchmark_note
                 ),
                 quote=title,
                 detector="title_reviewer",
@@ -247,6 +252,7 @@ def _review_title(
                     _action("add_subtitle", "调整副标题", "把场景、方法或读者放入副标题", "choose"),
                 ],
                 chapter_index=chapter_index,
+                evidence_extra=benchmark_evidence,
             )
         )
     elif normalized_len < min_len and level == "book":
@@ -257,7 +263,7 @@ def _review_title(
                 issue_type="title_too_short",
                 severity="low",
                 title="标题信息略少",
-                detail=f"标题「{title}」较短，可能没有充分交代对象、场景或读者。",
+                detail=f"标题「{title}」较短，可能没有充分交代对象、场景或读者。{benchmark_note}",
                 quote=title,
                 detector="title_reviewer",
                 product_dimension="goal_alignment",
@@ -268,6 +274,7 @@ def _review_title(
                     _action("add_scope", "补充范围", "补充对象、场景或方法", "choose"),
                 ],
                 chapter_index=chapter_index,
+                evidence_extra=benchmark_evidence,
             )
         )
 
@@ -563,6 +570,7 @@ def _review_ai_text_risk(markdown: str, *, book_style: str, chapter_index: int |
         hits = [phrase for phrase in _GENERIC_AI_PHRASES if phrase in text]
         if len(hits) < 2 and not ("机遇也是挑战" in text and "不断探索" in text):
             continue
+        replacement = _rewrite_generic_ai_summary(text)
         findings.append(
             _finding(
                 category="ai_text_risk",
@@ -576,7 +584,8 @@ def _review_ai_text_risk(markdown: str, *, book_style: str, chapter_index: int |
                 product_dimension="argument_quality",
                 fix_capability="preview_apply",
                 why="空泛总结会降低信息密度，让读者难以判断本段提供了什么新判断或行动含义。",
-                action="revise",
+                action="replace",
+                replacement_text=replacement,
                 action_options=[
                     _action("compress", "压实表达", "删除无信息套话，保留必要结论", "preview"),
                     _action("keep", "保留", "如果该段承担章节收束功能，可保留", "observe"),
@@ -591,6 +600,27 @@ def _review_ai_text_risk(markdown: str, *, book_style: str, chapter_index: int |
         if len(findings) >= 6:
             break
     return findings
+
+
+def _rewrite_generic_ai_summary(text: str) -> str:
+    result = (text or "").strip()
+    replacements = (
+        (r"^\s*(综上所述|总的来说)[，,、\s]*", ""),
+        (r"(值得注意的是|在这个过程中|从某种意义上说)[，,、\s]*", ""),
+        (r"全面、系统、深入地理解", "明确识别"),
+        (r"全面、系统、深入", "具体"),
+        (r"既是机遇也是挑战", "带来机会，也形成新的约束"),
+        (r"机遇也是挑战", "机会与约束并存"),
+        (r"不断探索", "持续验证"),
+    )
+    for pattern, replacement in replacements:
+        result = re.sub(pattern, replacement, result)
+    result = re.sub(r"[，,]\s*。", "。", result)
+    result = re.sub(r"。{2,}", "。", result)
+    result = re.sub(r"\s+", " ", result).strip()
+    if result == (text or "").strip():
+        return result
+    return result
 
 
 def _dimension_summaries(issues: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -698,6 +728,7 @@ def _finding(
     char_end: int | None = None,
     chapter_index: int | None = None,
     confidence: float = 0.72,
+    evidence_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     quality_evidence = {
         "product_dimension": product_dimension,
@@ -705,6 +736,8 @@ def _finding(
         "action_options": action_options,
         "fix_capability": fix_capability,
     }
+    if evidence_extra:
+        quality_evidence.update(evidence_extra)
     if verification_status:
         quality_evidence["verification_status"] = verification_status
     item: dict[str, Any] = {

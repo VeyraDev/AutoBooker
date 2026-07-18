@@ -7,7 +7,9 @@ from types import SimpleNamespace
 from app.prompts.review_quality import get_review_prompt_asset, list_review_prompt_assets
 from app.services.review.quality_reviewers import run_book_quality_review, run_chapter_quality_review
 from app.services.review.review_finding_validator import enrich_finding_metadata, validate_finding
+from app.services.review.review_workspace_service import ReviewWorkspaceService
 from app.services.review.review_workspace_service import _batch_preview_skip_reason
+from app.services.review.title_benchmarks import extract_title_from_document_name, title_benchmark_for_style
 
 
 def _book(book_type: str = "practical_guide"):
@@ -51,10 +53,91 @@ def test_quality_reviewers_detect_title_echo_reference_layout_and_ai_risk():
     )
     issue_types = {item["issue_type"] for item in result.issues}
     assert "title_marketing_or_too_long" in issue_types
+    title_issue = next(item for item in result.issues if item["issue_type"] == "title_marketing_or_too_long")
+    assert "常见区间" in title_issue["detail"]
+    assert "title_benchmark" in title_issue["quality_evidence"]
     assert "paragraph_adjacent_echo" in issue_types or "paragraph_near_duplicate" in issue_types
     assert "missing_citation" in issue_types
     assert "figure_table_numbering" in issue_types
     assert "generic_summary" in issue_types
+    ai_issue = next(item for item in result.issues if item["issue_type"] == "generic_summary")
+    assert ai_issue["action"] == "replace"
+    assert ai_issue["replacement_text"]
+    assert "综上所述" not in ai_issue["replacement_text"]
+    assert "既是机遇也是挑战" not in ai_issue["replacement_text"]
+    assert "持续验证" in ai_issue["replacement_text"]
+
+
+def test_title_benchmark_uses_document_filenames(tmp_path):
+    names = [
+        "《AI文明史·前史》张笑宇【文字版_PDF电子书_雅书】.txt",
+        "1015321785-AI工程-大模型应用开发实战-越-奇普-萱-文字版-PDF电子书-雅书.txt",
+        "Claude-Code-Complete-Guide-zh-v260411.txt",
+        "_classification_result.txt",
+    ]
+    for name in names:
+        (tmp_path / name).write_text("sample", encoding="utf-8")
+
+    assert extract_title_from_document_name(names[0]) == "AI文明史·前史"
+    assert extract_title_from_document_name(names[1]) == "AI工程 大模型应用开发实战"
+    assert extract_title_from_document_name(names[2]) == "Claude Code Complete Guide"
+    assert extract_title_from_document_name(names[3]) is None
+
+    benchmark = title_benchmark_for_style("technical_deep_dive", source_dir=tmp_path)
+
+    assert benchmark.sample_count == 3
+    assert benchmark.soft_min >= 4
+    assert benchmark.hard_max >= benchmark.soft_max
+    assert "AI工程 大模型应用开发实战" in benchmark.examples
+
+
+def test_workspace_finding_dto_exposes_title_benchmark_evidence():
+    chapter_id = "chapter-id"
+    issue = SimpleNamespace(
+        id="finding-id",
+        chapter_id=chapter_id,
+        title="标题过长或营销化",
+        explanation="标题过长。",
+        quote="AI自动化写书终极秘籍",
+        replacement_text="",
+        issue_type="title_marketing_or_too_long",
+        detector="title_reviewer",
+        dimension="logic_structure",
+        severity="medium",
+        status="open",
+        applied_at=None,
+        resolved_at=None,
+        char_start=None,
+        char_end=None,
+        paragraph_id=None,
+        paragraph_index=1,
+        quality_evidence={
+            "product_dimension": "goal_alignment",
+            "fix_capability": "choice_then_apply",
+            "title_benchmark": {
+                "source": "data/document",
+                "sample_count": 20,
+                "soft_min": 6,
+                "soft_max": 27,
+                "median_len": 16,
+                "examples": ["AI工程 大模型应用开发实战", "从零构建大语言模型"],
+            },
+        },
+    )
+    chapter = SimpleNamespace(id=chapter_id, index=1, title="第一章")
+
+    dto = ReviewWorkspaceService(SimpleNamespace())._chapter_issue_to_dto(  # type: ignore[arg-type]
+        issue,
+        {chapter_id: chapter},
+        {},
+    )
+
+    evidence = dto["evidence_items"]
+    assert evidence[0]["type"] == "title_benchmark"
+    assert "20 个可识别标题" in evidence[0]["detail"]
+    assert "6-27" in evidence[0]["detail"]
+    assert "AI工程 大模型应用开发实战" in evidence[0]["examples"]
+    assert dto["paragraph_index"] == 1
 
 
 def test_quality_reviewer_metadata_survives_validator():

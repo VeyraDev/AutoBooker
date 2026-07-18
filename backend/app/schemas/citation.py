@@ -44,6 +44,47 @@ class CitationBatchIn(BaseModel):
     source: CitationSourceOut = CitationSourceOut.literature_search
 
 
+class CitationVerifyBatchIn(BaseModel):
+    citation_ids: list[UUID] | None = Field(default=None, max_length=100)
+
+
+class CitationVerifyJobCreateIn(BaseModel):
+    citation_ids: list[UUID] | None = Field(default=None, max_length=500)
+    retry_unreachable_only: bool = False
+
+
+class CitationVerifyDueJobIn(BaseModel):
+    stale_after_days: int = Field(default=30, ge=1, le=365)
+    limit: int = Field(default=100, ge=1, le=500)
+    include_unverified: bool = True
+    retry_unreachable_only: bool = False
+
+
+class CitationVerificationJobOut(BaseModel):
+    id: UUID
+    book_id: UUID
+    status: str
+    requested_citation_ids: list[str] | None = None
+    total_count: int = 0
+    processed_count: int = 0
+    succeeded_count: int = 0
+    failed_count: int = 0
+    progress_pct: int = 0
+    result_json: dict | None = None
+    error_message: str | None = None
+    created_at: datetime
+    finished_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class CitationVerificationDueJobOut(BaseModel):
+    selected_count: int = 0
+    skipped_reason: str | None = None
+    job: CitationVerificationJobOut | None = None
+
+
 class CitationOut(BaseModel):
     id: UUID
     book_id: UUID
@@ -68,6 +109,9 @@ class CitationOut(BaseModel):
     abstract_preview: str | None = None
     url: str | None = None
     list_index: int | None
+    verification_status: str | None = None
+    verification_result: dict | None = None
+    last_verified_at: datetime | None = None
     formatted: str | None = None
     created_at: datetime
 

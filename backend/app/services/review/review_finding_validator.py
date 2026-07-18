@@ -351,6 +351,7 @@ def validate_finding(
     if not book_level and not _is_book_level(item):
         if not quote and severity == "high":
             item["severity"] = "low"
+            item["fix_capability"] = "manual_only"
             severity = "low"
             filter_reason = "downgraded_no_quote"
 
@@ -373,6 +374,7 @@ def validate_finding(
     if tier == "must_fix" and not _is_book_level(item) and not book_level:
         if not quote:
             item["severity"] = "low"
+            item["fix_capability"] = "manual_only"
             tier = "observe"
             filter_reason = filter_reason or "must_fix_requires_quote"
         elif md and not locatable:

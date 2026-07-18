@@ -2,16 +2,16 @@ import { ChevronLeft } from "lucide-react";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import axios from "axios";
 
 import { getBook } from "@/api/books";
 import { generateOutline } from "@/api/outline";
-import { sendTurn } from "@/features/assistant/api/assistantApi";
+import { getOutlineReadiness, sendTurn } from "@/features/assistant/api/assistantApi";
 import AdvancedSettingsDrawer from "@/features/assistant/components/AdvancedSettingsDrawer";
 import ConversationPanel from "@/features/assistant/components/ConversationPanel";
 import ProjectBriefPanel from "@/features/assistant/components/ProjectBriefPanel";
 import SourceLibraryPanel from "@/features/assistant/components/SourceLibraryPanel";
 import { useAssistantConversation } from "@/features/assistant/hooks/useAssistantConversation";
-import { useWritingBasis } from "@/features/assistant/hooks/useWritingBasis";
 import { completeProjectStart, useIntake } from "@/features/intake/api/intakeApi";
 
 type TopicItem = {
@@ -30,7 +30,6 @@ type Props = {
 export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Props) {
   const qc = useQueryClient();
   const intakeQuery = useIntake(bookId);
-  const basisQuery = useWritingBasis(bookId);
   const initialMessage = intakeQuery.data?.intake?.raw_goal_text ?? null;
   const conv = useAssistantConversation(bookId, { initialMessage });
   const bookQuery = useQuery({
@@ -46,30 +45,52 @@ export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Pro
     | undefined;
   const topics = topicProposal?.topics ?? [];
 
-  async function handleProceed() {
+  async function runOutlineGenerate(opts?: { confirmed_source_id?: string; force?: boolean }) {
     setProceeding(true);
     const toastId = toast.loading("正在完成启动并生成大纲…");
     try {
-      // 先完成启动；不要立刻 refetch intake，否则父页会判定启动结束并闪回设定页
       await completeProjectStart(bookId);
       const book = await getBook(bookId);
-      // 乐观标记生成中，用户若此时回到书架可看到「大纲生成中」而非误以为已就绪
       qc.setQueryData(["book", bookId], { ...book, status: "outline_generating" });
       void qc.invalidateQueries({ queryKey: ["books"] });
       const nextOutline = await generateOutline(bookId, {
         topic_override: null,
         target_audience: book.target_audience?.trim() || null,
         topic_brief: book.topic_brief?.trim() || null,
+        confirmed_source_id: opts?.confirmed_source_id ?? null,
+        force: opts?.force ?? false,
       });
       qc.setQueryData(["outline", bookId], nextOutline);
       const freshBook = await getBook(bookId);
       qc.setQueryData(["book", bookId], freshBook);
       toast.success("大纲已生成", { id: toastId });
-      // 大纲就绪后再刷新 intake，父页才会离开助手进入大纲步
       await intakeQuery.refetch();
       await onComplete?.();
-    } catch {
-      toast.error("生成大纲失败，请补充创作意图或检查网络后重试", { id: toastId });
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 409) {
+        const detail = err.response.data?.detail as
+          | {
+              code?: string;
+              message?: string;
+              candidate_source_ids?: string[];
+              outline_route?: { source_id?: string; candidate_source_ids?: string[] };
+            }
+          | undefined;
+        const candidates =
+          detail?.candidate_source_ids ?? detail?.outline_route?.candidate_source_ids ?? [];
+        if (candidates.length > 0) {
+          const pick = window.prompt(
+            `${detail?.message || "请确认主大纲来源"}\n候选 ID：\n${candidates.join("\n")}\n\n请输入要使用的 source_id（取消则中止）`,
+            candidates[0],
+          );
+          if (pick?.trim()) {
+            toast.dismiss(toastId);
+            await runOutlineGenerate({ confirmed_source_id: pick.trim() });
+            return;
+          }
+        }
+      }
+      toast.error("生成大纲失败，请补充设定或检查网络后重试", { id: toastId });
       try {
         const fresh = await getBook(bookId);
         qc.setQueryData(["book", bookId], fresh);
@@ -81,16 +102,41 @@ export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Pro
     }
   }
 
+  async function handleProceed() {
+    try {
+      const readiness = await getOutlineReadiness(bookId);
+      if (readiness.missing.length > 0) {
+        const ok = window.confirm(
+          `当前书稿设定还缺少：${readiness.missing.join("、")}。设定不完整可能导致大纲偏离，是否仍然生成？\n\n确定=仍然生成，取消=返回完善`,
+        );
+        if (!ok) return;
+      }
+      const route = readiness.outline_route ?? conv.lastOutlineRoute;
+      if (route?.needs_confirmation && (route.candidate_source_ids?.length ?? 0) > 0) {
+        const pick = window.prompt(
+          `助手判断需要确认主大纲来源。\n${route.reason || ""}\n候选：\n${(route.candidate_source_ids || []).join("\n")}\n\n请输入 source_id`,
+          route.source_id || route.candidate_source_ids?.[0] || "",
+        );
+        if (!pick?.trim()) return;
+        await runOutlineGenerate({ confirmed_source_id: pick.trim() });
+        return;
+      }
+      await runOutlineGenerate({
+        confirmed_source_id: route?.source_id || undefined,
+      });
+    } catch {
+      toast.error("无法检查设定完整性，请稍后重试");
+    }
+  }
+
   async function handleApplyTopic(index: number) {
     const topic = topics[index];
     if (!topic?.title) return;
     setApplyingTopic(true);
     try {
-      await sendTurn(
-        bookId,
-        `请确认采用选题「${topic.title}」并写入写作依据`,
-      );
-      toast.success("已写入写作依据");
+      await sendTurn(bookId, `请将选题「${topic.title}」整理进主题要点与书名建议`);
+      toast.success("已请助手写入正式设定");
+      void bookQuery.refetch();
     } catch {
       toast.error("写入选题失败");
     } finally {
@@ -117,7 +163,7 @@ export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Pro
           </button>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-semibold text-slate-800">{book?.title ?? "书稿"}</h1>
-            <p className="text-xs text-slate-500">项目启动助手 · 可随时退出，进度会自动保存</p>
+            <p className="text-xs text-slate-500">书稿设定助手 · 可随时退出，进度会自动保存</p>
           </div>
         </header>
         {((conv.pendingConfirmations?.length ?? 0) > 0) ? (
@@ -167,6 +213,7 @@ export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Pro
             error={conv.sendError}
             turnTracesById={conv.turnTracesById}
             onSend={conv.sendMessage}
+            onQuickFill={conv.quickFill}
           />
           <div className="flex w-72 shrink-0 flex-col border-l border-slate-200 bg-white">
             <SourceLibraryPanel
@@ -184,9 +231,11 @@ export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Pro
             <ProjectBriefPanel
               book={book}
               intake={intakeQuery.data?.intake}
-              basis={basisQuery.data ?? conv.lastBasis ?? null}
-              loading={intakeQuery.isLoading || basisQuery.isLoading}
+              loading={intakeQuery.isLoading || bookQuery.isLoading}
               proceeding={proceeding}
+              settingOrigins={conv.lastSettingOrigins}
+              confirmedRequirements={conv.lastConfirmedRequirements}
+              quickFillOpId={conv.lastQuickFillOpId}
               onProceed={() => void handleProceed()}
               onOpenAdvanced={() => setAdvancedOpen(true)}
               onBookUpdated={(b) => {

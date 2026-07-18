@@ -1,12 +1,12 @@
 import { useState } from "react";
 import toast from "react-hot-toast";
 
-import { inferBookSetup } from "@/api/books";
-import type { WritingBasis } from "@/features/assistant/api/assistantApi";
 import {
-  BASIS_SETUP_FIELDS,
-  BOOK_TYPE_LABEL,
-} from "@/features/assistant/bookSettingsSpec";
+  undoQuickFill,
+  type ExtractedRequirement,
+  type SettingOrigin,
+} from "@/features/assistant/api/assistantApi";
+import { BOOK_TYPE_LABEL } from "@/features/assistant/bookSettingsSpec";
 import type { IntakeState } from "@/features/intake/api/intakeApi";
 import { STYLE_LABELS } from "@/lib/styleTypes";
 import type { Book, StyleType } from "@/types/book";
@@ -14,35 +14,42 @@ import type { Book, StyleType } from "@/types/book";
 type Props = {
   book: Book | null | undefined;
   intake: IntakeState | null | undefined;
-  basis?: WritingBasis | null;
   loading?: boolean;
   proceeding?: boolean;
+  settingOrigins?: Record<string, SettingOrigin>;
+  confirmedRequirements?: ExtractedRequirement[];
+  quickFillOpId?: string | null;
   onProceed: () => void;
   onOpenAdvanced: () => void;
   onBookUpdated?: (book: Book) => void;
 };
 
-function basisText(basis: WritingBasis | null | undefined, key: string): string {
-  const v = basis?.[key as keyof WritingBasis];
-  return typeof v === "string" ? v.trim() : "";
-}
+const ORIGIN_LABEL: Record<string, string> = {
+  user_explicit: "用户提供",
+  user_manual: "用户手动修改",
+  assistant_inferred: "助手建议",
+  system_default: "系统默认",
+};
 
-function basisList(basis: WritingBasis | null | undefined, key: string): string[] {
-  const v = basis?.[key as keyof WritingBasis];
-  return Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : [];
+function originHint(origins: Record<string, SettingOrigin> | undefined, key: string): string | null {
+  const o = origins?.[key]?.origin;
+  if (!o) return null;
+  return ORIGIN_LABEL[o] ?? o;
 }
 
 export default function ProjectBriefPanel({
   book,
   intake,
-  basis,
   loading,
   proceeding,
+  settingOrigins,
+  confirmedRequirements = [],
+  quickFillOpId,
   onProceed,
   onOpenAdvanced,
   onBookUpdated,
 }: Props) {
-  const [inferring, setInferring] = useState(false);
+  const [undoing, setUndoing] = useState(false);
 
   if (loading) {
     return <div className="p-4 text-sm text-slate-500">加载项目信息…</div>;
@@ -54,51 +61,58 @@ export default function ProjectBriefPanel({
       ? STYLE_LABELS[book.style_type as StyleType]
       : book?.style_type || "—";
 
-  const bookRows: { label: string; value: string }[] = [
-    { label: "书名", value: book?.title?.trim() || "—" },
+  const bookRows: { key: string; label: string; value: string }[] = [
+    { key: "title", label: "书名", value: book?.title?.trim() || "—" },
     {
+      key: "book_type",
       label: "一级分类",
       value: book?.book_type ? BOOK_TYPE_LABEL[book.book_type] ?? book.book_type : "—",
     },
-    { label: "二级体裁", value: styleLabel },
-    { label: "目标读者", value: book?.target_audience?.trim() || "—" },
+    { key: "style_type", label: "二级体裁", value: styleLabel },
+    { key: "target_audience", label: "目标读者", value: book?.target_audience?.trim() || "—" },
     {
+      key: "disciplines",
       label: "学科领域",
       value:
         (book?.disciplines?.length ? book.disciplines.join("、") : book?.discipline?.trim()) || "—",
     },
     {
+      key: "target_words",
       label: "目标字数",
       value: book?.target_words != null ? book.target_words.toLocaleString() : "—",
     },
     {
+      key: "topic_tags",
       label: "话题标签",
       value: book?.topic_tags?.length ? book.topic_tags.join(" · ") : "—",
     },
-    { label: "主题要点", value: book?.topic_brief?.trim() || "—" },
-    { label: "引用格式", value: book?.citation_style || "—" },
+    { key: "topic_brief", label: "主题要点", value: book?.topic_brief?.trim() || "—" },
+    { key: "citation_style", label: "引用格式", value: book?.citation_style || "—" },
   ];
 
-  async function handleInfer() {
+  async function handleUndo() {
     if (!book?.id) return;
-    setInferring(true);
-    const toastId = toast.loading("正在根据创作意图补齐设定…");
+    setUndoing(true);
     try {
-      const next = await inferBookSetup(book.id);
-      onBookUpdated?.(next);
-      toast.success("已补齐类型、体裁、标签与主题要点等", { id: toastId });
+      const res = await undoQuickFill(book.id, quickFillOpId);
+      if (res.book_settings && onBookUpdated) {
+        onBookUpdated({ ...book, ...(res.book_settings as Partial<Book>) } as Book);
+      } else {
+        onBookUpdated?.(book);
+      }
+      toast.success("已撤销本次快速补齐");
     } catch {
-      toast.error("补齐失败，请稍后重试", { id: toastId });
+      toast.error("撤销失败");
     } finally {
-      setInferring(false);
+      setUndoing(false);
     }
   }
 
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-slate-200 px-3 py-2">
-        <h3 className="text-sm font-semibold text-slate-800">项目要点</h3>
-        <p className="text-xs text-slate-500">与高级编辑使用同一套书稿设定</p>
+        <h3 className="text-sm font-semibold text-slate-800">书稿设定</h3>
+        <p className="text-xs text-slate-500">唯一正式设定；与高级编辑同一份字段</p>
       </div>
       <div className="flex-1 space-y-3 overflow-y-auto p-3 text-sm">
         <section>
@@ -116,57 +130,47 @@ export default function ProjectBriefPanel({
 
         <section className="space-y-2 border-t border-slate-100 pt-3">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium text-slate-500">书稿设定</p>
-            <button
-              type="button"
-              className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-              disabled={inferring || proceeding || !goal || goal.startsWith("（尚未")}
-              onClick={() => void handleInfer()}
-            >
-              {inferring ? "补齐中…" : "智能补齐设定"}
-            </button>
+            <p className="text-xs font-medium text-slate-500">正式设定</p>
+            {quickFillOpId ? (
+              <button
+                type="button"
+                className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                disabled={undoing || proceeding}
+                onClick={() => void handleUndo()}
+              >
+                {undoing ? "撤销中…" : "撤销本次补齐"}
+              </button>
+            ) : null}
           </div>
           <dl className="space-y-2">
-            {bookRows.map((row) => (
-              <div key={row.label}>
-                <dt className="text-[11px] text-slate-400">{row.label}</dt>
-                <dd className="mt-0.5 whitespace-pre-wrap text-slate-700">{row.value}</dd>
-              </div>
-            ))}
+            {bookRows.map((row) => {
+              const hint = originHint(settingOrigins, row.key);
+              return (
+                <div key={row.key}>
+                  <dt className="text-[11px] text-slate-400">
+                    {row.label}
+                    {hint ? <span className="ml-1 text-slate-300">· {hint}</span> : null}
+                  </dt>
+                  <dd className="mt-0.5 whitespace-pre-wrap text-slate-700">{row.value}</dd>
+                </div>
+              );
+            })}
           </dl>
         </section>
 
-        <section className="space-y-2 border-t border-slate-100 pt-3">
-          <p className="text-xs font-medium text-slate-500">策划细节（助手整理）</p>
-          {BASIS_SETUP_FIELDS.map((f) => {
-            const list = "list" in f && f.list ? basisList(basis, f.key) : [];
-            const text = "list" in f && f.list ? "" : basisText(basis, f.key);
-            const empty = "list" in f && f.list ? list.length === 0 : !text;
-            return (
-              <div key={f.key}>
-                <p className="text-[11px] text-slate-400">{f.label}</p>
-                {"list" in f && f.list ? (
-                  empty ? (
-                    <p className="mt-0.5 text-slate-400">—</p>
-                  ) : (
-                    <ul className="mt-0.5 list-inside list-disc text-slate-700">
-                      {list.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  )
-                ) : (
-                  <p className={`mt-0.5 whitespace-pre-wrap ${empty ? "text-slate-400" : "text-slate-700"}`}>
-                    {text || "—"}
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </section>
+        {confirmedRequirements.length > 0 ? (
+          <section className="space-y-2 border-t border-slate-100 pt-3">
+            <p className="text-xs font-medium text-slate-500">已提取要求</p>
+            <ul className="list-inside list-disc space-y-1 text-slate-700">
+              {confirmedRequirements.map((r) => (
+                <li key={`${r.category}-${r.content.slice(0, 40)}`}>{r.content}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         <p className="text-xs leading-relaxed text-slate-400">
-          「智能补齐设定」会按创作意图重判一级分类与二级体裁（新建时的大众非虚构只是占位）。也可在「高级编辑」里手动改。
+          用对话区「快速补齐」集中判断设定；需要手改时用「高级编辑」。
         </p>
       </div>
       <div className="space-y-2 border-t border-slate-200 p-3">
@@ -179,7 +183,7 @@ export default function ProjectBriefPanel({
           disabled={proceeding || !goal || goal.startsWith("（尚未")}
           onClick={onProceed}
         >
-          {proceeding ? "正在生成大纲…" : "生成大纲"}
+          {proceeding ? "生成中…" : "生成大纲"}
         </button>
       </div>
     </div>

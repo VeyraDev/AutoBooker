@@ -18,7 +18,13 @@ from app.models.book_format_strategy import BookFormatStrategy, FormatStrategySt
 from app.services.writing.format_strategy_service import FormatStrategyService
 from app.services.writing.writing_basis_service import WritingBasisService
 from app.services.assistant.project_memory_service import ProjectMemoryService
-from app.services.citation_verification import citation_to_verification_dict
+from app.services.citation_verification import persisted_citation_verification_dict
+from app.services.review.review_rule_evolution import (
+    build_confirmed_rule_prompt_block,
+    build_rule_candidate_prompt_block,
+    get_rule_candidates_for_book,
+    list_confirmed_review_rules,
+)
 
 
 class WritingContextBuilder:
@@ -95,7 +101,7 @@ class WritingContextBuilder:
         )
         summaries: list[dict] = []
         for row in rows:
-            verification = citation_to_verification_dict(row)
+            verification = persisted_citation_verification_dict(row)
             summaries.append(
                 {
                     "id": str(row.id),
@@ -135,6 +141,14 @@ class WritingContextBuilder:
         )
         if chapter_index is not None:
             constraints = [c for c in constraints if c.chapter_index == chapter_index]
+        try:
+            review_rule_candidates = get_rule_candidates_for_book(self.db, book_id)
+        except Exception:
+            review_rule_candidates = []
+        try:
+            confirmed_review_rules = list_confirmed_review_rules(self.db, book_id)
+        except Exception:
+            confirmed_review_rules = []
         plan_json = plan.plan_json if plan and isinstance(plan.plan_json, dict) else {}
         summary_json = understanding.summary_json if understanding and isinstance(understanding.summary_json, dict) else {}
         intent_json = summary_json.get("intent_json") if isinstance(summary_json.get("intent_json"), dict) else {}
@@ -209,6 +223,8 @@ class WritingContextBuilder:
             "source_reference_outline_blocks": source_materials.get("source_reference_outline_blocks") or [],
             "outline_contract": source_materials.get("contract"),
             "citations": self._citation_summaries(book_id),
+            "review_rule_candidates": review_rule_candidates,
+            "confirmed_review_rules": confirmed_review_rules,
             "chapter_index": chapter_index,
         }
 
@@ -301,6 +317,12 @@ class WritingContextBuilder:
                 lines.append(f"- {prefix}{title}（{year}；核验：{status}{missing_text}{query_text}）")
             if lines:
                 parts.append("【本书文献与核验状态】\n" + "\n".join(lines))
+        confirmed_rule_block = build_confirmed_rule_prompt_block(snap.get("confirmed_review_rules") or [])
+        if confirmed_rule_block:
+            parts.append(confirmed_rule_block)
+        rule_candidate_block = build_rule_candidate_prompt_block(snap.get("review_rule_candidates") or [])
+        if rule_candidate_block:
+            parts.append(rule_candidate_block)
         outline_policy = snap.get("outline_policy") or []
         if outline_policy:
             parts.append("【大纲规则】\n" + "\n".join(f"- {x}" for x in outline_policy[:10]))
@@ -381,6 +403,8 @@ class WritingContextBuilder:
             "format_strategy_id": snap.get("format_strategy_id"),
             "chapter_index": snap.get("chapter_index"),
             "citations": snap.get("citations"),
+            "review_rule_candidates": snap.get("review_rule_candidates"),
+            "confirmed_review_rules": snap.get("confirmed_review_rules"),
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -475,6 +499,8 @@ class WritingContextBuilder:
                 "material_policy",
                 "citation_policy",
                 "citations",
+                "review_rule_candidates",
+                "confirmed_review_rules",
                 "source_requirement_blocks",
                 "material_terms",
             }

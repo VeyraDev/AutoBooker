@@ -8,6 +8,7 @@ import { getBook, updateBook } from "@/api/books";
 import { getOutline } from "@/api/outline";
 import ReviewFindingDetail from "@/features/review/ReviewFindingDetail";
 import ReviewFindingList from "@/features/review/ReviewFindingList";
+import ReviewRuleCandidatePanel from "@/features/review/ReviewRuleCandidatePanel";
 import ReviewScopeNav from "@/features/review/ReviewScopeNav";
 import {
   batchPreviewReviewWorkspaceFindings,
@@ -144,6 +145,22 @@ export default function ReviewWorkspacePage() {
     }
   }
 
+  function handleJumpToSource(finding: WorkspaceFinding) {
+    if (finding.source !== "chapter" || finding.chapter_index == null) {
+      toast.error("该问题暂无可跳转章节定位");
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set("review_chapter", String(finding.chapter_index));
+    params.set("review_finding", finding.id);
+    if (finding.quote?.trim()) params.set("review_quote", finding.quote.trim().slice(0, 500));
+    if (finding.paragraph_id) params.set("review_paragraph_id", finding.paragraph_id);
+    if (finding.paragraph_index != null) params.set("review_paragraph_index", String(finding.paragraph_index));
+    if (finding.char_start != null) params.set("review_char_start", String(finding.char_start));
+    if (finding.char_end != null) params.set("review_char_end", String(finding.char_end));
+    navigate(`/app/books/${bookId}?${params.toString()}`);
+  }
+
   if (!bookId) return <p className="p-8 text-sm text-slate-500">无效路由</p>;
   if (bookQ.isLoading || !bookQ.data) {
     return (
@@ -196,26 +213,30 @@ export default function ReviewWorkspacePage() {
           onCompleteBook={handleCompleteBook}
           completing={completing}
         />
-        <ReviewFindingList
-          findings={visibleFindings}
-          selectedId={selectedFinding?.id ?? null}
-          onSelect={setSelectedFinding}
-          showObserve={showObserve}
-          onToggleObserve={() => setShowObserve((v) => !v)}
-          tierFilter={selectedTier}
-          batchPreviewableCount={batchPreviewableIds.length}
-          batchPreviewBusy={batchPreviewMut.isPending}
-          onBatchPreview={() => {
-            if (!batchPreviewableIds.length) {
-              toast.error("当前筛选下没有可自动生成预览的问题");
-              return;
-            }
-            batchPreviewMut.mutate(batchPreviewableIds);
-          }}
-        />
+        <div className="flex min-h-0 flex-col border-r border-slate-200 bg-white">
+          <ReviewRuleCandidatePanel bookId={bookId} />
+          <ReviewFindingList
+            findings={visibleFindings}
+            selectedId={selectedFinding?.id ?? null}
+            onSelect={setSelectedFinding}
+            showObserve={showObserve}
+            onToggleObserve={() => setShowObserve((v) => !v)}
+            tierFilter={selectedTier}
+            batchPreviewableCount={batchPreviewableIds.length}
+            batchPreviewBusy={batchPreviewMut.isPending}
+            onBatchPreview={() => {
+              if (!batchPreviewableIds.length) {
+                toast.error("当前筛选下没有可自动生成预览的问题");
+                return;
+              }
+              batchPreviewMut.mutate(batchPreviewableIds);
+            }}
+          />
+        </div>
         <ReviewFindingDetail
           bookId={bookId}
           finding={selectedFinding}
+          onJumpToSource={handleJumpToSource}
           onUpdated={() => {
             void qc.invalidateQueries({ queryKey: ["reviewWorkspaceSummary", bookId] });
             void qc.invalidateQueries({ queryKey: ["reviewWorkspaceFindings", bookId] });

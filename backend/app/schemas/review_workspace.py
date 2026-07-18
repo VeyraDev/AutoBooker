@@ -19,6 +19,11 @@ class WorkspaceFindingOut(BaseModel):
     quote: str | None = None
     suggestion: str | None = None
     basis_refs: list[str] = Field(default_factory=list)
+    evidence_items: list[dict] = Field(default_factory=list)
+    paragraph_id: str | None = None
+    paragraph_index: int | None = None
+    char_start: int | None = None
+    char_end: int | None = None
     category: str | None = None
     track: str | None = None
     detector: str | None = None
@@ -134,3 +139,49 @@ class FindingHistoryItemOut(BaseModel):
     created_at: str | None = None
     locator_strategy: str = ""
     locator_confidence: float = 0
+
+
+class ReviewRuleDecisionIn(BaseModel):
+    decision: str = Field(pattern="^(active|rejected)$")
+    decision_note: str = ""
+    rule_text: str = ""
+
+
+class ReviewRuleRestoreIn(BaseModel):
+    decision_note: str = ""
+
+
+class ReviewRuleDecisionOut(BaseModel):
+    id: str
+    candidate_id: str
+    version: int
+    status: str
+    recommendation: str = ""
+    product_dimension: str = ""
+    issue_type: str = ""
+    fix_capability: str = ""
+    detector: str = ""
+    rule_text: str = ""
+    decision_note: str = ""
+    source_stats: dict = Field(default_factory=dict)
+    created_at: str | None = None
+
+
+class ReviewRuleCandidateOut(BaseModel):
+    id: str
+    status: str = "candidate"
+    recommendation: str
+    product_dimension: str
+    issue_type: str
+    fix_capability: str = ""
+    detector: str = ""
+    accepted: int = 0
+    dismissed: int = 0
+    open: int = 0
+    decided: int = 0
+    acceptance_rate: float = 0
+    dismissal_rate: float = 0
+    examples: list[str] = Field(default_factory=list)
+    reason: str = ""
+    safety_note: str = ""
+    decision: ReviewRuleDecisionOut | None = None

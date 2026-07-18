@@ -3,17 +3,31 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.project_memory import ProjectMemoryOut
 from app.schemas.writing_basis import WritingBasisOut
 
 
 class TurnIn(BaseModel):
-    message: str = Field(min_length=1, max_length=8000)
+    message: str = Field(default="", max_length=8000)
     chapter_index: int | None = None
+    assistant_mode: Literal["normal", "quick_fill"] = "normal"
+
+    @model_validator(mode="after")
+    def require_message_unless_quick_fill(self) -> TurnIn:
+        if self.assistant_mode == "quick_fill":
+            return self
+        if not (self.message or "").strip():
+            raise ValueError("message required")
+        return self
+
+
+class QuickFillUndoIn(BaseModel):
+    operation_id: str | None = None
 
 
 class ToolResultOut(BaseModel):
@@ -69,10 +83,34 @@ class ConfirmSegmentIn(BaseModel):
     confirmed: bool
 
 
+class SettingOriginOut(BaseModel):
+    origin: str
+    updated_at: str | None = None
+
+
+class OutlineRouteOut(BaseModel):
+    mode: str = "from_settings"
+    source_id: str | None = None
+    reason: str = ""
+    confidence: float | None = None
+    needs_confirmation: bool = False
+    candidate_source_ids: list[str] = Field(default_factory=list)
+
+
 class TurnOut(BaseModel):
     turn_id: UUID
     assistant_message: str
     writing_basis: WritingBasisOut | None = None
+    book_settings: dict[str, Any] = Field(default_factory=dict)
+    setting_origins: dict[str, Any] = Field(default_factory=dict)
+    setting_decisions: list[dict[str, Any]] = Field(default_factory=list)
+    extracted_requirements: list[dict[str, Any]] = Field(default_factory=list)
+    confirmed_requirements: list[dict[str, Any]] = Field(default_factory=list)
+    file_judgements: list[dict[str, Any]] = Field(default_factory=list)
+    outline_route: OutlineRouteOut | dict[str, Any] | None = None
+    clarification: dict[str, Any] = Field(default_factory=dict)
+    search_result: dict[str, Any] | None = None
+    quick_fill_operation_id: str | None = None
     traces: list[TraceOut] = Field(default_factory=list)
     sources: list[SourceOut] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
@@ -92,3 +130,9 @@ class TurnListItem(BaseModel):
 
 class PasteSourceIn(BaseModel):
     text: str = Field(min_length=1, max_length=50000)
+
+
+class OutlineReadinessOut(BaseModel):
+    missing: list[str] = Field(default_factory=list)
+    outline_route: OutlineRouteOut | dict[str, Any] | None = None
+    ready: bool = False

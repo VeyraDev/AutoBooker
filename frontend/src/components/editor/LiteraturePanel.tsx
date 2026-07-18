@@ -1,5 +1,5 @@
 import axios from "axios";
-import { ExternalLink, Loader2, Search } from "lucide-react";
+import { ExternalLink, Loader2, RefreshCw, Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
@@ -11,8 +11,12 @@ import {
 
 import {
   deleteCitationOccurrence,
+  getCitationVerificationJob,
   listCitationOccurrences,
   listCitations,
+  listCitationVerificationJobs,
+  refreshCitationVerification,
+  startCitationVerificationJob,
   weaveCitation,
   type CitationOccurrence,
 } from "@/api/citations";
@@ -22,6 +26,7 @@ import {
   literaturePaperKey,
   literaturePaperUrl,
   type CitationRecord,
+  type CitationVerificationJob,
   type LiteraturePaper,
   type LiteratureTab,
 } from "@/types/literature";
@@ -56,6 +61,74 @@ const SOURCE_TYPE_FILTERS = [
   { id: "web", label: "普通网页" },
   { id: "user_material", label: "用户资料" },
 ] as const;
+
+const BULK_VERIFY_CONFIRM_THRESHOLD = 50;
+
+const VERIFICATION_META: Record<string, { label: string; className: string; hint: string }> = {
+  verified: {
+    label: "已核验",
+    className: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    hint: "外部来源匹配度高",
+  },
+  probable: {
+    label: "基本匹配",
+    className: "bg-sky-50 text-sky-700 border-sky-200",
+    hint: "题名/作者/年份基本匹配",
+  },
+  user_uploaded_only: {
+    label: "用户上传",
+    className: "bg-slate-50 text-slate-600 border-slate-200",
+    hint: "来自用户上传资料，尚未外部核验",
+  },
+  needs_verification: {
+    label: "待核验",
+    className: "bg-amber-50 text-amber-700 border-amber-200",
+    hint: "缺少强外部匹配或关键元数据",
+  },
+  mismatch: {
+    label: "疑似不匹配",
+    className: "bg-red-50 text-red-700 border-red-200",
+    hint: "外部匹配与当前条目存在明显差异",
+  },
+  unreachable: {
+    label: "核验失败",
+    className: "bg-zinc-50 text-zinc-700 border-zinc-200",
+    hint: "外部核验暂时不可达，可稍后重试",
+  },
+};
+
+function verificationMeta(citation: CitationRecord) {
+  const status = citation.verification_status || (citation.metadata_status === "needs_completion" ? "needs_verification" : "");
+  return (
+    VERIFICATION_META[status] ?? {
+      label: "未刷新",
+      className: "bg-slate-50 text-slate-500 border-slate-200",
+      hint: "尚未进行外部核验",
+    }
+  );
+}
+
+function verificationTimeLabel(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function jobStatusLabel(status: string): string {
+  return {
+    pending: "排队中",
+    running: "进行中",
+    completed: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+  }[status] ?? status;
+}
 
 type Props = {
   bookId: string;
@@ -115,6 +188,10 @@ export default function LiteraturePanel({
   const [saved, setSaved] = useState<CitationRecord[]>([]);
   const [savedLoading, setSavedLoading] = useState(false);
   const [savedSelected, setSavedSelected] = useState<Set<string>>(new Set());
+  const [verifyingAll, setVerifyingAll] = useState(false);
+  const [verifyingCitationIds, setVerifyingCitationIds] = useState<Set<string>>(new Set());
+  const [verificationJob, setVerificationJob] = useState<CitationVerificationJob | null>(null);
+  const [verificationJobs, setVerificationJobs] = useState<CitationVerificationJob[]>([]);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<"search" | "manage">("search");
   const [occurrences, setOccurrences] = useState<CitationOccurrence[]>([]);
@@ -135,13 +212,58 @@ export default function LiteraturePanel({
     }
   }, [bookId]);
 
+  const refreshVerificationJobs = useCallback(async () => {
+    try {
+      const jobs = await listCitationVerificationJobs(bookId);
+      setVerificationJobs(jobs);
+      const active = jobs.find((job) => ["pending", "running"].includes(job.status));
+      if (active) {
+        setVerificationJob(active);
+        setVerifyingAll(true);
+      }
+    } catch {
+      setVerificationJobs([]);
+    }
+  }, [bookId]);
+
   useEffect(() => {
     void refreshSaved();
   }, [refreshSaved]);
 
   useEffect(() => {
-    if (view === "manage") void refreshSaved();
-  }, [view, refreshSaved]);
+    if (view === "manage") {
+      void refreshSaved();
+      void refreshVerificationJobs();
+    }
+  }, [view, refreshSaved, refreshVerificationJobs]);
+
+  useEffect(() => {
+    if (!verificationJob || !["pending", "running"].includes(verificationJob.status)) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void getCitationVerificationJob(bookId, verificationJob.id)
+        .then(async (job) => {
+          if (cancelled) return;
+          setVerificationJob(job);
+          if (job.status === "completed") {
+            setVerifyingAll(false);
+            await refreshSaved();
+            await refreshVerificationJobs();
+            toast.success(`文献核验完成：成功 ${job.succeeded_count}，失败 ${job.failed_count}`);
+          } else if (job.status === "failed" || job.status === "cancelled") {
+            setVerifyingAll(false);
+            toast.error(job.error_message || "文献核验任务未完成");
+          }
+        })
+        .catch(() => {
+          if (!cancelled) toast.error("读取文献核验进度失败");
+        });
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [bookId, refreshSaved, verificationJob]);
 
   useEffect(() => {
     if (defaultQuery.trim()) setQuery(defaultQuery.trim());
@@ -345,6 +467,79 @@ export default function LiteraturePanel({
 
   function selectAllSaved() {
     setSavedSelected(new Set(saved.map((c) => c.id)));
+  }
+
+  function mergeVerifiedCitations(rows: CitationRecord[]) {
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    setSaved((prev) => prev.map((row) => byId.get(row.id) ?? row));
+  }
+
+  async function handleRefreshOneCitation(citationId: string) {
+    setVerifyingCitationIds((prev) => new Set(prev).add(citationId));
+    try {
+      const row = await refreshCitationVerification(bookId, citationId);
+      mergeVerifiedCitations([row]);
+      toast.success("已刷新文献核验");
+    } catch {
+      toast.error("刷新文献核验失败");
+    } finally {
+      setVerifyingCitationIds((prev) => {
+        const next = new Set(prev);
+        next.delete(citationId);
+        return next;
+      });
+    }
+  }
+
+  async function startVerificationJob(citationIds?: string[], retryUnreachableOnly = false) {
+    const job = await startCitationVerificationJob(bookId, citationIds, retryUnreachableOnly);
+    setVerificationJob(job);
+    await refreshVerificationJobs();
+    return job;
+  }
+
+  async function handleRefreshCitationBatch() {
+    if (!saved.length) return;
+    const ids = [...savedSelected];
+    if (!ids.length && saved.length > BULK_VERIFY_CONFIRM_THRESHOLD) {
+      const ok = window.confirm(`将刷新 ${saved.length} 条本书文献的外部核验状态，可能需要较长时间。是否继续？`);
+      if (!ok) return;
+    }
+    setVerifyingAll(true);
+    try {
+      const job = await startVerificationJob(ids.length ? ids : undefined);
+      if (job.status === "completed") {
+        setVerifyingAll(false);
+        await refreshSaved();
+        toast.success(`文献核验完成：成功 ${job.succeeded_count}，失败 ${job.failed_count}`);
+      } else {
+        toast.success(ids.length ? "已开始刷新已选文献核验" : "已开始刷新本书文献核验");
+      }
+    } catch {
+      toast.error("批量刷新文献核验失败");
+      setVerifyingAll(false);
+    }
+  }
+
+  async function handleRetryFailedCitations() {
+    if (!saved.some((citation) => citation.verification_status === "unreachable")) {
+      toast.error("当前没有核验失败的文献");
+      return;
+    }
+    setVerifyingAll(true);
+    try {
+      const job = await startVerificationJob(undefined, true);
+      if (job.status === "completed") {
+        setVerifyingAll(false);
+        await refreshSaved();
+        toast.success(`失败文献重试完成：成功 ${job.succeeded_count}，失败 ${job.failed_count}`);
+      } else {
+        toast.success("已开始重试核验失败文献");
+      }
+    } catch {
+      toast.error("重试核验失败文献未能启动");
+      setVerifyingAll(false);
+    }
   }
 
   async function handleInsertFromLibrary() {
@@ -644,27 +839,97 @@ export default function LiteraturePanel({
                 书末参考文献将根据当前引用自动生成。
               </p>
             </div>
-            {!isSetup && saved.length > 0 ? (
+            {saved.length > 0 ? (
               <div className="flex flex-wrap items-center gap-2">
+                {!isSetup ? (
+                  <button
+                    type="button"
+                    className="text-[10px] text-violet-700 hover:underline"
+                    onClick={selectAllSaved}
+                  >
+                    全选
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  className="text-[10px] text-violet-700 hover:underline"
-                  onClick={selectAllSaved}
+                  className="btn-secondary flex h-8 items-center gap-1 px-2.5 text-xs disabled:opacity-50"
+                  disabled={verifyingAll || savedLoading || !saved.length}
+                  onClick={() => void handleRefreshCitationBatch()}
+                  title={savedSelected.size ? "刷新已选文献的外部核验状态" : "刷新本书文献的外部核验状态"}
                 >
-                  全选
+                  <RefreshCw className={`h-3.5 w-3.5 ${verifyingAll ? "animate-spin" : ""}`} aria-hidden />
+                  {savedSelected.size ? "刷新已选核验" : "刷新全部核验"}
                 </button>
                 <button
                   type="button"
-                  className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
-                  disabled={busy || !savedSelected.size}
-                  onClick={() => void handleInsertFromLibrary()}
-                  title="根据所选文献生成引用句并插入引用"
+                  className="btn-secondary flex h-8 items-center gap-1 px-2.5 text-xs disabled:opacity-50"
+                  disabled={verifyingAll || !saved.some((citation) => citation.verification_status === "unreachable")}
+                  onClick={() => void handleRetryFailedCitations()}
+                  title="只重试上次外部核验失败的文献"
                 >
-                  插入引用
+                  <RefreshCw className={`h-3.5 w-3.5 ${verifyingAll ? "animate-spin" : ""}`} aria-hidden />
+                  重试失败核验
                 </button>
+                {!isSetup ? (
+                  <button
+                    type="button"
+                    className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
+                    disabled={busy || !savedSelected.size}
+                    onClick={() => void handleInsertFromLibrary()}
+                    title="根据所选文献生成引用句并插入引用"
+                  >
+                    插入引用
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
+
+          {verificationJobs.length > 0 ? (
+            <div className="rounded-md border border-slate-100 bg-slate-50/70 p-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-medium text-slate-500">最近核验任务</p>
+                <button
+                  type="button"
+                  className="text-[10px] text-violet-700 hover:underline"
+                  onClick={() => void refreshVerificationJobs()}
+                >
+                  刷新记录
+                </button>
+              </div>
+              <div className="mt-1 space-y-1">
+                {verificationJobs.slice(0, 3).map((job) => (
+                  <div
+                    key={job.id}
+                    className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-500"
+                  >
+                    <span>
+                      {jobStatusLabel(job.status)} · {job.processed_count}/{job.total_count || "?"} · 成功{" "}
+                      {job.succeeded_count} · 失败 {job.failed_count}
+                    </span>
+                    <span>{verificationTimeLabel(job.finished_at || job.created_at)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {verificationJob && ["pending", "running"].includes(verificationJob.status) ? (
+            <div className="rounded-md border border-violet-100 bg-violet-50/70 p-2">
+              <div className="flex items-center justify-between gap-3 text-[10px] text-violet-800">
+                <span>文献核验中：{verificationJob.processed_count}/{verificationJob.total_count || "?"}</span>
+                <span>
+                  成功 {verificationJob.succeeded_count} · 失败 {verificationJob.failed_count}
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white">
+                <div
+                  className="h-full rounded-full bg-violet-600 transition-all"
+                  style={{ width: `${Math.max(4, verificationJob.progress_pct)}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
 
           {savedLoading ? (
             <p className="text-xs text-slate-500">加载中…</p>
@@ -674,6 +939,7 @@ export default function LiteraturePanel({
             <div className="max-h-[560px] space-y-2 overflow-y-auto pr-1">
               {saved.map((citation) => {
                 const checked = savedSelected.has(citation.id);
+                const verifying = verifyingCitationIds.has(citation.id);
                 const citationOccurrences = occurrences.filter(
                   (item) => item.citation_id === citation.id,
                 );
@@ -681,6 +947,8 @@ export default function LiteraturePanel({
                 const complete =
                   citation.metadata_status === "complete" &&
                   citationOccurrences.every((item) => item.complete);
+                const verification = verificationMeta(citation);
+                const verifiedAt = verificationTimeLabel(citation.last_verified_at);
                 return (
                   <article
                     key={citation.id}
@@ -716,6 +984,27 @@ export default function LiteraturePanel({
                           {" · "}
                           {complete ? "文献信息完整" : "待补充文献信息"}
                         </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span
+                            className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${verification.className}`}
+                            title={verification.hint}
+                          >
+                            {verification.label}
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            {verifiedAt ? `刷新：${verifiedAt}` : verification.hint}
+                          </span>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-[10px] text-violet-700 hover:underline disabled:text-slate-400 disabled:no-underline"
+                            disabled={verifying || verifyingAll}
+                            onClick={() => void handleRefreshOneCitation(citation.id)}
+                            title="刷新该文献的外部核验状态"
+                          >
+                            <RefreshCw className={`h-3 w-3 ${verifying ? "animate-spin" : ""}`} aria-hidden />
+                            刷新核验
+                          </button>
+                        </div>
                       </div>
                     </div>
 

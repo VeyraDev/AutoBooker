@@ -54,7 +54,7 @@ export default function ReviewFindingList({
   const observe = findings.filter((f) => f.tier === "observe");
 
   return (
-    <div className="flex h-full min-h-0 flex-col border-r border-slate-200 bg-white">
+    <div className="flex min-h-0 flex-1 flex-col bg-white">
       <div className="border-b border-slate-200 px-4 py-3">
         <div className="mb-2 flex justify-end">
           <button

@@ -17,6 +17,7 @@ from app.models.chapter import Chapter, ChapterStatus
 from app.models.reference import FileLifecycleStatus, FilePurpose, ParseStatus, ReferenceChunk, ReferenceFile, ReferenceFilePurpose
 from app.models.memory import BookMemory, MemoryType
 from app.models.citation import Citation, CitationEvidence, CitationOccurrence, CitationSource
+from app.models.citation_verification_job import CitationVerificationJob, CitationVerificationJobStatus
 from app.models.material import MaterialConflict, MaterialTerm, OutlineConstraint, RequirementValidation, WritingRequirement
 from app.models.optimization import (
     ManuscriptBaselineChapter,
@@ -37,6 +38,7 @@ from app.models.assistant_turn import AssistantTurn, AssistantTrace
 from app.models.book_format_strategy import BookFormatStrategy, FormatStrategyStatus
 from app.models.review_task import ReviewTask, ReviewTaskGoal, ReviewTaskScope, ReviewTaskStatus
 from app.models.project_memory import ProjectMemory, ProjectMemoryStrength, ProjectMemoryType
+from app.models.review_rule_override import ReviewRuleOverride
 
 __all__ = [
     "User",
@@ -59,6 +61,8 @@ __all__ = [
     "CitationSource",
     "CitationEvidence",
     "CitationOccurrence",
+    "CitationVerificationJob",
+    "CitationVerificationJobStatus",
     "WritingRequirement",
     "MaterialTerm",
     "MaterialConflict",
@@ -120,4 +124,5 @@ __all__ = [
     "ReviewTaskGoal",
     "ReviewTaskScope",
     "ReviewTaskStatus",
+    "ReviewRuleOverride",
 ]

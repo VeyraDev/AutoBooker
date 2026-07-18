@@ -134,6 +134,23 @@ def update_book(book: Book, payload: dict, db: Session) -> Book:
         from app.services.writing.project_seed import mark_classification_source
 
         mark_classification_source(book, "user")
+
+    # Field-level origins for startup assistant protection
+    from app.services.assistant.book_settings_context import set_setting_origin
+
+    for key in (
+        "title",
+        "book_type",
+        "style_type",
+        "target_audience",
+        "disciplines",
+        "topic_brief",
+        "target_words",
+        "topic_tags",
+        "citation_style",
+    ):
+        if key in payload and payload.get(key) is not None:
+            set_setting_origin(book, key, "user_manual")
     _sync_discipline_field(book)
     if "citation_style" in payload and book.citation_style != previous_citation_style:
         from app.services.citation_nodes import refresh_book_citation_rendering

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import ReviewFindingDetail from "@/features/review/ReviewFindingDetail";
@@ -27,6 +27,19 @@ const finding = {
   quote: "由此可见",
   suggestion: "改为具体描述",
   basis_refs: ["用户要求（避免）：不要营销腔", "内置编辑标准：避免营销腔开场"],
+  evidence_items: [
+    {
+      type: "title_benchmark",
+      label: "标题样本基准",
+      detail: "参考 data/document 中 20 个可识别标题，常见区间约 6-27 个中文字符，中位数约 16。",
+      source: "data/document",
+      examples: ["AI工程 大模型应用开发实战", "从零构建大语言模型"],
+    },
+  ],
+  paragraph_id: null,
+  paragraph_index: 2,
+  char_start: 120,
+  char_end: 128,
   category: "style",
   track: null,
   detector: "review_agent",
@@ -53,14 +66,23 @@ afterEach(() => {
 describe("ReviewFindingDetail", () => {
   it("shows basis refs and recheck button for pending recheck", async () => {
     api.get.mockResolvedValue({ data: [] });
+    const jump = vi.fn();
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <ReviewFindingDetail bookId="book-1" finding={finding} onUpdated={vi.fn()} />
+        <ReviewFindingDetail bookId="book-1" finding={finding} onUpdated={vi.fn()} onJumpToSource={jump} />
       </QueryClientProvider>,
     );
     expect(screen.getByText("依据来源")).toBeTruthy();
+    expect(screen.getByText("定位")).toBeTruthy();
+    expect(screen.getByText(/第 1 章/)).toBeTruthy();
+    expect(screen.getByText(/段落 3/)).toBeTruthy();
     expect(screen.getByText(/不要营销腔/)).toBeTruthy();
+    expect(screen.getByText("标题样本基准")).toBeTruthy();
+    expect(screen.getByText(/6-27 个中文字符/)).toBeTruthy();
+    expect(screen.getByText("AI工程 大模型应用开发实战")).toBeTruthy();
     expect(screen.getAllByText("需人工处理").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "复查本条" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "跳转到正文" }));
+    expect(jump).toHaveBeenCalledWith(finding);
   });
 });

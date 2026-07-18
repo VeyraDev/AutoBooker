@@ -158,14 +158,18 @@ class ToolOrchestrator:
                     )
                     if data.get("needs_disambiguation"):
                         summary += "。请先确认作者身份后再继续选题。"
-                    paste = self._format_search_paste(data)
-                    source_item = self._sources.add_pasted_text(book, paste)
+                    # 检索结果不自动入库；仅返回候选供用户筛选确认
                     results.append(
                         _tool_result(
                             name,
                             ok=True,
-                            panel_hint="sources",
-                            data={**data, "summary": summary, "source_id": str(source_item.id)},
+                            panel_hint="literature",
+                            data={
+                                **data,
+                                "summary": summary,
+                                "auto_ingested": False,
+                                "preview_text": self._format_search_paste(data),
+                            },
                         )
                     )
                 elif name == "confirm_source_usage":

@@ -44,6 +44,9 @@ class Citation(Base):
     abstract_preview = Column(Text, nullable=True)
     url = Column(String(2000), nullable=True)
     list_index = Column(Integer, nullable=True)
+    verification_status = Column(String(32), nullable=True, index=True)
+    verification_result = Column(JSONB, nullable=True)
+    last_verified_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     book = relationship("Book", back_populates="citations")

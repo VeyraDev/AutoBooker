@@ -9,6 +9,7 @@ search providers.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any, Callable
 
@@ -28,6 +29,7 @@ ACADEMIC_TYPES = {"journal_article", "conference_paper", "dissertation", "j", "c
 
 LookupDoi = Callable[[str], dict[str, Any] | None]
 SearchWorks = Callable[[str, int], list[dict[str, Any]]]
+VerifyCitation = Callable[..., dict[str, Any]]
 
 
 def citation_to_verification_dict(citation: Any) -> dict[str, Any]:
@@ -193,6 +195,50 @@ def verify_citation_with_public_sources(citation_or_paper: Any, *, rows: int = 5
     )
 
 
+def refresh_citation_verification(
+    citation: Any,
+    *,
+    verifier: VerifyCitation | None = None,
+    rows: int = 5,
+) -> dict[str, Any]:
+    """Run external verification and persist the latest result on a citation row."""
+    fn = verifier or verify_citation_with_public_sources
+    try:
+        result = fn(citation, rows=rows)
+    except TypeError:
+        try:
+            result = fn(citation)
+        except Exception as exc:  # pragma: no cover - defensive external boundary
+            result = _unreachable_verification_result(citation, exc)
+    except Exception as exc:  # pragma: no cover - defensive external boundary
+        result = _unreachable_verification_result(citation, exc)
+    result = _normalized_verification_result(citation, result)
+    setattr(citation, "verification_status", result["verification_status"])
+    setattr(citation, "verification_result", result)
+    setattr(citation, "last_verified_at", datetime.now(timezone.utc))
+    return result
+
+
+def persisted_citation_verification_dict(citation: Any) -> dict[str, Any]:
+    """Return stored verification when present, otherwise cheap local status."""
+    stored = getattr(citation, "verification_result", None)
+    status = str(getattr(citation, "verification_status", None) or "").strip()
+    if isinstance(stored, dict):
+        stored_status = str(stored.get("verification_status") or status).strip()
+        if stored_status in VERIFICATION_STATUSES:
+            result = dict(stored)
+            result["verification_status"] = stored_status
+            result.setdefault("source_match", {})
+            result.setdefault("missing_fields", [])
+            result.setdefault("recommended_search_query", recommended_search_query(_citation_to_paper(citation)))
+            result["persisted"] = True
+            last_verified = getattr(citation, "last_verified_at", None)
+            if last_verified:
+                result["last_verified_at"] = last_verified.isoformat()
+            return result
+    return citation_to_verification_dict(citation)
+
+
 def compare_citation_metadata(source: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     return {
         "title_similarity": _title_similarity(source.get("title"), candidate.get("title")),
@@ -339,3 +385,27 @@ def _verification_reasons(status: str, score: dict[str, Any], missing: list[str]
     if score.get("year_match") is True:
         reasons.append("year_matched")
     return reasons
+
+
+def _normalized_verification_result(citation: Any, raw: Any) -> dict[str, Any]:
+    local = citation_to_verification_dict(citation)
+    result = dict(raw) if isinstance(raw, dict) else {}
+    status = str(result.get("verification_status") or "").strip()
+    if status not in VERIFICATION_STATUSES:
+        status = local["verification_status"]
+    result["verification_status"] = status
+    result.setdefault("source_match", local.get("source_match") or {})
+    result.setdefault("missing_fields", local.get("missing_fields") or [])
+    result.setdefault("recommended_search_query", local.get("recommended_search_query") or "")
+    result.setdefault("reasons", local.get("reasons") or [status])
+    return result
+
+
+def _unreachable_verification_result(citation: Any, exc: Exception) -> dict[str, Any]:
+    local = citation_to_verification_dict(citation)
+    return {
+        **local,
+        "verification_status": "unreachable",
+        "lookup_errors": [f"refresh:{exc.__class__.__name__}"],
+        "reasons": [*(local.get("reasons") or []), "external_refresh_failed"],
+    }

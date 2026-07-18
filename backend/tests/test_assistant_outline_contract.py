@@ -200,6 +200,7 @@ def test_critic_no_rule_patch_or_full_dump_markers():
     assert "collect_assistant_source_context" not in auto_job
     assert "materials_from_outline_contract" in outline_router
     assert "prepare_search" in external or "SearchIntent" in external
-    assert "prepare_search" in startup
-    assert "confirm_source_usage" in startup
-    assert "禁止用正则拆词" in startup or "prepare_search" in startup
+    assert "唯一正式书稿设定" in startup or "book_settings" in startup
+    assert "outline_route" in startup
+    assert "search_request" in startup
+    assert "reader_outcome" not in startup or "不得要求用户填写" in startup

@@ -57,6 +57,79 @@ def _book_meta(row: BookReviewFinding) -> dict:
     return ref
 
 
+def _evidence_items_from_meta(meta: dict, basis_refs: list[str]) -> list[dict]:
+    items: list[dict] = []
+    title_benchmark = meta.get("title_benchmark") if isinstance(meta, dict) else None
+    if isinstance(title_benchmark, dict):
+        sample_count = _safe_int(title_benchmark.get("sample_count"))
+        soft_min = _safe_int(title_benchmark.get("soft_min"))
+        soft_max = _safe_int(title_benchmark.get("soft_max"))
+        median_len = _safe_int(title_benchmark.get("median_len"))
+        source = str(title_benchmark.get("source") or "fallback")
+        examples = [str(x) for x in (title_benchmark.get("examples") or []) if str(x).strip()][:5]
+        if sample_count > 0 and soft_min > 0 and soft_max > 0:
+            detail = (
+                f"参考 {source} 中 {sample_count} 个可识别标题，常见区间约 "
+                f"{soft_min}-{soft_max} 个中文字符"
+                + (f"，中位数约 {median_len}。" if median_len > 0 else "。")
+            )
+        else:
+            detail = "当前采用书类兜底标题长度规则，建议人工结合定位判断。"
+        items.append(
+            {
+                "type": "title_benchmark",
+                "label": "标题样本基准",
+                "detail": detail,
+                "source": source,
+                "examples": examples,
+            }
+        )
+    evidence = meta.get("evidence") if isinstance(meta, dict) else None
+    if isinstance(evidence, list):
+        for idx, item in enumerate(evidence[:5], start=1):
+            text = str(item).strip()
+            if not text:
+                continue
+            items.append(
+                {
+                    "type": "review_evidence",
+                    "label": f"审校证据 {idx}",
+                    "detail": text[:500],
+                    "source": "review_output",
+                    "examples": [],
+                }
+            )
+    verification_status = str(meta.get("verification_status") or "").strip() if isinstance(meta, dict) else ""
+    if verification_status:
+        items.append(
+            {
+                "type": "verification_status",
+                "label": "核验状态",
+                "detail": verification_status,
+                "source": "verification",
+                "examples": [],
+            }
+        )
+    if not items and basis_refs:
+        items.append(
+            {
+                "type": "basis_refs",
+                "label": "规则依据",
+                "detail": "已匹配到结构化依据来源，见上方依据列表。",
+                "source": "basis_refs",
+                "examples": basis_refs[:5],
+            }
+        )
+    return items
+
+
+def _safe_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 class ReviewWorkspaceService:
     def __init__(self, db: Session):
         self.db = db
@@ -115,6 +188,11 @@ class ReviewWorkspaceService:
             "quote": issue.quote or None,
             "suggestion": issue.replacement_text or None,
             "basis_refs": basis,
+            "evidence_items": _evidence_items_from_meta(meta, basis),
+            "paragraph_id": issue.paragraph_id,
+            "paragraph_index": issue.paragraph_index,
+            "char_start": issue.char_start,
+            "char_end": issue.char_end,
             "category": issue.issue_type,
             "track": None,
             "detector": issue.detector,
@@ -156,6 +234,11 @@ class ReviewWorkspaceService:
             "quote": ref.get("quote"),
             "suggestion": row.suggestion or None,
             "basis_refs": basis,
+            "evidence_items": _evidence_items_from_meta(ref, basis),
+            "paragraph_id": ref.get("paragraph_id"),
+            "paragraph_index": ref.get("paragraph_index"),
+            "char_start": ref.get("char_start"),
+            "char_end": ref.get("char_end"),
             "category": row.category,
             "track": row.track.value if hasattr(row.track, "value") else str(row.track),
             "detector": None,
@@ -423,15 +506,14 @@ class ReviewWorkspaceService:
     ) -> dict:
         from app.repositories import review_repository
         from app.services.chapter_figure_table_normalize import normalize_chapter_figures_tables
-        from app.services.review_anchor import build_text_diff, canonical_markdown, snapshot_hash
-        from app.services.review_scoring import affected_dimensions
+        from app.services.review_apply import preview_full_chapter_application
+        from app.services.review_incremental import affected_dimensions
 
         content = ch.content if isinstance(ch.content, dict) else {}
         tiptap = content.get("tiptap_json") if isinstance(content, dict) else None
         if not isinstance(tiptap, dict):
             raise ValueError("章节无 TipTap 内容可排序，请先保存章节正文后重试")
 
-        before_md = canonical_markdown(current_md)
         result = normalize_chapter_figures_tables(
             book.id,
             ch.index,
@@ -440,42 +522,106 @@ class ReviewWorkspaceService:
             book=book,
             persist=False,
         )
-        after_md = canonical_markdown(str(result.get("text") or ""))
-        before_hash = snapshot_hash(before_md)
-        after_hash = snapshot_hash(after_md)
-        if not after_md or before_hash == after_hash:
-            raise ValueError("图表排序预览未产生可应用修改")
-
-        diff = build_text_diff(before_md, after_md)
+        preview = preview_full_chapter_application(
+            current_markdown=current_md,
+            issue_snapshot_hash=issue.snapshot_hash,
+            result_markdown=str(result.get("text") or ""),
+            apply_type="figure_table_normalize",
+            result_tiptap_json=result.get("tiptap_json") if isinstance(result.get("tiptap_json"), dict) else None,
+        )
+        diff = preview["diff"]
         affected = affected_dimensions(issue.issue_type, issue.dimension)
         app = review_repository.create_application(
             self.db,
             issue=issue,
             review=review,
             chapter_id=ch.id,
-            before_hash=before_hash,
-            after_hash=after_hash,
-            apply_type="normalize_figure_table_order",
-            locator_strategy="figure_table_normalize",
-            locator_confidence=0.95,
+            before_hash=preview["before_hash"],
+            after_hash=preview["after_hash"],
+            apply_type="figure_table_normalize",
+            locator_strategy=preview["locator_strategy"],
+            locator_confidence=preview["locator_confidence"],
             diff=diff,
             affected_dimensions=affected,
             score_before={"total_score": review.total_score, "dimensions": review.dimensions},
+            warning={"overview": result.get("overview") or []},
         )
         self.db.flush()
         return {
             "issue_id": str(issue.id),
             "application_id": str(app.id),
-            "quote": issue.quote or "",
+            "quote": preview["quote"] or issue.quote or "",
             "result_text": str(diff.get("after") or ""),
-            "result_markdown": after_md,
+            "result_markdown": preview["result_markdown"],
             "preview_kind": "replace",
             "preview_required": True,
-            "stale": before_hash != issue.snapshot_hash,
-            "locator_strategy": "figure_table_normalize",
-            "locator_confidence": 0.95,
+            "stale": preview["stale"],
+            "locator_strategy": preview["locator_strategy"],
+            "locator_confidence": preview["locator_confidence"],
             "char_start": diff.get("char_start"),
             "char_end": diff.get("char_end"),
+            "paragraph_index": issue.paragraph_index,
+            "paragraph_id": issue.paragraph_id,
+        }
+
+    def _preview_first_line_indent_fix(
+        self,
+        book: Book,
+        ch: Chapter,
+        review,
+        issue: ChapterReviewIssue,
+        current_md: str,
+    ) -> dict:
+        from app.repositories import review_repository
+        from app.services.markdown_to_tiptap import markdown_body_to_tiptap_blocks
+        from app.services.review.layout_autofix import normalize_first_line_indent
+        from app.services.review_apply import preview_full_chapter_application
+        from app.services.review_incremental import affected_dimensions
+
+        content = ch.content if isinstance(ch.content, dict) else {}
+        tiptap = content.get("tiptap_json") if isinstance(content, dict) else None
+        if not isinstance(tiptap, dict) or tiptap.get("type") != "doc":
+            tiptap = {"type": "doc", "content": markdown_body_to_tiptap_blocks(current_md)}
+        result = normalize_first_line_indent(current_md, tiptap)
+        if int(result.get("changed_count") or 0) <= 0:
+            raise ValueError("未检测到可应用的首行缩进修改")
+        preview = preview_full_chapter_application(
+            current_markdown=current_md,
+            issue_snapshot_hash=issue.snapshot_hash,
+            result_markdown=str(result.get("text") or ""),
+            apply_type="first_line_indent",
+            result_tiptap_json=result.get("tiptap_json") if isinstance(result.get("tiptap_json"), dict) else None,
+        )
+        affected = affected_dimensions(issue.issue_type, issue.dimension)
+        app = review_repository.create_application(
+            self.db,
+            issue=issue,
+            review=review,
+            chapter_id=ch.id,
+            before_hash=preview["before_hash"],
+            after_hash=preview["after_hash"],
+            apply_type="first_line_indent",
+            locator_strategy=preview["locator_strategy"],
+            locator_confidence=preview["locator_confidence"],
+            diff=preview["diff"],
+            affected_dimensions=affected,
+            score_before={"total_score": review.total_score, "dimensions": review.dimensions},
+            warning={"changed_count": int(result.get("changed_count") or 0)},
+        )
+        self.db.flush()
+        return {
+            "issue_id": str(issue.id),
+            "application_id": str(app.id),
+            "quote": preview["quote"] or issue.quote or "",
+            "result_text": preview["result_text"],
+            "result_markdown": preview["result_markdown"],
+            "preview_kind": "replace",
+            "preview_required": True,
+            "stale": preview["stale"],
+            "locator_strategy": preview["locator_strategy"],
+            "locator_confidence": preview["locator_confidence"],
+            "char_start": preview["char_start"],
+            "char_end": preview["char_end"],
             "paragraph_index": issue.paragraph_index,
             "paragraph_id": issue.paragraph_id,
         }
@@ -497,7 +643,7 @@ class ReviewWorkspaceService:
             is_data_evidence_issue,
         )
         from app.services.review_apply import apply_review_issue_text, preview_issue_application
-        from app.services.review_scoring import affected_dimensions
+        from app.services.review_incremental import affected_dimensions
         from app.services.tiptap_convert import chapter_content_to_markdown
 
         issue = self.db.get(ChapterReviewIssue, finding_id)
@@ -520,6 +666,8 @@ class ReviewWorkspaceService:
             raise ValueError("该问题需要先选择处理方式，再生成修改预览")
         if issue.issue_type == "figure_table_numbering":
             return self._preview_figure_table_fix(book, ch, review, issue, current_md)
+        if issue.issue_type == "first_line_indent":
+            return self._preview_first_line_indent_fix(book, ch, review, issue, current_md)
         finding_probe = {
             "issue_type": issue.issue_type,
             "dimension": issue.dimension,

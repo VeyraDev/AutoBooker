@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.agents.literature_agent import lookup_crossref_by_doi
@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.citation import Citation, CitationEvidence, CitationOccurrence, CitationSource
+from app.models.citation_verification_job import CitationVerificationJob
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.citation import (
@@ -28,6 +29,11 @@ from app.schemas.citation import (
     CitationNodeIn,
     CitationOccurrenceOut,
     CitationEvidenceOut,
+    CitationVerifyBatchIn,
+    CitationVerifyDueJobIn,
+    CitationVerifyJobCreateIn,
+    CitationVerificationDueJobOut,
+    CitationVerificationJobOut,
 )
 from app.services import book_service
 from app.services.citation_service import (
@@ -37,6 +43,12 @@ from app.services.citation_service import (
     list_citations_for_management,
     paper_to_dict,
     sync_book_bibliography,
+)
+from app.services.citation_verification import refresh_citation_verification, verify_citation_with_public_sources
+from app.services.citation_verification_jobs import (
+    create_citation_verification_job,
+    create_due_citation_verification_job,
+    run_citation_verification_job,
 )
 from app.services.citation_weave import weave_citation_sentence
 from app.services.citation_nodes import (
@@ -103,6 +115,144 @@ def add_citations_batch(
         row = create_citation_from_paper(db, book, paper_to_dict(p.model_dump()), source=src)
         created.append(row)
     return CitationListOut(items=[_to_out(r, book) for r in created])
+
+
+def _validate_citation_ids(db: Session, book_id: UUID, citation_ids: list[UUID] | None) -> None:
+    if not citation_ids:
+        return
+    found = {
+        row[0]
+        for row in db.query(Citation.id)
+        .filter(Citation.book_id == book_id, Citation.id.in_(citation_ids))
+        .all()
+    }
+    missing = [cid for cid in citation_ids if cid not in found]
+    if missing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "部分文献不存在")
+
+
+@router.post("/{book_id}/citations/verify-jobs", response_model=CitationVerificationJobOut, status_code=status.HTTP_201_CREATED)
+def start_citation_verification_job(
+    book_id: UUID,
+    body: CitationVerifyJobCreateIn,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book = book_service.get_book_or_404(book_id, user, db)
+    _validate_citation_ids(db, book.id, body.citation_ids)
+    job = create_citation_verification_job(
+        db,
+        book_id=book.id,
+        user_id=user.id,
+        citation_ids=body.citation_ids,
+        retry_unreachable_only=body.retry_unreachable_only,
+    )
+    db.commit()
+    db.refresh(job)
+    if job.status != "running":
+        background_tasks.add_task(run_citation_verification_job, job.id)
+    return job
+
+
+@router.post("/{book_id}/citations/verify-jobs/due", response_model=CitationVerificationDueJobOut)
+def start_due_citation_verification_job(
+    book_id: UUID,
+    body: CitationVerifyDueJobIn,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book = book_service.get_book_or_404(book_id, user, db)
+    job, selected_count, skipped_reason = create_due_citation_verification_job(
+        db,
+        book_id=book.id,
+        user_id=user.id,
+        stale_after_days=body.stale_after_days,
+        limit=body.limit,
+        include_unverified=body.include_unverified,
+        retry_unreachable_only=body.retry_unreachable_only,
+    )
+    db.commit()
+    if job:
+        db.refresh(job)
+        if skipped_reason is None and job.status != "running":
+            background_tasks.add_task(run_citation_verification_job, job.id)
+    return CitationVerificationDueJobOut(
+        selected_count=selected_count,
+        skipped_reason=skipped_reason,
+        job=job,
+    )
+
+
+@router.get("/{book_id}/citations/verify-jobs", response_model=list[CitationVerificationJobOut])
+def list_citation_verification_jobs(
+    book_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book = book_service.get_book_or_404(book_id, user, db)
+    return (
+        db.query(CitationVerificationJob)
+        .filter(CitationVerificationJob.book_id == book.id)
+        .order_by(CitationVerificationJob.created_at.desc())
+        .limit(10)
+        .all()
+    )
+
+
+@router.get("/{book_id}/citations/verify-jobs/{job_id}", response_model=CitationVerificationJobOut)
+def get_citation_verification_job(
+    book_id: UUID,
+    job_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book = book_service.get_book_or_404(book_id, user, db)
+    job = db.get(CitationVerificationJob, job_id)
+    if not job or job.book_id != book.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Citation verification job not found")
+    return job
+
+
+@router.post("/{book_id}/citations/verify", response_model=CitationListOut)
+def refresh_book_citation_verifications(
+    book_id: UUID,
+    body: CitationVerifyBatchIn | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book = book_service.get_book_or_404(book_id, user, db)
+    citation_ids = body.citation_ids if body and body.citation_ids else []
+    query = db.query(Citation).filter(Citation.book_id == book.id)
+    if citation_ids:
+        query = query.filter(Citation.id.in_(citation_ids))
+    rows = query.order_by(Citation.created_at.desc()).limit(100).all()
+    if citation_ids:
+        _validate_citation_ids(db, book.id, citation_ids)
+    for row in rows:
+        refresh_citation_verification(row, verifier=verify_citation_with_public_sources)
+    db.commit()
+    for row in rows:
+        db.refresh(row)
+    return CitationListOut(items=[_to_out(r, book) for r in rows])
+
+
+@router.post("/{book_id}/citations/{citation_id}/verify", response_model=CitationOut)
+def refresh_citation_verification_for_book(
+    book_id: UUID,
+    citation_id: UUID,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book = book_service.get_book_or_404(book_id, user, db)
+    row = db.query(Citation).filter(Citation.id == citation_id, Citation.book_id == book.id).first()
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Citation not found")
+    refresh_citation_verification(row, verifier=verify_citation_with_public_sources)
+    db.commit()
+    db.refresh(row)
+    return _to_out(row, book)
 
 
 @router.post("/{book_id}/citations/insert", response_model=CitationInsertOut)

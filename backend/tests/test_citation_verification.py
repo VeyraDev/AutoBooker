@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from app.models.citation import CitationSource
 from app.services.citation_verification import (
     citation_to_verification_dict,
+    persisted_citation_verification_dict,
+    refresh_citation_verification,
     verify_citation_metadata,
 )
 from app.services.review.quality_reviewers import run_book_quality_review
@@ -103,6 +105,55 @@ def test_title_search_probable_without_doi():
     assert result["verification_status"] in {"verified", "probable"}
     assert result["source_match"]["provider"] == "openalex"
     assert result["source_match"]["title_similarity"] >= 0.9
+
+
+def test_refresh_citation_verification_persists_latest_result():
+    row = _citation(doi="")
+
+    def verifier(citation, *, rows: int = 5):
+        assert citation is row
+        assert rows == 3
+        return {
+            "verification_status": "probable",
+            "source_match": {"provider": "openalex", "best_score": 0.81},
+            "missing_fields": [],
+            "recommended_search_query": "对强人工智能及其理论预设的考察 王佳 2010",
+            "reasons": ["title_matched"],
+        }
+
+    result = refresh_citation_verification(row, verifier=verifier, rows=3)
+    cached = persisted_citation_verification_dict(row)
+
+    assert result["verification_status"] == "probable"
+    assert row.verification_status == "probable"
+    assert row.verification_result["source_match"]["provider"] == "openalex"
+    assert row.last_verified_at is not None
+    assert cached["persisted"] is True
+    assert cached["verification_status"] == "probable"
+    assert cached["source_match"]["best_score"] == 0.81
+
+
+def test_persisted_verification_falls_back_to_local_without_stored_result():
+    row = _citation(doi="", abstract_preview="")
+
+    result = persisted_citation_verification_dict(row)
+
+    assert result["verification_status"] == "needs_verification"
+    assert "abstract" in result["missing_fields"]
+
+
+def test_refresh_citation_verification_persists_unreachable_when_external_refresh_fails():
+    row = _citation()
+
+    def verifier(_citation, *, rows: int = 5):
+        raise RuntimeError("offline")
+
+    result = refresh_citation_verification(row, verifier=verifier)
+
+    assert result["verification_status"] == "unreachable"
+    assert row.verification_status == "unreachable"
+    assert "refresh:RuntimeError" in row.verification_result["lookup_errors"]
+    assert "external_refresh_failed" in row.verification_result["reasons"]
 
 
 def test_book_quality_review_uses_verification_mismatch_as_manual_high_risk():

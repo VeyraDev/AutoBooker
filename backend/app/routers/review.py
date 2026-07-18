@@ -40,6 +40,7 @@ from app.schemas.review import (
 )
 from app.services import book_service
 from app.services.ai_detect import get_ai_detect_provider
+from app.services.chapter_figure_table_normalize import normalize_chapter_figures_tables
 from app.services.citation_lint import lint_chapter_citation_detector
 from app.services.citation_service import list_citations_sorted
 from app.services.citation_verification import citation_to_verification_dict
@@ -47,7 +48,12 @@ from app.services.dedupe_service import DedupeService
 from app.services.figure_lint import lint_figures
 from app.services.markdown_to_tiptap import markdown_body_to_tiptap_blocks
 from app.services.review_anchor import apply_text_edit, canonical_markdown, enrich_issue_anchor, snapshot_hash
-from app.services.review_apply import apply_review_issue_text, preview_issue_application
+from app.services.review_apply import (
+    FULL_CHAPTER_APPLY_TYPES,
+    apply_review_issue_text,
+    preview_full_chapter_application,
+    preview_issue_application,
+)
 from app.services.review_incremental import affected_dimensions, score_changes
 from app.services.review_scoring import (
     REVIEW_DIMENSIONS,
@@ -58,6 +64,7 @@ from app.services.review_scoring import (
     standardize_issue,
 )
 from app.services.review.review_finding_validator import enrich_finding_metadata, validate_finding
+from app.services.review.layout_autofix import normalize_first_line_indent
 from app.services.review.quality_reviewers import run_chapter_quality_review
 from app.services.tiptap_convert import chapter_content_to_markdown
 
@@ -199,18 +206,25 @@ def preview_review_issue(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chapter not found")
     current_md = _chapter_markdown(ch)
     try:
-        replacement, preview_kind = _replacement_for_issue(book, issue, current_md)
-        preview = preview_issue_application(
-            current_markdown=current_md,
-            issue_snapshot_hash=issue.snapshot_hash,
-            quote=issue.quote or "",
-            action_type=issue.action,
-            replacement_text=replacement,
-            paragraph_id=issue.paragraph_id,
-            paragraph_index=issue.paragraph_index,
-            char_start=issue.char_start,
-            char_end=issue.char_end,
-        )
+        layout_preview = _layout_preview_for_issue(book, ch, issue, current_md, db)
+        if layout_preview:
+            preview = layout_preview
+            preview_kind = "replace"
+            apply_type = str(layout_preview.get("apply_type") or "full_chapter_replace")
+        else:
+            replacement, preview_kind = _replacement_for_issue(book, issue, current_md)
+            preview = preview_issue_application(
+                current_markdown=current_md,
+                issue_snapshot_hash=issue.snapshot_hash,
+                quote=issue.quote or "",
+                action_type=issue.action,
+                replacement_text=replacement,
+                paragraph_id=issue.paragraph_id,
+                paragraph_index=issue.paragraph_index,
+                char_start=issue.char_start,
+                char_end=issue.char_end,
+            )
+            apply_type = issue.action
     except ValueError as e:
         issue.status = "failed"
         db.commit()
@@ -223,12 +237,13 @@ def preview_review_issue(
         chapter_id=ch.id,
         before_hash=preview["before_hash"],
         after_hash=preview["after_hash"],
-        apply_type=issue.action,
+        apply_type=apply_type,
         locator_strategy=preview["locator_strategy"],
         locator_confidence=preview["locator_confidence"],
         diff=preview["diff"],
         affected_dimensions=affected,
         score_before={"total_score": review.total_score, "dimensions": review.dimensions},
+        warning=preview.get("warning") if isinstance(preview.get("warning"), dict) else None,
     )
     return ReviewIssuePreviewOut(
         issue_id=str(issue.id),
@@ -243,6 +258,7 @@ def preview_review_issue(
         preview_required=preview["preview_required"],
         stale=preview["stale"],
         affected_dimensions=affected,
+        warning=preview.get("warning") if isinstance(preview.get("warning"), dict) else None,
         paragraph_id=preview["paragraph_id"],
         paragraph_index=preview["paragraph_index"],
         char_start=preview["char_start"],
@@ -340,21 +356,29 @@ def confirm_review_application(
     current_hash = snapshot_hash(current_md)
     if current_hash == app.before_hash:
         diff = app.diff if isinstance(app.diff, dict) else {}
-        try:
-            start = int(diff["char_start"])
-            end = int(diff["char_end"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPException(status.HTTP_409_CONFLICT, "预览记录缺少可应用的定位信息，请重新生成预览") from exc
-        applied_md = apply_text_edit(
-            current_md,
-            start=start,
-            end=end,
-            replacement=str(diff.get("after") or ""),
-            action=app.apply_type,
-        )
+        if app.apply_type in FULL_CHAPTER_APPLY_TYPES or diff.get("full_chapter"):
+            applied_md = canonical_markdown(str(diff.get("full_after") or ""))
+            if not applied_md:
+                raise HTTPException(status.HTTP_409_CONFLICT, "预览记录缺少整章应用结果，请重新生成预览")
+        else:
+            try:
+                start = int(diff["char_start"])
+                end = int(diff["char_end"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(status.HTTP_409_CONFLICT, "预览记录缺少可应用的定位信息，请重新生成预览") from exc
+            applied_md = apply_text_edit(
+                current_md,
+                start=start,
+                end=end,
+                replacement=str(diff.get("after") or ""),
+                action=app.apply_type,
+            )
         if snapshot_hash(applied_md) != app.after_hash:
             raise HTTPException(status.HTTP_409_CONFLICT, "预览结果已失效，请重新生成预览")
-        _persist_chapter_markdown(ch, applied_md, db, book)
+        if app.apply_type in FULL_CHAPTER_APPLY_TYPES or diff.get("full_chapter"):
+            _persist_chapter_full_preview(ch, applied_md, diff, db, book, apply_type=app.apply_type)
+        else:
+            _persist_chapter_markdown(ch, applied_md, db, book)
     elif current_hash != app.after_hash:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -865,6 +889,59 @@ def _persist_chapter_markdown(ch: Chapter, md: str, db: Session, book) -> None:
     db.flush()
 
 
+def _chapter_tiptap_json(ch: Chapter, current_md: str) -> dict[str, Any]:
+    content = ch.content if isinstance(ch.content, dict) else {}
+    doc = content.get("tiptap_json") if isinstance(content, dict) else None
+    if isinstance(doc, dict) and doc.get("type") == "doc":
+        return doc
+    return {"type": "doc", "content": markdown_body_to_tiptap_blocks(current_md)}
+
+
+def _persist_chapter_full_preview(
+    ch: Chapter,
+    md: str,
+    diff: dict[str, Any],
+    db: Session,
+    book,
+    *,
+    apply_type: str,
+) -> None:
+    canonical = canonical_markdown(md)
+    doc = diff.get("full_after_tiptap") if isinstance(diff.get("full_after_tiptap"), dict) else None
+    if not isinstance(doc, dict) or doc.get("type") != "doc":
+        _persist_chapter_markdown(ch, canonical, db, book)
+        return
+
+    meta = dict(ch.content) if isinstance(ch.content, dict) else {}
+    meta["text"] = canonical
+    meta["tiptap_json"] = doc
+    ch.content = meta
+    ch.word_count = len(canonical.replace("\n", "").replace(" ", ""))
+
+    from app.services.citation_nodes import normalize_chapter_citations
+
+    normalized, _ = normalize_chapter_citations(db, book, ch, doc=doc)
+    if isinstance(normalized, dict):
+        doc = normalized
+        meta = dict(ch.content) if isinstance(ch.content, dict) else meta
+        meta["tiptap_json"] = doc
+        meta["text"] = canonical_markdown(chapter_content_to_markdown(meta).strip() or canonical)
+        ch.content = meta
+
+    if apply_type == "figure_table_normalize":
+        from app.services.figure_service import ensure_figure_blocks_persisted, renumber_chapter_figures_from_tiptap
+
+        ensured = ensure_figure_blocks_persisted(book.id, ch.index, doc, db)
+        if isinstance(ensured, dict):
+            doc = ensured
+            meta = dict(ch.content) if isinstance(ch.content, dict) else meta
+            meta["tiptap_json"] = doc
+            meta["text"] = canonical_markdown(chapter_content_to_markdown(meta).strip() or canonical)
+            ch.content = meta
+        renumber_chapter_figures_from_tiptap(book.id, ch.index, doc, db)
+    db.flush()
+
+
 def _review_out(review: ChapterReview, ch: Chapter, *, current_md: str) -> ChapterReviewOut:
     current_hash = snapshot_hash(current_md)
     stale_report = current_hash != review.snapshot_hash
@@ -978,6 +1055,57 @@ def _issue_out(issue: ChapterReviewIssue, *, stale: bool = False) -> ReviewIssue
         confidence=float(issue.confidence or 0),
         stale=stale,
     )
+
+
+def _layout_preview_for_issue(
+    book,
+    ch: Chapter,
+    issue: ChapterReviewIssue,
+    current_md: str,
+    db: Session,
+) -> dict[str, Any] | None:
+    meta = issue.quality_evidence if isinstance(issue.quality_evidence, dict) else {}
+    fix_capability = str(meta.get("fix_capability") or "").strip()
+    if fix_capability and fix_capability != "preview_apply":
+        return None
+
+    tiptap = _chapter_tiptap_json(ch, current_md)
+    if issue.issue_type == "figure_table_numbering":
+        result = normalize_chapter_figures_tables(
+            book.id,
+            ch.index,
+            tiptap,
+            db,
+            book=None,
+            persist=False,
+        )
+        preview = preview_full_chapter_application(
+            current_markdown=current_md,
+            issue_snapshot_hash=issue.snapshot_hash,
+            result_markdown=str(result.get("text") or ""),
+            apply_type="figure_table_normalize",
+            result_tiptap_json=result.get("tiptap_json") if isinstance(result.get("tiptap_json"), dict) else None,
+        )
+        preview["apply_type"] = "figure_table_normalize"
+        preview["warning"] = {"overview": result.get("overview") or []}
+        return preview
+
+    if issue.issue_type == "first_line_indent":
+        result = normalize_first_line_indent(current_md, tiptap)
+        if int(result.get("changed_count") or 0) <= 0:
+            raise ValueError("未检测到可应用的首行缩进修改")
+        preview = preview_full_chapter_application(
+            current_markdown=current_md,
+            issue_snapshot_hash=issue.snapshot_hash,
+            result_markdown=str(result.get("text") or ""),
+            apply_type="first_line_indent",
+            result_tiptap_json=result.get("tiptap_json") if isinstance(result.get("tiptap_json"), dict) else None,
+        )
+        preview["apply_type"] = "first_line_indent"
+        preview["warning"] = {"changed_count": int(result.get("changed_count") or 0)}
+        return preview
+
+    return None
 
 
 def _replacement_for_issue(book, issue: ChapterReviewIssue, current_md: str) -> tuple[str, str]:

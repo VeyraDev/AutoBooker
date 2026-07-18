@@ -60,16 +60,53 @@ export type TurnListItem = {
   created_at: string;
 };
 
+export type SettingOrigin = {
+  origin: string;
+  updated_at?: string | null;
+};
+
+export type OutlineRoute = {
+  mode: string;
+  source_id?: string | null;
+  reason?: string;
+  confidence?: number | null;
+  needs_confirmation?: boolean;
+  candidate_source_ids?: string[];
+};
+
+export type ExtractedRequirement = {
+  category?: string;
+  content: string;
+  strength?: string;
+  source_id?: string | null;
+};
+
 export type TurnResponse = {
   turn_id: string;
   assistant_message: string;
   writing_basis?: WritingBasis | null;
+  book_settings?: Record<string, unknown>;
+  setting_origins?: Record<string, SettingOrigin>;
+  setting_decisions?: Record<string, unknown>[];
+  extracted_requirements?: ExtractedRequirement[];
+  confirmed_requirements?: ExtractedRequirement[];
+  file_judgements?: Record<string, unknown>[];
+  outline_route?: OutlineRoute | null;
+  clarification?: Record<string, unknown>;
+  search_result?: Record<string, unknown> | null;
+  quick_fill_operation_id?: string | null;
   traces?: AssistantTrace[];
   sources?: SourceItem[];
   open_questions?: string[];
   memories?: import("@/features/memory/memoryApi").ProjectMemory[];
   tool_results?: ToolResult[];
   pending_confirmations?: ConfirmationPreview[];
+};
+
+export type OutlineReadiness = {
+  missing: string[];
+  outline_route?: OutlineRoute | null;
+  ready: boolean;
 };
 
 export type ToolResult = {
@@ -87,14 +124,39 @@ export type ConfirmationPreview = {
   data: Record<string, unknown>;
 };
 
-export async function sendTurn(bookId: string, message: string, chapterIndex?: number | null) {
+export async function sendTurn(
+  bookId: string,
+  message: string,
+  chapterIndex?: number | null,
+  assistantMode: "normal" | "quick_fill" = "normal",
+) {
   const { data } = await client.post<TurnResponse>(
     `/books/${bookId}/project-assistant/turns`,
     {
-      message,
+      message: message ?? "",
       chapter_index: chapterIndex ?? undefined,
+      assistant_mode: assistantMode,
     },
     { timeout: 180_000 },
+  );
+  return data;
+}
+
+export async function undoQuickFill(bookId: string, operationId?: string | null) {
+  const { data } = await client.post<{
+    operation_id?: string;
+    restored?: Record<string, unknown>;
+    book_settings?: Record<string, unknown>;
+    setting_origins?: Record<string, SettingOrigin>;
+  }>(`/books/${bookId}/project-assistant/quick-fill/undo`, {
+    operation_id: operationId ?? undefined,
+  });
+  return data;
+}
+
+export async function getOutlineReadiness(bookId: string) {
+  const { data } = await client.get<OutlineReadiness>(
+    `/books/${bookId}/project-assistant/outline-readiness`,
   );
   return data;
 }

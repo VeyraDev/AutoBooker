@@ -8,6 +8,12 @@ from app.llm.client import LLMClient
 from app.models.book import Book
 from app.services.review_anchor import apply_text_edit, build_text_diff, canonical_markdown, locate_issue_anchor, snapshot_hash
 
+FULL_CHAPTER_APPLY_TYPES = {
+    "full_chapter_replace",
+    "figure_table_normalize",
+    "first_line_indent",
+}
+
 _INSTRUCTION_PREFIX = re.compile(
     r"^(?:改为|建议改为|可以改为|可修改为|替换为|修改为|建议修改为|修改为：|改为：|替换为：|建议：|请)\s*",
     re.IGNORECASE,
@@ -93,6 +99,54 @@ def preview_issue_application(
         "char_end": located.char_end,
         "anchor_hash": located.anchor_hash,
         "quote": located.quote or quote,
+    }
+
+
+def preview_full_chapter_application(
+    *,
+    current_markdown: str,
+    issue_snapshot_hash: str,
+    result_markdown: str,
+    apply_type: str = "full_chapter_replace",
+    result_tiptap_json: dict | None = None,
+) -> dict:
+    """Create a review application preview for deterministic whole-chapter fixes."""
+    current_md = canonical_markdown(current_markdown)
+    after = canonical_markdown(result_markdown)
+    action = (apply_type or "full_chapter_replace").strip().lower()
+    if action not in FULL_CHAPTER_APPLY_TYPES:
+        raise ValueError("不支持的整章预览类型")
+    if not after:
+        raise ValueError("整章预览结果为空")
+    if after == current_md:
+        raise ValueError("未检测到可应用的格式修改")
+    current_hash = snapshot_hash(current_md)
+    diff = build_text_diff(current_md, after)
+    diff.update(
+        {
+            "full_chapter": True,
+            "full_after": after,
+        }
+    )
+    if isinstance(result_tiptap_json, dict):
+        diff["full_after_tiptap"] = result_tiptap_json
+    return {
+        "before_hash": current_hash,
+        "after_hash": snapshot_hash(after),
+        "result_markdown": after,
+        "result_text": diff.get("after") or "",
+        "preview_kind": "replace",
+        "diff": diff,
+        "locator_strategy": action,
+        "locator_confidence": 1.0,
+        "preview_required": True,
+        "stale": current_hash != issue_snapshot_hash,
+        "paragraph_id": None,
+        "paragraph_index": None,
+        "char_start": diff.get("char_start"),
+        "char_end": diff.get("char_end"),
+        "anchor_hash": None,
+        "quote": diff.get("before") or "",
     }
 
 

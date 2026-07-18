@@ -103,6 +103,38 @@ export interface CitationRecord {
   metadata_status?: "complete" | "needs_completion";
   external_source?: string | null;
   list_index?: number | null;
+  verification_status?: string | null;
+  verification_result?: Record<string, unknown> | null;
+  last_verified_at?: string | null;
   formatted?: string | null;
   created_at: string;
+}
+
+export interface CitationVerificationJob {
+  id: string;
+  book_id: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | string;
+  requested_citation_ids?: string[] | null;
+  total_count: number;
+  processed_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  progress_pct: number;
+  result_json?: Record<string, unknown> | null;
+  error_message?: string | null;
+  created_at: string;
+  finished_at?: string | null;
+}
+
+export interface CitationVerificationDueJobRequest {
+  stale_after_days?: number;
+  limit?: number;
+  include_unverified?: boolean;
+  retry_unreachable_only?: boolean;
+}
+
+export interface CitationVerificationDueJobResult {
+  selected_count: number;
+  skipped_reason?: "active_job_exists" | "no_due_citations" | string | null;
+  job?: CitationVerificationJob | null;
 }

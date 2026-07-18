@@ -67,6 +67,7 @@ import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import type { Chapter } from "@/types/chapter";
 import { isChapterBodyEffectivelyEmpty } from "@/lib/chapterBodyEmpty";
 import type { OutlineChapter, OutlineChapterPatch } from "@/types/outline";
+import type { EditorAiPreviewPayload } from "@/types/aiPreview";
 
 /** 稳定引用：避免 outline 未返回时每次 render 新建 [] 触发下游 effect 抖动 */
 const EMPTY_OUTLINE_CHAPTERS: OutlineChapter[] = [];
@@ -150,12 +151,53 @@ function streamRawToChapterPayload(raw: string): { json: Record<string, unknown>
   };
 }
 
+type ReviewJumpTarget = {
+  key: string;
+  chapterIndex: number;
+  payload: EditorAiPreviewPayload;
+};
+
+function optionalInt(raw: string | null): number | null {
+  if (raw == null || raw.trim() === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+function reviewJumpTargetFromSearch(params: URLSearchParams): ReviewJumpTarget | null {
+  const chapterIndex = optionalInt(params.get("review_chapter"));
+  if (chapterIndex == null || chapterIndex < 0) return null;
+  const quote = params.get("review_quote") ?? "";
+  const payload: EditorAiPreviewPayload = {
+    quote,
+    suggestion: "",
+    kind: "replace",
+    issue_id: params.get("review_finding"),
+    paragraph_id: params.get("review_paragraph_id"),
+    paragraph_index: optionalInt(params.get("review_paragraph_index")),
+    char_start: optionalInt(params.get("review_char_start")),
+    char_end: optionalInt(params.get("review_char_end")),
+  };
+  return {
+    key: [
+      chapterIndex,
+      payload.issue_id ?? "",
+      payload.paragraph_id ?? "",
+      payload.paragraph_index ?? "",
+      payload.char_start ?? "",
+      quote.slice(0, 80),
+    ].join(":"),
+    chapterIndex,
+    payload,
+  };
+}
+
 export default function BookEditorPage() {
   const { bookId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const qc = useQueryClient();
   const autoAfterIntake = searchParams.get("auto") === "1";
+  const reviewJumpTarget = useMemo(() => reviewJumpTargetFromSearch(searchParams), [searchParams]);
 
   const [selection, setSelection] = useState<OutlineSelection>({ type: "chapter", index: 1 });
   const [panelCollapsed, setPanelCollapsed] = useState(true);
@@ -199,6 +241,8 @@ export default function BookEditorPage() {
   const applyingServerContentRef = useRef(false);
   const bodyRebuildAttemptRef = useRef<string | null>(null);
   const prevChapterIndexNavRef = useRef<number | null>(null);
+  const reviewJumpSelectionRef = useRef<string | null>(null);
+  const reviewJumpDoneRef = useRef<string | null>(null);
   const { start: startStream } = useChapterStream();
   const { status: saveStatus, savedAt, scheduleSave } = useAutoSave();
   const { recordChars } = useDailyWordDelta(bookId);
@@ -331,6 +375,13 @@ export default function BookEditorPage() {
 
   const chapterDetail = chapterDetailQuery.data;
 
+  useEffect(() => {
+    if (!reviewJumpTarget) return;
+    if (reviewJumpSelectionRef.current === reviewJumpTarget.key) return;
+    reviewJumpSelectionRef.current = reviewJumpTarget.key;
+    setSelection({ type: "chapter", index: reviewJumpTarget.chapterIndex });
+  }, [reviewJumpTarget]);
+
   const [liveChapterChars, setLiveChapterChars] = useState<number | null>(null);
 
   useEffect(() => {
@@ -394,6 +445,33 @@ export default function BookEditorPage() {
       window.clearTimeout(t);
     };
   }, [selection, chapterIndex, chapterDetail?.id, chapterDetailQuery.isPending]);
+
+  useEffect(() => {
+    if (!reviewJumpTarget || chapterIndex !== reviewJumpTarget.chapterIndex) return;
+    if (!chapterDetail || chapterDetailQuery.isPending) return;
+    if (reviewJumpDoneRef.current === reviewJumpTarget.key) return;
+    let cancelled = false;
+    const tryScroll = (attempt: number) => {
+      if (cancelled) return;
+      const ok = editorRef.current?.scrollToReviewAnchor(reviewJumpTarget.payload);
+      if (ok) {
+        reviewJumpDoneRef.current = reviewJumpTarget.key;
+        toast.success("已定位到审校原文");
+        return;
+      }
+      if (attempt < 12) {
+        window.setTimeout(() => tryScroll(attempt + 1), 120 + attempt * 80);
+        return;
+      }
+      reviewJumpDoneRef.current = reviewJumpTarget.key;
+      toast("已打开目标章节，未精确定位到原文");
+    };
+    const t = window.setTimeout(() => tryScroll(0), 160);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [reviewJumpTarget, chapterIndex, chapterDetail?.id, chapterDetailQuery.isPending]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

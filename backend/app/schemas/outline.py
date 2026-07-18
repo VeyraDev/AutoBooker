@@ -48,3 +48,6 @@ class OutlineGenerateIn(BaseModel):
     topic_override: str | None = Field(default=None, max_length=500)
     target_audience: str | None = Field(default=None, max_length=500)
     topic_brief: str | None = Field(default=None, max_length=12000)
+    # When outline_route.needs_confirmation, client must pass chosen segment/source id
+    confirmed_source_id: str | None = Field(default=None, max_length=64)
+    force: bool = False

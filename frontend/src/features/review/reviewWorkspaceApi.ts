@@ -30,6 +30,14 @@ export type ReviewActionOption = {
   action_type?: string;
 };
 
+export type ReviewEvidenceItem = {
+  type: string;
+  label: string;
+  detail: string;
+  source?: string | null;
+  examples?: string[];
+};
+
 export type WorkspaceFinding = {
   id: string;
   source: "chapter" | "book";
@@ -42,6 +50,11 @@ export type WorkspaceFinding = {
   quote: string | null;
   suggestion: string | null;
   basis_refs: string[];
+  evidence_items?: ReviewEvidenceItem[];
+  paragraph_id?: string | null;
+  paragraph_index?: number | null;
+  char_start?: number | null;
+  char_end?: number | null;
   category: string | null;
   track: string | null;
   detector: string | null;
@@ -87,6 +100,42 @@ export type ReviewWorkspaceSummary = {
   latest_task: ReviewTask | null;
 };
 
+export type ReviewRuleDecision = {
+  id: string;
+  candidate_id: string;
+  version: number;
+  status: "active" | "rejected" | "archived";
+  recommendation: string;
+  product_dimension: string;
+  issue_type: string;
+  fix_capability: string;
+  detector: string;
+  rule_text: string;
+  decision_note: string;
+  source_stats: Record<string, unknown>;
+  created_at: string | null;
+};
+
+export type ReviewRuleCandidate = {
+  id: string;
+  status: "candidate";
+  recommendation: "promote" | "demote";
+  product_dimension: string;
+  issue_type: string;
+  fix_capability: string;
+  detector: string;
+  accepted: number;
+  dismissed: number;
+  open: number;
+  decided: number;
+  acceptance_rate: number;
+  dismissal_rate: number;
+  examples: string[];
+  reason: string;
+  safety_note: string;
+  decision?: ReviewRuleDecision | null;
+};
+
 export async function getReviewWorkspaceSummary(bookId: string): Promise<ReviewWorkspaceSummary> {
   const { data } = await client.get<ReviewWorkspaceSummary>(`/books/${bookId}/review-workspace/summary`);
   return data;
@@ -107,6 +156,53 @@ export async function listReviewWorkspaceFindings(
   },
 ): Promise<WorkspaceFinding[]> {
   const { data } = await client.get<WorkspaceFinding[]>(`/books/${bookId}/review-workspace/findings`, { params });
+  return data;
+}
+
+export async function listReviewRuleCandidates(
+  bookId: string,
+  includeDecided = false,
+): Promise<ReviewRuleCandidate[]> {
+  const { data } = await client.get<ReviewRuleCandidate[]>(`/books/${bookId}/review-workspace/rule-candidates`, {
+    params: { include_decided: includeDecided },
+  });
+  return data;
+}
+
+export async function listConfirmedReviewRules(bookId: string): Promise<ReviewRuleDecision[]> {
+  const { data } = await client.get<ReviewRuleDecision[]>(`/books/${bookId}/review-workspace/rules`);
+  return data;
+}
+
+export async function listReviewRuleVersions(bookId: string, candidateId?: string): Promise<ReviewRuleDecision[]> {
+  const { data } = await client.get<ReviewRuleDecision[]>(`/books/${bookId}/review-workspace/rules/history`, {
+    params: candidateId ? { candidate_id: candidateId } : undefined,
+  });
+  return data;
+}
+
+export async function restoreReviewRuleVersion(
+  bookId: string,
+  ruleId: string,
+  body?: { decision_note?: string },
+): Promise<ReviewRuleDecision> {
+  const { data } = await client.post<ReviewRuleDecision>(
+    `/books/${bookId}/review-workspace/rules/${ruleId}/restore`,
+    body ?? {},
+  );
+  return data;
+}
+
+export async function decideReviewRuleCandidate(
+  bookId: string,
+  candidateId: string,
+  body: { decision: "active" | "rejected"; decision_note?: string; rule_text?: string },
+): Promise<ReviewRuleDecision> {
+  const { data } = await client.post<ReviewRuleDecision>(
+    `/books/${bookId}/review-workspace/rule-candidates/decision`,
+    body,
+    { params: { candidate_id: candidateId } },
+  );
   return data;
 }
 

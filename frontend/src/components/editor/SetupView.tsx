@@ -6,12 +6,6 @@ import toast from "react-hot-toast";
 import { setupRecommend, updateBook } from "@/api/books";
 import { confirmReference, deleteReference, listReferences, uploadReference } from "@/api/references";
 import LiteraturePanel from "@/components/editor/LiteraturePanel";
-import {
-  usePatchWritingBasis,
-  useWritingBasis,
-} from "@/features/assistant/hooks/useWritingBasis";
-import { BASIS_SETUP_FIELDS } from "@/features/assistant/bookSettingsSpec";
-import type { WritingBasis } from "@/features/assistant/api/assistantApi";
 import { styleOptionsFor } from "@/lib/styleTypes";
 import type { Book, BookType, CitationStyle, SetupRecommendResult, StyleType } from "@/types/book";
 import type { FilePurpose, ReferenceFile } from "@/types/reference";
@@ -97,8 +91,6 @@ export default function SetupView({
   onRegisterActions,
 }: Props) {
   const qc = useQueryClient();
-  const basisQuery = useWritingBasis(book.id);
-  const patchBasis = usePatchWritingBasis(book.id);
   const [titleDraft, setTitleDraft] = useState(book.title ?? "");
   const [targetAudience, setTargetAudience] = useState("");
   const [disciplines, setDisciplines] = useState<string[]>([]);
@@ -113,7 +105,6 @@ export default function SetupView({
   const [allowTitleOptimization, setAllowTitleOptimization] = useState(false);
   const [shareToLibrary, setShareToLibrary] = useState(false);
   const [savingMeta, setSavingMeta] = useState(false);
-  const [basisDraft, setBasisDraft] = useState<Partial<WritingBasis>>({});
 
   const [recommendedTags, setRecommendedTags] = useState<string[]>([]);
   const [disciplineCandidates, setDisciplineCandidates] = useState<DisciplineCandidate[]>([]);
@@ -163,20 +154,6 @@ export default function SetupView({
     book.citation_style,
     book.allow_title_optimization,
   ]);
-
-  useEffect(() => {
-    const b = basisQuery.data;
-    if (!b) return;
-    setBasisDraft({
-      book_promise: b.book_promise ?? "",
-      reader_outcome: b.reader_outcome ?? "",
-      scope: b.scope ?? "",
-      depth: b.depth ?? "",
-      voice: b.voice ?? "",
-      must_avoid: b.must_avoid ?? [],
-      must_keep: b.must_keep ?? [],
-    });
-  }, [basisQuery.data]);
 
   useEffect(() => {
     if (recommendCacheKey && recommendCacheKey !== recommendInputKey) {
@@ -299,23 +276,6 @@ export default function SetupView({
         allow_title_optimization: allowTitleOptimization,
       });
       onBookPatched(next);
-      const basisPatch: Partial<WritingBasis> = {
-        book_promise: String(basisDraft.book_promise ?? "").trim() || null,
-        reader_outcome: String(basisDraft.reader_outcome ?? "").trim() || null,
-        scope: String(basisDraft.scope ?? "").trim() || null,
-        depth: String(basisDraft.depth ?? "").trim() || null,
-        voice: String(basisDraft.voice ?? "").trim() || null,
-        must_avoid: Array.isArray(basisDraft.must_avoid) ? basisDraft.must_avoid : [],
-        must_keep: Array.isArray(basisDraft.must_keep) ? basisDraft.must_keep : [],
-        target_readers: targetAudience.trim() || null,
-        direction: topicBrief.trim() || null,
-      };
-      try {
-        await patchBasis.mutateAsync(basisPatch);
-        await qc.invalidateQueries({ queryKey: ["writingBasis", book.id] });
-      } catch {
-        /* Book 已保存；依据补丁失败不阻断 */
-      }
       toast.success("书稿设定已保存");
       return next;
     } catch (error) {
@@ -472,7 +432,7 @@ export default function SetupView({
                 <option value="academic">{BOOK_TYPE_LABEL.academic}</option>
               </select>
               <p className="mt-1 text-[11px] text-slate-400">
-                新建时的「大众非虚构」只是占位；请按创作意图选择，或用项目要点「智能补齐设定」。
+                新建时的「大众非虚构」只是占位；请按创作意图选择，或在助手对话区使用「快速补齐」。
               </p>
             </label>
           </div>
@@ -748,41 +708,7 @@ export default function SetupView({
         </section>
 
         <section className="p-5">
-          <h3 className="text-sm font-semibold text-ink">策划细节</h3>
-          <p className="mt-1 text-xs text-slate-500">
-            与项目启动助手「项目要点」同一结构；助手对话会自动同步到这里。
-          </p>
-          <div className="mt-4 space-y-3">
-            {BASIS_SETUP_FIELDS.map((f) => {
-              const isList = "list" in f && f.list;
-              const value = isList
-                ? ((basisDraft[f.key as keyof WritingBasis] as string[] | undefined) ?? []).join("\n")
-                : String(basisDraft[f.key as keyof WritingBasis] ?? "");
-              return (
-                <label key={f.key} className="block text-sm">
-                  <span className="text-slate-600">{f.label}</span>
-                  <textarea
-                    className="input mt-1 min-h-[64px]"
-                    value={value}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      setBasisDraft((prev) => ({
-                        ...prev,
-                        [f.key]: isList
-                          ? raw
-                              .split("\n")
-                              .map((x) => x.trim())
-                              .filter(Boolean)
-                          : raw,
-                      }));
-                    }}
-                    placeholder={isList ? "每行一条" : undefined}
-                  />
-                </label>
-              );
-            })}
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               className="btn-secondary"

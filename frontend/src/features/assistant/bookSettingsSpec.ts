@@ -1,8 +1,6 @@
 /**
- * 书稿设定统一结构：项目要点 / 高级编辑 / 大纲入参 共用同一套字段语义。
- *
- * Book 字段 = 可持久化到 books 表的核心设定
- * WritingBasis 扩展字段 = 助手沉淀的策划细节（同步展示，确认时写入 WritingRequirement）
+ * 唯一正式书稿设定：启动助手 / 项目要点 / 高级编辑 / 大纲入参 共用。
+ * WritingBasis 不再作为第二套 UI 表单（仅下游静默兼容）。
  */
 
 export const BOOK_SETUP_FIELDS = [
@@ -15,16 +13,6 @@ export const BOOK_SETUP_FIELDS = [
   { key: "topic_tags", label: "话题标签", source: "book" as const },
   { key: "topic_brief", label: "主题要点", source: "book" as const },
   { key: "citation_style", label: "引用格式", source: "book" as const },
-] as const;
-
-export const BASIS_SETUP_FIELDS = [
-  { key: "book_promise", label: "书稿承诺" },
-  { key: "reader_outcome", label: "读者收获" },
-  { key: "scope", label: "内容范围" },
-  { key: "depth", label: "专业深度" },
-  { key: "voice", label: "语言风格" },
-  { key: "must_avoid", label: "禁止事项", list: true },
-  { key: "must_keep", label: "必须保留", list: true },
 ] as const;
 
 export const BOOK_TYPE_LABEL: Record<string, string> = {

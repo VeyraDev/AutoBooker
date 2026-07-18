@@ -18,15 +18,38 @@ function isUserEchoEvidence(text: string): boolean {
   return /^(用户原话|用户说|用户提到|用户表示|用户输入|用户本轮|用户消息)[:：]?/i.test(s);
 }
 
+function formatEvidenceItem(e: unknown): string {
+  if (e == null) return "";
+  if (typeof e === "string") return e.trim();
+  if (typeof e === "number" || typeof e === "boolean") return String(e);
+  if (typeof e === "object") {
+    const obj = e as Record<string, unknown>;
+    const summary = obj.summary ?? obj.reason ?? obj.text ?? obj.content;
+    if (typeof summary === "string" && summary.trim()) return summary.trim();
+    try {
+      return JSON.stringify(obj);
+    } catch {
+      return "";
+    }
+  }
+  return String(e).trim();
+}
+
+function looksLikeMachineDump(text: string): boolean {
+  return /topic_brief|disciplines|topic_tags|book_settings_patch|decision_type|\[object Object\]/i.test(
+    text,
+  );
+}
+
 function traceBody(trace: AssistantTrace): string {
   const parts: string[] = [];
   const claim = trace.claim?.trim();
-  if (claim) parts.push(claim);
+  if (claim && !looksLikeMachineDump(claim)) parts.push(claim);
   const reason = trace.reason_summary?.trim();
-  if (reason) parts.push(reason);
+  if (reason && !looksLikeMachineDump(reason)) parts.push(reason);
   const evidence = (trace.evidence ?? [])
-    .map((e) => String(e).trim())
-    .filter((e) => e && !isUserEchoEvidence(e));
+    .map((e) => formatEvidenceItem(e))
+    .filter((e) => e && !isUserEchoEvidence(e) && !looksLikeMachineDump(e));
   if (evidence.length) {
     parts.push(evidence.map((e) => `- ${e}`).join("\n"));
   }
