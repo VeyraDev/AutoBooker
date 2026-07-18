@@ -130,3 +130,50 @@ def test_context_hash_changes_when_writing_basis_id_changes():
     }
     snap2 = {**snap1, "writing_basis_id": "b2"}
     assert wcb.context_hash(snap1) != wcb.context_hash(snap2)
+
+
+def test_prompt_block_includes_citation_verification_summary():
+    wcb = WritingContextBuilder(_NoDb())  # type: ignore[arg-type]
+    snap = {
+        "must_keep": [],
+        "must_avoid": [],
+        "material_policy": [],
+        "requirements": [],
+        "material_terms": [],
+        "legacy_user_material": "",
+        "citations": [
+            {
+                "title": "对强人工智能及其理论预设的考察",
+                "authors": ["王佳", "朱敏"],
+                "year": 2010,
+                "verification_status": "needs_verification",
+                "missing_fields": ["abstract"],
+                "recommended_search_query": "对强人工智能及其理论预设的考察 王佳 2010",
+            }
+        ],
+    }
+
+    block = wcb.to_prompt_block(snap)
+
+    assert "【本书文献与核验状态】" in block
+    assert "核验：needs_verification" in block
+    assert "缺字段：abstract" in block
+    assert "建议检索：对强人工智能及其理论预设的考察 王佳 2010" in block
+
+
+def test_context_hash_changes_when_citation_verification_changes():
+    wcb = WritingContextBuilder(_NoDb())  # type: ignore[arg-type]
+    base = {
+        "writing_basis_id": None,
+        "understanding_id": "u1",
+        "writing_plan_id": "p1",
+        "requirement_ids": [],
+        "outline_constraint_ids": [],
+        "must_avoid": [],
+        "must_keep": [],
+        "chapter_index": None,
+        "citations": [{"title": "文献A", "verification_status": "needs_verification"}],
+    }
+    changed = {**base, "citations": [{"title": "文献A", "verification_status": "verified"}]}
+
+    assert wcb.context_hash(base) != wcb.context_hash(changed)

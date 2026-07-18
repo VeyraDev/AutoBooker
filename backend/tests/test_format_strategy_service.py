@@ -162,6 +162,29 @@ def test_confirm_syncs_column_labels():
     assert ch1.content.get("column_labels") == ["本章小结"]
 
 
+def test_apply_after_outline_generates_and_confirms(monkeypatch):
+    book_id = uuid4()
+    ch1 = SimpleNamespace(id=uuid4(), book_id=book_id, index=1, title="章1", content={}, summary="")
+    book = SimpleNamespace(id=book_id, title="测试", book_type=SimpleNamespace(value="nonfiction"), target_audience="读者", discipline=None)
+    strategy = BookFormatStrategy(
+        id=uuid4(),
+        book_id=book_id,
+        version=1,
+        status=FormatStrategyStatus.draft,
+        chapter_suggestions={"1": [{"column_name": "案例", "purpose": "举例"}]},
+    )
+    db = _Db(strategies=[strategy], chapters=[ch1])
+    svc = FormatStrategyService(db)  # type: ignore[arg-type]
+
+    def _gen(self, book, *, force=False):
+        return strategy
+
+    monkeypatch.setattr(FormatStrategyService, "generate", _gen)
+    out = svc.apply_after_outline(book, force=True)  # type: ignore[arg-type]
+    assert out.status == FormatStrategyStatus.confirmed
+    assert ch1.content.get("column_labels") == ["案例"]
+
+
 def test_generate_applies_llm_payload(monkeypatch):
     book_id = uuid4()
     book = SimpleNamespace(

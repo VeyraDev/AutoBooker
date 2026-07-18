@@ -57,9 +57,49 @@ def _normalize_disciplines(items: Any) -> list[str]:
         s = str(d or "").strip()[:100]
         if s and s not in out:
             out.append(s)
-        if len(out) >= 8:
+        if len(out) >= 3:
             break
     return out
+
+
+def _normalize_discipline_candidates(items: Any, disciplines: list[str]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    if isinstance(items, list):
+        for item in items:
+            raw = item if isinstance(item, dict) else {"name": item}
+            name = str(raw.get("name") or "").strip()[:100]
+            if not name or any(c["name"] == name for c in out):
+                continue
+            reason = str(raw.get("reason") or "").strip()[:240]
+            ambiguity_note = str(raw.get("ambiguity_note") or "").strip()[:240]
+            out.append(
+                {
+                    "name": name,
+                    "reason": reason or "该领域会影响本书术语解释、证据选择和论证边界。",
+                    "ambiguity_note": ambiguity_note,
+                }
+            )
+            if len(out) >= 3:
+                break
+    for name in disciplines:
+        if not any(c["name"] == name for c in out):
+            out.append(
+                {
+                    "name": name,
+                    "reason": "该领域会影响本书术语解释、证据选择和论证边界。",
+                    "ambiguity_note": "",
+                }
+            )
+            if len(out) >= 3:
+                break
+    return out
+
+
+def _discipline_confirmation_note(value: Any) -> str:
+    note = str(value or "").strip()
+    if note:
+        return note[:300]
+    return "学科领域用于约束同名术语解释、证据标准和论证方式，避免自造理论、名词或抽象类比。"
 
 
 def recommend_book_setup(
@@ -80,6 +120,13 @@ def recommend_book_setup(
             "recommended_tags": _normalize_tags(payload.get("recommended_tags")),
             "target_audience": str(payload.get("target_audience") or "").strip(),
             "disciplines": _normalize_disciplines(payload.get("disciplines")),
+            "discipline_candidates": _normalize_discipline_candidates(
+                payload.get("discipline_candidates"),
+                _normalize_disciplines(payload.get("disciplines")),
+            ),
+            "discipline_confirmation_note": _discipline_confirmation_note(
+                payload.get("discipline_confirmation_note")
+            ),
             "topic_brief": str(payload.get("topic_brief") or "").strip(),
         }
 
@@ -130,12 +177,20 @@ def recommend_book_setup(
         logger.warning("setup recommend failed book=%s: %s", book.id, last_err)
         raise RuntimeError(last_err or "setup recommend JSON parse failed")
 
+    disciplines = _normalize_disciplines(data.get("disciplines"))
+    discipline_candidates = _normalize_discipline_candidates(data.get("discipline_candidates"), disciplines)
+    if not disciplines and discipline_candidates:
+        disciplines = [c["name"] for c in discipline_candidates[:3]]
     result = {
         "from_cache": False,
         "cache_key": cache_key,
         "recommended_tags": _normalize_tags(data.get("recommended_tags")),
         "target_audience": str(data.get("target_audience") or "").strip()[:2000],
-        "disciplines": _normalize_disciplines(data.get("disciplines")),
+        "disciplines": disciplines,
+        "discipline_candidates": discipline_candidates,
+        "discipline_confirmation_note": _discipline_confirmation_note(
+            data.get("discipline_confirmation_note")
+        ),
         "topic_brief": str(data.get("topic_brief") or "").strip()[:8000],
     }
     book.setup_recommendation_cache = {
@@ -145,6 +200,8 @@ def recommend_book_setup(
             "recommended_tags": result["recommended_tags"],
             "target_audience": result["target_audience"],
             "disciplines": result["disciplines"],
+            "discipline_candidates": result["discipline_candidates"],
+            "discipline_confirmation_note": result["discipline_confirmation_note"],
             "topic_brief": result["topic_brief"],
         },
     }

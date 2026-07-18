@@ -78,6 +78,7 @@ SEVERITY_DEFAULT_PENALTY = {
     "high": 10,
     "medium": 6,
     "low": 3,
+    "needs_verification": 5,
 }
 
 NON_PENALTY_STATUSES = {"resolved", "dismissed", "stale", "failed"}
@@ -155,15 +156,19 @@ def normalize_agent_dimensions(raw: dict[str, Any] | list[dict[str, Any]] | None
 def standardize_issue(raw: dict[str, Any], *, detector: str = "review_agent") -> dict[str, Any]:
     category = str(raw.get("category") or raw.get("dimension") or "other")
     dimension = normalize_dimension_key(raw.get("dimension") or CATEGORY_TO_DIMENSION.get(category, category))
-    severity = _enum(str(raw.get("severity") or "medium").lower(), ("high", "medium", "low"), "medium")
+    severity = _enum(
+        str(raw.get("severity") or "medium").lower(),
+        ("high", "medium", "low", "needs_verification"),
+        "medium",
+    )
     action = _enum(
         str(raw.get("action") or raw.get("action_type") or "revise").lower(),
-        ("replace", "delete", "insert", "revise"),
+        ("replace", "delete", "insert", "revise", "choose"),
         "revise",
     )
     penalty = raw.get("penalty")
     if penalty is None:
-        penalty = SEVERITY_DEFAULT_PENALTY[severity]
+        penalty = SEVERITY_DEFAULT_PENALTY.get(severity, SEVERITY_DEFAULT_PENALTY["medium"])
     quote = str(raw.get("quote") or "")[:2000]
     title = str(raw.get("title") or "待改进")[:120]
     explanation = str(raw.get("explanation") or raw.get("detail") or "")[:3000]
@@ -174,7 +179,11 @@ def standardize_issue(raw: dict[str, Any], *, detector: str = "review_agent") ->
     char_end = _optional_int(raw.get("char_end"))
     if char_end is None and char_start is not None and quote:
         char_end = char_start + len(quote)
-    return {
+    qe = raw.get("quality_evidence") if isinstance(raw.get("quality_evidence"), dict) else {}
+    why = raw.get("why_it_matters")
+    if why is None and isinstance(qe, dict):
+        why = qe.get("why_it_matters")
+    out: dict[str, Any] = {
         "dimension": dimension,
         "issue_type": issue_type[:80],
         "severity": severity,
@@ -182,8 +191,10 @@ def standardize_issue(raw: dict[str, Any], *, detector: str = "review_agent") ->
         "status": str(raw.get("status") or "open"),
         "title": title,
         "explanation": explanation,
+        "detail": explanation,
         "quote": quote,
         "action": action,
+        "action_type": action,
         "replacement_text": replacement,
         "paragraph_id": raw.get("paragraph_id"),
         "paragraph_index": paragraph_index,
@@ -191,10 +202,34 @@ def standardize_issue(raw: dict[str, Any], *, detector: str = "review_agent") ->
         "char_end": char_end,
         "anchor_hash": raw.get("anchor_hash"),
         "issue_fingerprint": raw.get("issue_fingerprint"),
-        "quality_evidence": raw.get("quality_evidence") if isinstance(raw.get("quality_evidence"), dict) else None,
+        "quality_evidence": qe or None,
         "detector": str(raw.get("detector") or detector),
         "confidence": _confidence(raw.get("confidence"), 0.7),
     }
+    if why is not None:
+        out["why_it_matters"] = str(why)[:2000]
+    if raw.get("product_dimension") or (isinstance(qe, dict) and qe.get("product_dimension")):
+        out["product_dimension"] = raw.get("product_dimension") or qe.get("product_dimension")
+    if raw.get("tier") or (isinstance(qe, dict) and qe.get("tier")):
+        out["tier"] = raw.get("tier") or qe.get("tier")
+    basis_refs = raw.get("basis_refs") or (qe.get("basis_refs") if isinstance(qe, dict) else None)
+    if basis_refs:
+        out["basis_refs"] = list(basis_refs) if isinstance(basis_refs, list) else [str(basis_refs)]
+    evidence = raw.get("evidence") or (qe.get("evidence") if isinstance(qe, dict) else None)
+    if evidence:
+        out["evidence"] = list(evidence) if isinstance(evidence, list) else [str(evidence)]
+    basis_rule_ids = raw.get("basis_rule_ids") or (qe.get("basis_rule_ids") if isinstance(qe, dict) else None)
+    if basis_rule_ids:
+        out["basis_rule_ids"] = list(basis_rule_ids) if isinstance(basis_rule_ids, list) else [str(basis_rule_ids)]
+    if raw.get("action_options"):
+        out["action_options"] = raw.get("action_options")
+    elif isinstance(qe, dict) and qe.get("action_options"):
+        out["action_options"] = qe.get("action_options")
+    if raw.get("fix_capability") or (isinstance(qe, dict) and qe.get("fix_capability")):
+        out["fix_capability"] = raw.get("fix_capability") or qe.get("fix_capability")
+    if raw.get("verification_status") or (isinstance(qe, dict) and qe.get("verification_status")):
+        out["verification_status"] = raw.get("verification_status") or qe.get("verification_status")
+    return out
 
 
 def attach_paragraph_indices(md: str, issues: list[dict[str, Any]]) -> list[dict[str, Any]]:

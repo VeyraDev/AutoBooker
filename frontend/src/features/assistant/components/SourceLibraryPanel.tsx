@@ -251,11 +251,49 @@ export default function SourceLibraryPanel({
         <h3 className="text-sm font-semibold text-slate-800">资料库</h3>
         {externalSearch ? (
           <div className="mt-2 rounded border border-violet-100 bg-violet-50 p-2 text-xs text-violet-900">
-            <p className="font-medium">外部检索：{String(externalSearch.person ?? "")}</p>
+            <p className="font-medium">
+              外部检索：{String(externalSearch.person ?? "")}
+              {externalSearch.institution ? ` · ${String(externalSearch.institution)}` : ""}
+              {externalSearch.role ? ` · ${String(externalSearch.role)}` : ""}
+            </p>
             <p className="mt-1 text-violet-800">{String(externalSearch.summary ?? "")}</p>
+            {Array.isArray(externalSearch.candidates) && (externalSearch.candidates as unknown[]).length > 0 ? (
+              <div className="mt-2 space-y-1">
+                <p className="font-medium text-violet-950">
+                  {externalSearch.needs_disambiguation ? "请确认作者身份：" : "匹配到的作者身份："}
+                </p>
+                {(
+                  externalSearch.candidates as Array<{
+                    id?: string;
+                    display_name?: string;
+                    institution?: string | null;
+                    work_count?: number;
+                    match_score?: number;
+                  }>
+                )
+                  .slice(0, 5)
+                  .map((c) => (
+                    <div
+                      key={String(c.id || c.display_name)}
+                      className="rounded border border-violet-200/80 bg-white/70 px-2 py-1.5 text-[11px] text-violet-950"
+                    >
+                      <span className="font-medium">{c.display_name}</span>
+                      {c.institution ? <span className="text-violet-700">｜{c.institution}</span> : null}
+                      {typeof c.work_count === "number" ? (
+                        <span className="ml-1 text-violet-500">· {c.work_count} 条作品线索</span>
+                      ) : null}
+                    </div>
+                  ))}
+              </div>
+            ) : null}
             {(externalSearch.research_directions as string[] | undefined)?.slice(0, 3).map((d) => (
               <p key={d} className="mt-1">
                 · {d}
+              </p>
+            ))}
+            {(externalSearch.warnings as string[] | undefined)?.slice(0, 2).map((w) => (
+              <p key={w} className="mt-1 text-[10px] text-amber-800">
+                ! {w}
               </p>
             ))}
             <p className="mt-1 text-[10px] text-violet-700">{String(externalSearch.source_scope ?? "")}</p>

@@ -113,6 +113,8 @@ export function useAssistantConversation(bookId: string, options?: Options) {
       qc.invalidateQueries({ queryKey: ["assistantTurns", bookId] }),
       qc.invalidateQueries({ queryKey: ["sources", bookId] }),
       qc.invalidateQueries({ queryKey: ["memories", bookId] }),
+      qc.invalidateQueries({ queryKey: ["writingBasis", bookId] }),
+      qc.invalidateQueries({ queryKey: ["book", bookId] }),
     ]);
   }, [bookId, qc]);
 

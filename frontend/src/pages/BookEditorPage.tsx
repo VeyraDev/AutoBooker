@@ -257,11 +257,13 @@ export default function BookEditorPage() {
     enabled: Boolean(bookId && book?.creation_origin),
   });
   const intakeGate = intakeGateQuery.data?.intake ?? null;
+  // intake 未确认前留在助手；加载中也要挡住，避免短暂闪出 PlanningWizard/设定页
   const projectStartPending =
     Boolean(book?.creation_origin) &&
     book?.status === "setup" &&
-    intakeGate?.status !== "confirmed" &&
-    !intakeGateQuery.isLoading;
+    (intakeGateQuery.isLoading ||
+      intakeGateQuery.isPending ||
+      intakeGate?.status !== "confirmed");
   const shouldShowAssistant = Boolean(bookId && projectStartPending);
   const outline = outlineQuery.data;
   const chapters = useMemo(() => outline?.chapters ?? EMPTY_OUTLINE_CHAPTERS, [outline]);
@@ -864,9 +866,16 @@ export default function BookEditorPage() {
 
   async function handleProjectInputComplete() {
     if (!bookId) return;
+    // 保留刚写入的 outline 缓存，避免失效后短暂无章节而闪回设定页
     await Promise.all([
       qc.invalidateQueries({ queryKey: ["intake", bookId] }),
       qc.invalidateQueries({ queryKey: ["book", bookId] }),
+      qc.invalidateQueries({ queryKey: ["writingBasis", bookId] }),
+    ]);
+    await Promise.all([
+      qc.refetchQueries({ queryKey: ["book", bookId] }),
+      qc.refetchQueries({ queryKey: ["outline", bookId] }),
+      qc.refetchQueries({ queryKey: ["intake", bookId] }),
     ]);
     if (!autoAfterIntake) return;
     try {

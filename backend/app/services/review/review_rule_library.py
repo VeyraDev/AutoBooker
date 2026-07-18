@@ -57,7 +57,10 @@ def basis_refs_from_context(context_snapshot: dict[str, Any] | None) -> list[str
 
 
 def retrieve_relevant_rules(finding: dict[str, Any], context_snapshot: dict[str, Any] | None) -> list[str]:
-    """Structured basis refs with rule kind labels."""
+    """Structured basis refs with rule kind labels.
+
+    「公开出版规则：…」仅在 finding.basis_rule_ids 命中真实 seed 时才允许出现。
+    """
     refs: list[str] = []
     for rid in finding.get("basis_rule_ids") or []:
         for rule in load_public_rules():
@@ -74,8 +77,7 @@ def retrieve_relevant_rules(finding: dict[str, Any], context_snapshot: dict[str,
             refs.append(f"{prefix}：{c['text'][:200]}")
     if finding.get("category") == "format_strategy":
         refs.append("全书体例与栏目策略")
-    if not refs:
-        refs = basis_refs_from_context(context_snapshot)[:3]
+    # 不再用 generic fallback 伪造「出版规范」依据
     return refs[:8]
 
 

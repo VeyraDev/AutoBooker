@@ -39,6 +39,10 @@ const finding = {
   validation_passed: true,
   filter_reason: null,
   why_it_matters: "影响读者信任",
+  verification_status: null,
+  action_options: [],
+  fix_capability: "manual_only" as const,
+  prefer_evidence_binding: false,
 };
 
 afterEach(() => {
@@ -56,6 +60,7 @@ describe("ReviewFindingDetail", () => {
     );
     expect(screen.getByText("依据来源")).toBeTruthy();
     expect(screen.getByText(/不要营销腔/)).toBeTruthy();
+    expect(screen.getAllByText("需人工处理").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "复查本条" })).toBeTruthy();
   });
 });

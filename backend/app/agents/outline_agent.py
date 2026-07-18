@@ -121,12 +121,32 @@ class OutlineAgent:
             parts.append("【已确认写作上下文】\n" + str(cfg["writing_context"])[:8000])
         if cfg.get("writing_rules"):
             parts.append("全书级写作要求（纳入大纲相关章节要点或全局约束）：\n" + "\n".join(f"- {r}" for r in cfg["writing_rules"][:15]))
+        if cfg.get("source_requirement_blocks"):
+            parts.append(
+                "【已确认写作要求原文 — 必须遵守】\n"
+                + "\n---\n".join(str(x)[:3000] for x in cfg["source_requirement_blocks"][:3])
+            )
         if cfg.get("primary_outline"):
             import json
 
             parts.append(
                 "【用户主大纲 - 必须保留章序与章标题，仅补充摘要、要点、节结构与字数，不得删并重组】\n"
                 + json.dumps(cfg["primary_outline"], ensure_ascii=False)[:8000]
+            )
+        elif cfg.get("source_outline_blocks"):
+            parts.append(
+                "【已确认主大纲原文 — 必须保留章序与章标题，仅补充摘要、要点、节结构与字数】\n"
+                + "\n---\n".join(str(x)[:4000] for x in cfg["source_outline_blocks"][:3])
+            )
+        if cfg.get("source_reference_outline_blocks"):
+            parts.append(
+                "【参考大纲（可不锁定章序，仅作结构参考）】\n"
+                + "\n---\n".join(str(x)[:2500] for x in cfg["source_reference_outline_blocks"][:2])
+            )
+        if cfg.get("source_manuscript_blocks"):
+            parts.append(
+                "【初稿结构线索（仅 hint，禁止整段扩写）】\n"
+                + "\n---\n".join(str(x)[:1500] for x in cfg["source_manuscript_blocks"][:2])
             )
         if cfg.get("topic_brief"):
             parts.append("主题补充说明：\n" + str(cfg["topic_brief"])[:6000])

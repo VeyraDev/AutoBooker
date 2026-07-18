@@ -139,22 +139,46 @@ def generate_outline(
     body = body or OutlineGenerateIn()
 
     try:
-        query = (body.topic_override or book.title) + " " + (book.discipline or "")
+        from app.services.writing.project_seed import resolve_project_seed
+        from app.services.sources.source_outline_bridge import (
+            materials_from_outline_contract,
+            merge_primary_outline,
+        )
+
+        project_seed = resolve_project_seed(book, db)
+        outline_topic = (body.topic_override or "").strip() or (book.topic_brief or "").strip() or project_seed[:500]
+        query = f"{outline_topic} {(book.discipline or '')}".strip()
         parser = DocumentParserAgent(db, book.id)
-        snippets = parser.retrieve(query.strip() or book.title, top_k=5)
+        snippets = parser.retrieve(query or project_seed[:500], top_k=5)
+
+        # 仅消费助手 prepare_outline_context 契约 + 已确认要求；禁止资料库全量倾倒
+        source_mats = materials_from_outline_contract(db, book)
+        primary_outline = merge_primary_outline(
+            get_primary_outline_for_book(db, book.id),
+            source_mats.get("parsed_primary_outline"),
+        )
+        writing_rules = list(get_book_level_writing_rules(db, book.id))
+        for rule in source_mats.get("source_writing_rules") or []:
+            if rule and rule not in writing_rules:
+                writing_rules.append(rule)
 
         cfg = {
             "book_type": book.book_type.value,
             "style_type": book.style_type,
-            "topic": body.topic_override or book.title,
+            "topic": outline_topic,
             "target_audience": body.target_audience or book.target_audience or "大众读者",
             "target_words": book.target_words or 80000,
             "citation_style": book.citation_style.value if book.citation_style else "无需引用",
             "discipline": book.discipline,
             "topic_tags": list(book.topic_tags or []),
-            "topic_brief": (body.topic_brief or book.topic_brief or "").strip() or None,
-            "primary_outline": get_primary_outline_for_book(db, book.id),
-            "writing_rules": get_book_level_writing_rules(db, book.id),
+            "topic_brief": (body.topic_brief or book.topic_brief or project_seed or "").strip() or None,
+            "primary_outline": primary_outline,
+            "writing_rules": writing_rules[:40],
+            "source_outline_blocks": source_mats.get("source_outline_blocks") or [],
+            "source_requirement_blocks": source_mats.get("source_requirement_blocks") or [],
+            "source_manuscript_blocks": source_mats.get("source_manuscript_blocks") or [],
+            "source_reference_outline_blocks": source_mats.get("source_reference_outline_blocks") or [],
+            "outline_contract": source_mats.get("contract"),
         }
         from app.services.writing.writing_context_builder import WritingContextBuilder
 
@@ -167,7 +191,7 @@ def generate_outline(
         outline = agent.generate(cfg, snippets, model=chat_model)
         outline = merge_outline_with_primary(
             outline,
-            get_primary_outline_for_book(db, book.id),
+            primary_outline,
         )
 
         db.query(Chapter).filter(Chapter.book_id == book.id).delete()
@@ -225,10 +249,10 @@ def generate_outline(
         try:
             from app.services.writing.format_strategy_service import FormatStrategyService
 
-            FormatStrategyService(db).generate(book, force=True)
+            FormatStrategyService(db).apply_after_outline(book, force=True)
             db.commit()
         except Exception:
-            logger.exception("format strategy auto-generate failed after outline book=%s", book.id)
+            logger.exception("format strategy apply_after_outline failed after outline book=%s", book.id)
 
         chapters = (
             db.query(Chapter).filter(Chapter.book_id == book.id).order_by(Chapter.index.asc()).all()

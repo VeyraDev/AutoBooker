@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.llm.client import LLMClient
 from app.llm.providers import resolve_assistant_model
 from app.models.assistant_turn import AssistantTrace, AssistantTurn
-from app.models.book import Book
+from app.models.book import Book, BookType, CitationStyle
 from app.models.user import User
 from app.prompts.assistant.global_system import global_turn_output_instruction
 from app.prompts.assistant.startup_system import STARTUP_ASSISTANT_SYSTEM, turn_output_instruction
@@ -19,8 +19,16 @@ from app.services.assistant.context_compression_service import ContextCompressio
 from app.services.assistant.project_memory_service import ProjectMemoryService
 from app.services.assistant.tool_orchestrator import ToolOrchestrator
 from app.services.sources.source_library_service import SourceLibraryService
+from app.services.writing.basis_requirement_sync import sync_book_fields_from_basis
+from app.services.writing.project_seed import (
+    infer_and_apply_book_settings,
+    is_provisional_classification,
+    mark_classification_source,
+    resolve_project_seed,
+)
 from app.services.writing.writing_basis_service import WritingBasisService
 from app.utils.json_llm import parse_llm_json
+from app.constants.style_types import StyleType
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -29,6 +37,92 @@ def _as_dict(value: Any) -> dict[str, Any]:
 
 def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+_VALID_STYLES = {s.value for s in StyleType}
+
+
+def _is_placeholder_title(title: str | None) -> bool:
+    t = (title or "").strip()
+    if not t:
+        return True
+    if t in {"未命名", "未命名书稿", "新书稿"}:
+        return True
+    if t.startswith("书稿") and t[2:].isdigit():
+        return True
+    return False
+
+
+def _apply_book_settings_patch(book: Book, patch: dict[str, Any]) -> None:
+    """Apply assistant book_settings_patch onto Book (shared 书稿设定)."""
+    if not patch:
+        return
+    title = patch.get("title")
+    if isinstance(title, str) and title.strip():
+        cleaned = title.strip()[:500]
+        # 允许：勾选优化书名，或当前仍是占位书名时由助手写入确认后的正式书名
+        if book.allow_title_optimization or _is_placeholder_title(book.title):
+            if cleaned and not _is_placeholder_title(cleaned):
+                book.title = cleaned
+
+    classified = False
+    bt = patch.get("book_type")
+    if isinstance(bt, str) and bt.strip().lower() in ("nonfiction", "academic"):
+        book.book_type = BookType(bt.strip().lower())
+        classified = True
+
+    st = patch.get("style_type")
+    if isinstance(st, str) and st.strip() in _VALID_STYLES:
+        book.style_type = st.strip()
+        classified = True
+
+    if classified:
+        # Align type↔style if assistant only patched one side
+        from app.services.writing.project_seed import _pair_type_and_style
+
+        paired_type, paired_style = _pair_type_and_style(
+            book.book_type.value if book.book_type else "",
+            book.style_type or "",
+            fallback_type=book.book_type or BookType.nonfiction,
+            fallback_style=book.style_type or "",
+        )
+        book.book_type = paired_type
+        book.style_type = paired_style
+        mark_classification_source(book, "assistant")
+
+    if patch.get("target_audience"):
+        book.target_audience = str(patch["target_audience"]).strip()[:500]
+
+    discs = patch.get("disciplines")
+    if isinstance(discs, list):
+        cleaned = [str(d).strip()[:100] for d in discs if str(d).strip()][:12]
+        if cleaned:
+            book.disciplines = cleaned
+            book.discipline = cleaned[0]
+
+    tags = patch.get("topic_tags")
+    if isinstance(tags, list):
+        cleaned_tags = [str(t).strip()[:80] for t in tags if str(t).strip()][:40]
+        if cleaned_tags:
+            book.topic_tags = cleaned_tags
+
+    if patch.get("topic_brief"):
+        book.topic_brief = str(patch["topic_brief"]).strip()[:20_000]
+
+    try:
+        words = int(patch.get("target_words") or 0)
+        if 10_000 <= words <= 500_000:
+            book.target_words = words
+    except (TypeError, ValueError):
+        pass
+
+    cs = patch.get("citation_style")
+    if isinstance(cs, str):
+        key = cs.strip().lower()
+        if key in ("none", "无", "无需"):
+            book.citation_style = None
+        elif key in {c.value for c in CitationStyle}:
+            book.citation_style = CitationStyle(key)
 
 
 class ProjectAssistantService:
@@ -57,7 +151,16 @@ class ProjectAssistantService:
             history_lines.append(f"用户：{turn.user_message[:1500]}")
             history_lines.append(f"助手：{turn.assistant_message[:1500]}")
         memory_block = self._memories.to_prompt_block(book.id, confirmed_only=True)
+        provisional = is_provisional_classification(book)
+        bt = book.book_type.value if book.book_type else "nonfiction"
+        st = book.style_type or "popular_science"
+        class_note = (
+            "仍为建书占位默认（大众非虚构/入门科普），必须按创作意图在 book_settings_patch 中改写为合适书类与体裁"
+            if provisional
+            else "已有分类结果；若本轮意图明显变更可再更新"
+        )
         return f"""书名：{book.title}
+当前书稿分类：一级={bt}，二级体裁={st}（{class_note}）
 当前写作依据：
 {json.dumps(basis_dict, ensure_ascii=False)[:6000]}
 
@@ -125,6 +228,30 @@ class ProjectAssistantService:
             clean_patch = {k: v for k, v in basis_patch.items() if v is not None}
             if clean_patch:
                 self._basis.patch(basis, clean_patch)
+
+        book_settings_patch = _as_dict(data.get("book_settings_patch"))
+        if book_settings_patch:
+            _apply_book_settings_patch(
+                book,
+                {k: v for k, v in book_settings_patch.items() if v is not None},
+            )
+
+        # Keep Book 书稿设定 in sync with basis so 项目要点 / 高级编辑 stay aligned
+        sync_book_fields_from_basis(book, basis)
+        self.db.flush()
+
+        # 创作意图已足够、书类仍为占位默认时：服务端按意图推断，避免一直停在大众非虚构
+        if chapter_index is None and is_provisional_classification(book):
+            seed = resolve_project_seed(book, self.db)
+            has_intent = len(seed.strip()) >= 40 or bool(
+                (basis.direction or "").strip() or (basis.depth or "").strip() or (basis.scope or "").strip()
+            )
+            if has_intent:
+                try:
+                    infer_and_apply_book_settings(book, model, self.db)
+                    self.db.flush()
+                except Exception:
+                    pass
 
         memory_updates = [
             item for item in _as_list(data.get("memory_updates")) if isinstance(item, dict)

@@ -6,8 +6,14 @@ import toast from "react-hot-toast";
 import { setupRecommend, updateBook } from "@/api/books";
 import { confirmReference, deleteReference, listReferences, uploadReference } from "@/api/references";
 import LiteraturePanel from "@/components/editor/LiteraturePanel";
+import {
+  usePatchWritingBasis,
+  useWritingBasis,
+} from "@/features/assistant/hooks/useWritingBasis";
+import { BASIS_SETUP_FIELDS } from "@/features/assistant/bookSettingsSpec";
+import type { WritingBasis } from "@/features/assistant/api/assistantApi";
 import { styleOptionsFor } from "@/lib/styleTypes";
-import type { Book, BookType, CitationStyle, StyleType } from "@/types/book";
+import type { Book, BookType, CitationStyle, SetupRecommendResult, StyleType } from "@/types/book";
 import type { FilePurpose, ReferenceFile } from "@/types/reference";
 
 const CITATION_OPTIONS: { value: CitationStyle; label: string }[] = [
@@ -75,6 +81,7 @@ const FILE_ACCEPT =
 
 const TARGET_WORDS_STEP = 5000;
 const TARGET_WORDS_MIN = 1000;
+type DisciplineCandidate = NonNullable<SetupRecommendResult["discipline_candidates"]>[number];
 
 type TouchedFields = {
   targetAudience: boolean;
@@ -90,20 +97,27 @@ export default function SetupView({
   onRegisterActions,
 }: Props) {
   const qc = useQueryClient();
+  const basisQuery = useWritingBasis(book.id);
+  const patchBasis = usePatchWritingBasis(book.id);
+  const [titleDraft, setTitleDraft] = useState(book.title ?? "");
   const [targetAudience, setTargetAudience] = useState("");
   const [disciplines, setDisciplines] = useState<string[]>([]);
   const [disciplineInput, setDisciplineInput] = useState("");
   const [citation, setCitation] = useState<CitationStyle | "">("");
   const [targetWords, setTargetWords] = useState(String(book.target_words ?? 80000));
   const [topicBrief, setTopicBrief] = useState("");
+  const [bookType, setBookType] = useState<BookType>(book.book_type);
   const [styleType, setStyleType] = useState<StyleType>("popular_science");
   const [topicTags, setTopicTags] = useState<string[]>([]);
   const [customTagInput, setCustomTagInput] = useState("");
   const [allowTitleOptimization, setAllowTitleOptimization] = useState(false);
   const [shareToLibrary, setShareToLibrary] = useState(false);
   const [savingMeta, setSavingMeta] = useState(false);
+  const [basisDraft, setBasisDraft] = useState<Partial<WritingBasis>>({});
 
   const [recommendedTags, setRecommendedTags] = useState<string[]>([]);
+  const [disciplineCandidates, setDisciplineCandidates] = useState<DisciplineCandidate[]>([]);
+  const [disciplineConfirmationNote, setDisciplineConfirmationNote] = useState("");
   const [recommendLoading, setRecommendLoading] = useState(false);
   const [recommendStale, setRecommendStale] = useState(false);
   const [recommendCacheKey, setRecommendCacheKey] = useState<string | null>(null);
@@ -116,13 +130,15 @@ export default function SetupView({
     citation: false,
   });
 
-  const styleOpts = styleOptionsFor(book.book_type);
-  const recommendInputKey = `${book.title}|${book.book_type}|${styleType}`;
+  const styleOpts = styleOptionsFor(bookType);
+  const recommendInputKey = `${book.title}|${bookType}|${styleType}`;
 
   useEffect(() => {
     const discs =
-      book.disciplines?.length ? [...book.disciplines] : book.discipline ? [book.discipline] : [];
+      book.disciplines?.length ? [...book.disciplines].slice(0, 3) : book.discipline ? [book.discipline] : [];
+    setTitleDraft(book.title ?? "");
     setDisciplines(discs);
+    setBookType(book.book_type);
     setCitation(book.citation_style ?? defaultCitationFor(book.book_type));
     setTargetWords(String(book.target_words ?? 80000));
     setStyleType(
@@ -133,24 +149,34 @@ export default function SetupView({
     setTopicBrief(book.topic_brief?.trim() ?? "");
     setAllowTitleOptimization(Boolean(book.allow_title_optimization));
     setTargetAudience(book.target_audience?.trim() ?? "");
+  }, [
+    book.id,
+    book.title,
+    book.target_audience,
+    book.discipline,
+    JSON.stringify(book.disciplines ?? null),
+    book.target_words,
+    book.book_type,
+    book.style_type,
+    JSON.stringify(book.topic_tags ?? null),
+    book.topic_brief,
+    book.citation_style,
+    book.allow_title_optimization,
+  ]);
 
-    const storedBrief = window.localStorage.getItem(topicKey(book.id));
-    const storedAud = window.localStorage.getItem(audienceKey(book.id));
-    if (!book.topic_brief?.trim() && storedBrief) {
-      setTopicBrief(storedBrief);
-      void updateBook(book.id, { topic_brief: storedBrief }).then((b) => {
-        onBookPatched(b);
-        window.localStorage.removeItem(topicKey(book.id));
-      });
-    }
-    if (!book.target_audience?.trim() && storedAud) {
-      setTargetAudience(storedAud);
-      void updateBook(book.id, { target_audience: storedAud }).then((b) => {
-        onBookPatched(b);
-        window.localStorage.removeItem(audienceKey(book.id));
-      });
-    }
-  }, [book.id]);
+  useEffect(() => {
+    const b = basisQuery.data;
+    if (!b) return;
+    setBasisDraft({
+      book_promise: b.book_promise ?? "",
+      reader_outcome: b.reader_outcome ?? "",
+      scope: b.scope ?? "",
+      depth: b.depth ?? "",
+      voice: b.voice ?? "",
+      must_avoid: b.must_avoid ?? [],
+      must_keep: b.must_keep ?? [],
+    });
+  }, [basisQuery.data]);
 
   useEffect(() => {
     if (recommendCacheKey && recommendCacheKey !== recommendInputKey) {
@@ -159,19 +185,16 @@ export default function SetupView({
   }, [recommendInputKey, recommendCacheKey]);
 
   const applyRecommendation = useCallback(
-    (rec: {
-      recommended_tags: string[];
-      target_audience: string;
-      disciplines: string[];
-      topic_brief: string;
-      cache_key: string;
-    }) => {
+    (rec: SetupRecommendResult) => {
       setRecommendedTags(rec.recommended_tags);
+      setDisciplineCandidates(rec.discipline_candidates ?? []);
+      setDisciplineConfirmationNote(rec.discipline_confirmation_note ?? "");
       setRecommendCacheKey(rec.cache_key);
       setRecommendStale(false);
+      // 仅用户点击「智能推荐」时写入；不覆盖已手动改过的字段
       const t = touchedRef.current;
       if (!t.targetAudience && rec.target_audience) setTargetAudience(rec.target_audience);
-      if (!t.disciplines && rec.disciplines.length) setDisciplines(rec.disciplines);
+      if (!t.disciplines && rec.disciplines.length) setDisciplines(rec.disciplines.slice(0, 3));
       if (!t.topicBrief && rec.topic_brief) setTopicBrief(rec.topic_brief);
     },
     [],
@@ -183,6 +206,7 @@ export default function SetupView({
       try {
         const rec = await setupRecommend(book.id, { force });
         applyRecommendation(rec);
+        toast.success("已生成推荐标签与要点，可点选标签并保存设定");
       } catch {
         toast.error("推荐生成失败，可手动填写后继续");
       } finally {
@@ -191,10 +215,6 @@ export default function SetupView({
     },
     [applyRecommendation, book.id],
   );
-
-  useEffect(() => {
-    void fetchRecommend(false);
-  }, [book.id]);
 
   function addRecommendedTag(tag: string) {
     if (topicTags.includes(tag)) return;
@@ -226,9 +246,24 @@ export default function SetupView({
       toast.error("该学科已存在");
       return;
     }
+    if (disciplines.length >= 3) {
+      toast.error("学科领域最多保留 3 个");
+      return;
+    }
     touchedRef.current.disciplines = true;
     setDisciplines((prev) => [...prev, d]);
     setDisciplineInput("");
+  }
+
+  function selectDisciplineCandidate(name: string) {
+    const d = name.trim().slice(0, 100);
+    if (!d || disciplines.includes(d)) return;
+    if (disciplines.length >= 3) {
+      toast.error("学科领域最多保留 3 个");
+      return;
+    }
+    touchedRef.current.disciplines = true;
+    setDisciplines((prev) => [...prev, d]);
   }
 
   function removeDiscipline(d: string) {
@@ -251,6 +286,8 @@ export default function SetupView({
     setSavingMeta(true);
     try {
       const next = await updateBook(book.id, {
+        title: titleDraft.trim() || book.title,
+        book_type: bookType,
         disciplines: disciplines.length ? disciplines : null,
         discipline: disciplines[0]?.trim() || null,
         target_audience: targetAudience.trim() || null,
@@ -262,6 +299,23 @@ export default function SetupView({
         allow_title_optimization: allowTitleOptimization,
       });
       onBookPatched(next);
+      const basisPatch: Partial<WritingBasis> = {
+        book_promise: String(basisDraft.book_promise ?? "").trim() || null,
+        reader_outcome: String(basisDraft.reader_outcome ?? "").trim() || null,
+        scope: String(basisDraft.scope ?? "").trim() || null,
+        depth: String(basisDraft.depth ?? "").trim() || null,
+        voice: String(basisDraft.voice ?? "").trim() || null,
+        must_avoid: Array.isArray(basisDraft.must_avoid) ? basisDraft.must_avoid : [],
+        must_keep: Array.isArray(basisDraft.must_keep) ? basisDraft.must_keep : [],
+        target_readers: targetAudience.trim() || null,
+        direction: topicBrief.trim() || null,
+      };
+      try {
+        await patchBasis.mutateAsync(basisPatch);
+        await qc.invalidateQueries({ queryKey: ["writingBasis", book.id] });
+      } catch {
+        /* Book 已保存；依据补丁失败不阻断 */
+      }
       toast.success("书稿设定已保存");
       return next;
     } catch (error) {
@@ -375,8 +429,16 @@ export default function SetupView({
           <h3 className="text-sm font-semibold text-ink">基础信息</h3>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <div className="text-sm md:col-span-2">
-              <span className="text-slate-600">书名</span>
-              <p className="mt-1 font-medium text-ink">{book.title || "未命名"}</p>
+              <label className="block">
+                <span className="text-slate-600">书名</span>
+                <input
+                  className="input mt-1"
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  maxLength={500}
+                  placeholder="书稿正式名称"
+                />
+              </label>
               <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
                 <input
                   type="checkbox"
@@ -392,10 +454,27 @@ export default function SetupView({
                   : null}
               </p>
             </div>
-            <div className="text-sm">
+            <label className="block text-sm">
               <span className="text-slate-600">一级分类</span>
-              <p className="mt-1 font-medium text-ink">{BOOK_TYPE_LABEL[book.book_type]}</p>
-            </div>
+              <select
+                className="input mt-1"
+                value={bookType}
+                onChange={(e) => {
+                  const next = e.target.value as BookType;
+                  setBookType(next);
+                  const opts = styleOptionsFor(next);
+                  if (!opts.some((o) => o.value === styleType)) {
+                    setStyleType(opts[0]?.value ?? (next === "academic" ? "textbook" : "popular_science"));
+                  }
+                }}
+              >
+                <option value="nonfiction">{BOOK_TYPE_LABEL.nonfiction}</option>
+                <option value="academic">{BOOK_TYPE_LABEL.academic}</option>
+              </select>
+              <p className="mt-1 text-[11px] text-slate-400">
+                新建时的「大众非虚构」只是占位；请按创作意图选择，或用项目要点「智能补齐设定」。
+              </p>
+            </label>
           </div>
         </section>
 
@@ -446,13 +525,15 @@ export default function SetupView({
                   onClick={() => void fetchRecommend(true)}
                 >
                   {recommendLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                  重新推荐
+                  {recommendedTags.length ? "重新推荐" : "智能推荐标签与要点"}
                 </button>
               </div>
               {recommendStale ? (
                 <p className="mt-1 text-[11px] text-amber-700">书名或分类已变更，推荐可能已过期。</p>
               ) : null}
-              <p className="mt-1 text-[11px] text-slate-400">根据书名与分类推荐，可随时调整。</p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                点击上方按钮才会根据书名与分类推断标签、读者与主题要点；不会在进入页面时自动填充。
+              </p>
 
               <p className="mt-3 text-xs font-medium text-slate-500">推荐标签</p>
               <div className="mt-2 flex min-h-[2rem] flex-wrap gap-2">
@@ -565,6 +646,39 @@ export default function SetupView({
                   添加
                 </button>
               </div>
+              {disciplineCandidates.length ? (
+                <div className="mt-3 space-y-2">
+                  <div className="text-xs text-slate-500">
+                    {disciplineConfirmationNote || "学科领域用于约束术语解释、证据标准和论证方式。"}
+                  </div>
+                  <div className="space-y-2">
+                    {disciplineCandidates.map((candidate) => {
+                      const selected = disciplines.includes(candidate.name);
+                      return (
+                        <button
+                          key={candidate.name}
+                          type="button"
+                          className={`w-full rounded-md border px-3 py-2 text-left text-xs ${
+                            selected
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                          }`}
+                          onClick={() => selectDisciplineCandidate(candidate.name)}
+                          disabled={selected}
+                        >
+                          <span className="font-medium">{candidate.name}</span>
+                          {candidate.reason ? (
+                            <span className="mt-1 block leading-relaxed text-slate-500">{candidate.reason}</span>
+                          ) : null}
+                          {candidate.ambiguity_note ? (
+                            <span className="mt-1 block leading-relaxed text-amber-700">{candidate.ambiguity_note}</span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
             </div>
             <label className="block text-sm md:max-w-md">
               <span className="text-slate-600">全书目标字数</span>
@@ -631,6 +745,43 @@ export default function SetupView({
             }}
             placeholder="希望全书覆盖哪些论点、案例类型、语气风格等…"
           />
+        </section>
+
+        <section className="p-5">
+          <h3 className="text-sm font-semibold text-ink">策划细节</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            与项目启动助手「项目要点」同一结构；助手对话会自动同步到这里。
+          </p>
+          <div className="mt-4 space-y-3">
+            {BASIS_SETUP_FIELDS.map((f) => {
+              const isList = "list" in f && f.list;
+              const value = isList
+                ? ((basisDraft[f.key as keyof WritingBasis] as string[] | undefined) ?? []).join("\n")
+                : String(basisDraft[f.key as keyof WritingBasis] ?? "");
+              return (
+                <label key={f.key} className="block text-sm">
+                  <span className="text-slate-600">{f.label}</span>
+                  <textarea
+                    className="input mt-1 min-h-[64px]"
+                    value={value}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setBasisDraft((prev) => ({
+                        ...prev,
+                        [f.key]: isList
+                          ? raw
+                              .split("\n")
+                              .map((x) => x.trim())
+                              .filter(Boolean)
+                          : raw,
+                      }));
+                    }}
+                    placeholder={isList ? "每行一条" : undefined}
+                  />
+                </label>
+              );
+            })}
+          </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"

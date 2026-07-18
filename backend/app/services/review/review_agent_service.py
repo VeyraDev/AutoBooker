@@ -15,6 +15,7 @@ from app.models.review_task import ReviewTask, ReviewTaskGoal, ReviewTaskScope, 
 from app.services.citation_service import is_bibliography_chapter
 from app.services.review.format_column_reviewer import run_format_column_review
 from app.services.review.objective_checks import run_objective_checks
+from app.services.review.quality_reviewers import run_book_quality_review
 from app.services.review.review_finding_validator import classify_product_dimension, enrich_finding_metadata
 from app.services.review_stage.review_finding_service import ReviewFindingService
 from app.services.review_stage.review_stage_service import ReviewStageService
@@ -170,6 +171,33 @@ class ReviewAgentService:
                 source_ref=context_ref,
                 context_snapshot=snap,
             )
+
+        quality_findings = run_book_quality_review(book, chapters, snap)
+        if quality_findings:
+            writing_quality_items = [
+                f
+                for f in quality_findings
+                if str(f.get("product_dimension") or "") in {"argument_quality", "structure_progress", "goal_alignment", "language_credibility"}
+            ]
+            publication_items = [f for f in quality_findings if f not in writing_quality_items]
+            if writing_quality_items:
+                self.findings.persist_batch(
+                    run_id=run.id,
+                    book_id=book.id,
+                    track=ReviewTrack.writing_quality,
+                    items=writing_quality_items,
+                    source_ref=context_ref,
+                    context_snapshot=snap,
+                )
+            if publication_items:
+                self.findings.persist_batch(
+                    run_id=run.id,
+                    book_id=book.id,
+                    track=ReviewTrack.publication_standard,
+                    items=publication_items,
+                    source_ref=context_ref,
+                    context_snapshot=snap,
+                )
 
         wq = ReviewStageService(self.db).wq.aggregate(book.id)
         run.writing_quality_status = ReviewStageStatus(wq["status"])

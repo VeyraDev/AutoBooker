@@ -11,13 +11,12 @@ from app.agents.document_parser import DocumentParserAgent
 from app.agents.literature_agent import LiteratureAgent
 from app.agents.outline_agent import OutlineAgent
 from app.database import SessionLocal
-from app.llm.client import LLMClient
 from app.llm.providers import (
     resolve_book_constitution_model,
     resolve_book_outline_model,
     resolve_book_writing_model,
 )
-from app.models.book import Book, BookStatus, CitationStyle
+from app.models.book import Book, BookStatus
 from app.models.book_job import BookJob, BookJobStatus, BookJobStep
 from app.models.chapter import Chapter, ChapterStatus
 from app.models.notification import Notification, NotificationType
@@ -27,7 +26,7 @@ from app.services.auto_book_job_progress import patch_job_checkpoint
 from app.services.citation_service import create_citation_from_paper
 from app.services.literature_query_refiner import refine_literature_query
 from app.services.preface_service import get_preface, set_preface
-from app.utils.json_llm import parse_llm_json
+from app.services.writing.project_seed import infer_and_apply_book_settings
 
 logger = logging.getLogger(__name__)
 
@@ -68,64 +67,6 @@ def _notify(db, user_id: UUID, title: str, body: str, payload: dict | None = Non
     db.commit()
 
 
-def _infer_book_settings(book: Book, model: str, db=None) -> None:
-    client = LLMClient()
-    seed = book.title
-    if db is not None:
-        from app.models.intake import IntakeStatus, ProjectIntake
-
-        intake = (
-            db.query(ProjectIntake)
-            .filter(
-                ProjectIntake.book_id == book.id,
-                ProjectIntake.status != IntakeStatus.superseded,
-            )
-            .order_by(ProjectIntake.created_at.desc())
-            .first()
-        )
-        if intake and (intake.raw_goal_text or "").strip():
-            seed = intake.raw_goal_text.strip()[:4000]
-    if (book.topic_brief or "").strip():
-        seed = f"{seed}\n{(book.topic_brief or '').strip()[:2000]}"
-    prompt = f"""根据用户创作意图推断书稿基础设定，输出 JSON：
-{{"target_audience":"...", "topic_tags":["..."], "citation_style":"apa|gb_t7714|none", "topic_brief":"选题要点，非用户资料"}}
-创作意图：
-{seed}
-类型：{book.book_type.value}
-体裁：{book.style_type or ''}
-学科：{book.discipline or ''}"""
-    out = client.chat_completion(
-        [{"role": "system", "content": "只输出 JSON"}, {"role": "user", "content": prompt}],
-        model=model,
-        max_tokens=1024,
-        temperature=0.3,
-    )
-    data = parse_llm_json(out)
-    if not book.target_audience:
-        book.target_audience = str(data.get("target_audience") or "对相关主题感兴趣的读者")[:500]
-    if not book.topic_tags:
-        tags = data.get("topic_tags") or []
-        book.topic_tags = [str(t)[:50] for t in tags][:8] if isinstance(tags, list) else []
-    if not book.citation_style:
-        cs = str(data.get("citation_style") or "apa").lower()
-        if cs in ("none", "无", "无需"):
-            book.citation_style = None
-        elif cs == "gb_t7714":
-            book.citation_style = CitationStyle.gb_t7714
-        else:
-            book.citation_style = CitationStyle.apa
-    brief = str(data.get("topic_brief") or "").strip()
-    if brief and not (book.topic_brief or "").strip():
-        book.topic_brief = brief[:3000]
-    import hashlib
-
-    book.ai_inferred_settings = {
-        "topic_brief": brief[:3000],
-        "inferred_at": datetime.now(timezone.utc).isoformat(),
-        "input_hash": hashlib.sha256(f"{book.title}|{book.book_type}|{book.style_type}".encode()).hexdigest(),
-    }
-
-
 def _maybe_apply_outline_title(book: Book, outline: dict) -> None:
     if not book.allow_title_optimization:
         return
@@ -163,16 +104,16 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
 
         _update_job(db, job, step=BookJobStep.setting, pct=10)
         patch_job_checkpoint(db, job, stage_message="正在推断书稿设定")
-        _infer_book_settings(book, writing_model, db)
+        project_seed = infer_and_apply_book_settings(book, writing_model, db)
         db.commit()
 
         _update_job(db, job, step=BookJobStep.literature, pct=25)
         patch_job_checkpoint(db, job, stage_message="正在规划参考文献")
-        refined = refine_literature_query(db, book, raw_query=book.title)
-        queries = refined.get("refined_queries") or [book.title]
+        refined = refine_literature_query(db, book, raw_query=project_seed)
+        queries = refined.get("refined_queries") or [project_seed[:200]]
         agent = LiteratureAgent()
         profile = book.style_type or "popular_science"
-        tabbed = agent.search_tabbed(queries, profile, rows=15, raw_query=book.title)
+        tabbed = agent.search_tabbed(queries, profile, rows=15, raw_query=project_seed[:500])
         for paper in (tabbed.get("papers") or [])[:8]:
             try:
                 create_citation_from_paper(db, book, paper)
@@ -185,21 +126,40 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
         book.status = BookStatus.outline_generating
         db.commit()
         parser = DocumentParserAgent(db, book.id)
-        snippets = parser.retrieve(book.title, top_k=5)
+        snippets = parser.retrieve(project_seed[:500], top_k=5)
         from app.services.material_parse_service import get_book_level_writing_rules, get_primary_outline_for_book
+        from app.services.sources.source_outline_bridge import (
+            materials_from_outline_contract,
+            merge_primary_outline,
+        )
 
+        source_mats = materials_from_outline_contract(db, book)
+        outline_topic = (book.topic_brief or "").strip() or project_seed[:500]
+        primary_outline = merge_primary_outline(
+            get_primary_outline_for_book(db, book.id),
+            source_mats.get("parsed_primary_outline"),
+        )
+        writing_rules = list(get_book_level_writing_rules(db, book.id))
+        for rule in source_mats.get("source_writing_rules") or []:
+            if rule and rule not in writing_rules:
+                writing_rules.append(rule)
         cfg = {
             "book_type": book.book_type.value,
             "style_type": book.style_type,
-            "topic": book.title,
+            "topic": outline_topic,
             "target_audience": book.target_audience or "大众读者",
             "target_words": book.target_words or 80000,
             "citation_style": book.citation_style.value if book.citation_style else "无需引用",
             "discipline": book.discipline,
             "topic_tags": list(book.topic_tags or []),
-            "topic_brief": (book.topic_brief or "").strip() or None,
-            "primary_outline": get_primary_outline_for_book(db, book.id),
-            "writing_rules": get_book_level_writing_rules(db, book.id),
+            "topic_brief": (book.topic_brief or "").strip() or project_seed[:3000],
+            "primary_outline": primary_outline,
+            "writing_rules": writing_rules[:40],
+            "source_outline_blocks": source_mats.get("source_outline_blocks") or [],
+            "source_requirement_blocks": source_mats.get("source_requirement_blocks") or [],
+            "source_manuscript_blocks": source_mats.get("source_manuscript_blocks") or [],
+            "source_reference_outline_blocks": source_mats.get("source_reference_outline_blocks") or [],
+            "outline_contract": source_mats.get("contract"),
         }
         from app.services.writing.writing_context_builder import WritingContextBuilder
 
@@ -239,6 +199,12 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
             pf["status"] = "ready"
             set_preface(book, pf)
         n_chapters = len(outline.get("chapters") or [])
+        try:
+            from app.services.writing.format_strategy_service import FormatStrategyService
+
+            FormatStrategyService(db).apply_after_outline(book, force=True)
+        except Exception:
+            logger.exception("format strategy apply_after_outline failed job=%s", job_id)
         patch_job_checkpoint(
             db,
             job,

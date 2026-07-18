@@ -31,6 +31,10 @@ class WorkspaceFindingOut(BaseModel):
     validation_passed: bool = True
     filter_reason: str | None = None
     why_it_matters: str | None = None
+    verification_status: str | None = None
+    action_options: list[dict] = Field(default_factory=list)
+    fix_capability: str | None = None
+    prefer_evidence_binding: bool = False
 
 
 class ReviewTaskOut(BaseModel):
@@ -53,6 +57,7 @@ class ReviewWorkspaceSummaryOut(BaseModel):
     must_fix_count: int = 0
     suggest_count: int = 0
     observe_count: int = 0
+    needs_verification_count: int = 0
     open_count: int = 0
     run_status: str | None = None
     by_chapter: dict[str, int] = Field(default_factory=dict)
@@ -84,6 +89,7 @@ class WorkspaceFindingPatchIn(BaseModel):
 class WorkspaceFindingApplyIn(BaseModel):
     replacement_text: str | None = None
     action_type: str = "replace"
+    action_option_id: str | None = None
 
 
 class WorkspaceFindingApplyOut(BaseModel):
@@ -101,6 +107,25 @@ class WorkspaceFindingApplyOut(BaseModel):
     char_end: int | None = None
     paragraph_index: int | None = None
     paragraph_id: str | None = None
+
+
+class WorkspaceFindingBatchPreviewIn(BaseModel):
+    finding_ids: list[UUID] = Field(default_factory=list)
+    limit: int = Field(default=10, ge=1, le=20)
+
+
+class WorkspaceFindingBatchSkippedOut(BaseModel):
+    finding_id: UUID
+    reason: str
+    title: str | None = None
+
+
+class WorkspaceFindingBatchPreviewOut(BaseModel):
+    requested_count: int = 0
+    previewed_count: int = 0
+    skipped_count: int = 0
+    items: list[WorkspaceFindingApplyOut] = Field(default_factory=list)
+    skipped: list[WorkspaceFindingBatchSkippedOut] = Field(default_factory=list)
 
 
 class FindingHistoryItemOut(BaseModel):

@@ -34,6 +34,7 @@ class BookCreate(BaseModel):
 
 class BookUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=500)
+    book_type: BookType | None = None
     discipline: str | None = Field(default=None, max_length=100)
     disciplines: list[str] | None = None
     target_audience: str | None = Field(default=None, max_length=2000)
@@ -63,7 +64,7 @@ class BookUpdate(BaseModel):
         if v is None:
             return None
         out: list[str] = []
-        for d in v[:12]:
+        for d in v[:3]:
             s = (d or "").strip()[:100]
             if s and s not in out:
                 out.append(s)
@@ -102,12 +103,20 @@ class SetupRecommendIn(BaseModel):
     force: bool = False
 
 
+class DisciplineCandidateOut(BaseModel):
+    name: str
+    reason: str = ""
+    ambiguity_note: str = ""
+
+
 class SetupRecommendOut(BaseModel):
     from_cache: bool = False
     cache_key: str
     recommended_tags: list[str] = Field(default_factory=list)
     target_audience: str = ""
     disciplines: list[str] = Field(default_factory=list)
+    discipline_candidates: list[DisciplineCandidateOut] = Field(default_factory=list)
+    discipline_confirmation_note: str = ""
     topic_brief: str = ""
 
 

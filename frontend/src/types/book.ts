@@ -72,6 +72,7 @@ export interface BookCreatePayload {
 
 export interface BookUpdatePayload {
   title?: string;
+  book_type?: BookType;
   discipline?: string | null;
   disciplines?: string[] | null;
   target_audience?: string | null;
@@ -90,5 +91,11 @@ export interface SetupRecommendResult {
   recommended_tags: string[];
   target_audience: string;
   disciplines: string[];
+  discipline_candidates?: Array<{
+    name: string;
+    reason?: string;
+    ambiguity_note?: string;
+  }>;
+  discipline_confirmation_note?: string;
   topic_brief: string;
 }

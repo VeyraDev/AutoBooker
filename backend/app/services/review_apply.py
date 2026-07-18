@@ -105,6 +105,7 @@ def apply_review_issue_text(
     suggestion: str,
     detail: str = "",
     context: str = "",
+    forbid_vague_ratio_rewrite: bool = False,
 ) -> tuple[str, str]:
     """
     返回 (result_text, preview_kind)。
@@ -114,6 +115,9 @@ def apply_review_issue_text(
     q = (quote or "").strip()
     sug = (suggestion or "").strip()
     ctx = (context or "").strip()[:12000]
+
+    if act == "choose":
+        raise ValueError("请先选择处理方式后再应用")
 
     if act == "delete":
         validate_replacement_text(act, "")
@@ -130,7 +134,15 @@ def apply_review_issue_text(
         if sug and not _looks_like_instruction(sug):
             validate_replacement_text(act, sug)
             return sug, "insert"
-        text = _llm_edit(book, chat_model, q, sug or detail, ctx, mode="insert")
+        text = _llm_edit(
+            book,
+            chat_model,
+            q,
+            sug or detail,
+            ctx,
+            mode="insert",
+            forbid_vague_ratio_rewrite=forbid_vague_ratio_rewrite,
+        )
         validate_replacement_text(act, text)
         return text, "insert"
 
@@ -138,7 +150,17 @@ def apply_review_issue_text(
     instr = sug or detail
     if not q:
         raise ValueError("revise 类型需要可定位的原文片段 quote")
-    text = _llm_edit(book, chat_model, q, instr, ctx, mode="revise")
+    if forbid_vague_ratio_rewrite and not sug:
+        raise ValueError("数据类问题缺少处理说明，拒绝空泛自动改写")
+    text = _llm_edit(
+        book,
+        chat_model,
+        q,
+        instr,
+        ctx,
+        mode="revise",
+        forbid_vague_ratio_rewrite=forbid_vague_ratio_rewrite,
+    )
     validate_replacement_text("replace", text)
     return text, "replace"
 
@@ -159,12 +181,20 @@ def _llm_edit(
     context: str,
     *,
     mode: str,
+    forbid_vague_ratio_rewrite: bool = False,
 ) -> str:
     client = LLMClient()
+    ban = ""
+    if forbid_vague_ratio_rewrite:
+        ban = (
+            "\n严禁把具体数字改成「相当比例」「同样不低」「不少」「很大一部分」等空泛套话；"
+            "要么保留数字并加来源限定，要么用仍含信息的定性描述替换。"
+        )
     if mode == "insert":
         system = (
             "你是专业中文编辑。根据审校说明，在【锚点原文】附近写出一小段应插入正文的文字。"
             "只输出要插入的完整句子或短段，不要解释、不要「改为：」前缀。"
+            + ban
         )
         user = (
             f"插入说明：{instruction}\n\n"
@@ -175,6 +205,7 @@ def _llm_edit(
         system = (
             "你是专业中文编辑。根据审校说明改写【待改原文】。"
             "只输出改写后的完整正文片段，可直接替换原文，不要解释或「改为：」前缀。"
+            + ban
         )
         user = (
             f"修改说明：{instruction}\n\n"

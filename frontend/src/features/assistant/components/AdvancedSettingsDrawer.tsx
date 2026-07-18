@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import SetupView from "@/components/editor/SetupView";
@@ -13,6 +14,13 @@ type Props = {
 export default function AdvancedSettingsDrawer({ open, book, onClose }: Props) {
   const qc = useQueryClient();
 
+  useEffect(() => {
+    if (!open) return;
+    // 打开时拉取助手刚同步的 Book / WritingBasis，避免高级编辑仍是旧设定
+    void qc.invalidateQueries({ queryKey: ["book", book.id] });
+    void qc.invalidateQueries({ queryKey: ["writingBasis", book.id] });
+  }, [open, book.id, qc]);
+
   if (!open) return null;
 
   return (
@@ -22,9 +30,17 @@ export default function AdvancedSettingsDrawer({ open, book, onClose }: Props) {
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>
             <h2 className="text-base font-medium text-ink">高级编辑</h2>
-            <p className="text-xs text-slate-500">书名、读者、体裁、字数、引用与资料等</p>
+            <p className="text-xs text-slate-500">与项目要点同一套书稿设定；含书名、读者、体裁、策划细节与资料</p>
           </div>
-          <button type="button" onClick={onClose} className="rounded p-1 text-slate-500 hover:bg-slate-100">
+          <button
+            type="button"
+            onClick={() => {
+              void qc.invalidateQueries({ queryKey: ["book", book.id] });
+              void qc.invalidateQueries({ queryKey: ["writingBasis", book.id] });
+              onClose();
+            }}
+            className="rounded p-1 text-slate-500 hover:bg-slate-100"
+          >
             <X className="h-5 w-5" />
           </button>
         </div>

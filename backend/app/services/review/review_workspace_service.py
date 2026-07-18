@@ -14,6 +14,7 @@ from app.models.review_task import ReviewTask
 from app.services.citation_service import is_bibliography_chapter
 from app.services.review.review_agent_service import ReviewAgentService
 from app.services.review.review_finding_validator import severity_to_tier
+from app.services.review.review_preference_memory import record_review_preference
 from app.services.review.review_rule_library import match_basis_refs
 from app.services.review_stage.review_finding_service import ReviewFindingService
 from app.services.writing.writing_context_builder import WritingContextBuilder
@@ -33,6 +34,22 @@ def _book_finding_status(row: BookReviewFinding) -> str:
 def _issue_meta(issue: ChapterReviewIssue) -> dict:
     ev = issue.quality_evidence if isinstance(issue.quality_evidence, dict) else {}
     return ev
+
+
+def _batch_preview_skip_reason(issue: ChapterReviewIssue) -> str | None:
+    if _chapter_issue_status(issue) != "open":
+        return "not_open"
+    meta = _issue_meta(issue)
+    if meta.get("fix_capability") != "preview_apply":
+        return "not_preview_apply"
+    if not (
+        issue.char_start is not None
+        or issue.paragraph_id
+        or issue.paragraph_index is not None
+        or (issue.quote or "").strip()
+    ):
+        return "not_locatable"
+    return None
 
 
 def _book_meta(row: BookReviewFinding) -> dict:
@@ -88,12 +105,15 @@ class ReviewWorkspaceService:
             "source": "chapter",
             "chapter_index": ch.index if ch else None,
             "chapter_title": ch.title if ch else None,
-            "tier": severity_to_tier(issue.severity),
+            "tier": severity_to_tier(
+                issue.severity,
+                verification_status=(meta.get("verification_status") if isinstance(meta, dict) else None),
+            ),
             "status": _chapter_issue_status(issue),
             "title": issue.title or "",
             "detail": issue.explanation or "",
             "quote": issue.quote or None,
-            "suggestion": issue.replacement_text or issue.explanation or None,
+            "suggestion": issue.replacement_text or None,
             "basis_refs": basis,
             "category": issue.issue_type,
             "track": None,
@@ -106,7 +126,11 @@ class ReviewWorkspaceService:
             "task_id": meta.get("task_id"),
             "validation_passed": meta.get("validation_passed", True),
             "filter_reason": meta.get("filter_reason"),
-            "why_it_matters": meta.get("why_it_matters") or issue.explanation,
+            "why_it_matters": meta.get("why_it_matters") or None,
+            "verification_status": meta.get("verification_status"),
+            "action_options": meta.get("action_options") or [],
+            "fix_capability": meta.get("fix_capability"),
+            "prefer_evidence_binding": bool(meta.get("prefer_evidence_binding")),
         }
 
     def _book_finding_to_dto(self, row: BookReviewFinding, snap: dict) -> dict:
@@ -122,12 +146,15 @@ class ReviewWorkspaceService:
             "source": "book",
             "chapter_index": ref.get("chapter_index"),
             "chapter_title": None,
-            "tier": severity_to_tier(row.severity),
+            "tier": severity_to_tier(
+                row.severity,
+                verification_status=ref.get("verification_status"),
+            ),
             "status": _book_finding_status(row),
             "title": row.title or "",
             "detail": row.detail or "",
             "quote": ref.get("quote"),
-            "suggestion": row.suggestion or row.detail or None,
+            "suggestion": row.suggestion or None,
             "basis_refs": basis,
             "category": row.category,
             "track": row.track.value if hasattr(row.track, "value") else str(row.track),
@@ -140,7 +167,11 @@ class ReviewWorkspaceService:
             "task_id": ref.get("task_id"),
             "validation_passed": ref.get("validation_passed", True),
             "filter_reason": ref.get("filter_reason"),
-            "why_it_matters": ref.get("why_it_matters") or row.detail,
+            "why_it_matters": ref.get("why_it_matters") or None,
+            "verification_status": ref.get("verification_status"),
+            "action_options": ref.get("action_options") or [],
+            "fix_capability": ref.get("fix_capability"),
+            "prefer_evidence_binding": bool(ref.get("prefer_evidence_binding")),
         }
 
     def list_findings(
@@ -202,6 +233,7 @@ class ReviewWorkspaceService:
         must_fix = sum(1 for f in findings if f["tier"] == "must_fix")
         suggest = sum(1 for f in findings if f["tier"] == "suggest")
         observe = sum(1 for f in findings if f["tier"] == "observe")
+        needs_verification = sum(1 for f in findings if f["tier"] == "needs_verification")
         by_chapter: dict[str, int] = {}
         for f in findings:
             if f["tier"] != "must_fix":
@@ -222,6 +254,7 @@ class ReviewWorkspaceService:
             "must_fix_count": must_fix,
             "suggest_count": suggest,
             "observe_count": observe,
+            "needs_verification_count": needs_verification,
             "open_count": len(findings),
             "run_status": run_status,
             "by_chapter": by_chapter,
@@ -278,6 +311,17 @@ class ReviewWorkspaceService:
             row = ReviewFindingService(self.db).update_status(finding_id, book_id, mapped)
             if not row:
                 return None
+            if status in {"dismissed", "resolved"}:
+                ref = _book_meta(row)
+                track_value = row.track.value if hasattr(row.track, "value") else row.track
+                record_review_preference(
+                    self.db,
+                    book_id,
+                    decision="dismissed" if status == "dismissed" else "accepted",
+                    product_dimension=ref.get("product_dimension") or track_value,
+                    issue_type=row.category,
+                    fix_capability=ref.get("fix_capability"),
+                )
             snap = self._context_snapshot(book_id)
             return self._book_finding_to_dto(row, snap)
 
@@ -297,6 +341,16 @@ class ReviewWorkspaceService:
                 from datetime import datetime, timezone
 
                 issue.resolved_at = datetime.now(timezone.utc)
+            if status in {"dismissed", "resolved"}:
+                meta = _issue_meta(issue)
+                record_review_preference(
+                    self.db,
+                    book_id,
+                    decision="dismissed" if status == "dismissed" else "accepted",
+                    product_dimension=meta.get("product_dimension") or issue.dimension,
+                    issue_type=issue.issue_type,
+                    fix_capability=meta.get("fix_capability"),
+                )
         self.db.flush()
         snap = self._context_snapshot(book_id)
         chapters = self._chapter_map(book_id)
@@ -359,6 +413,73 @@ class ReviewWorkspaceService:
             for a in apps
         ]
 
+    def _preview_figure_table_fix(
+        self,
+        book: Book,
+        ch: Chapter,
+        review,
+        issue: ChapterReviewIssue,
+        current_md: str,
+    ) -> dict:
+        from app.repositories import review_repository
+        from app.services.chapter_figure_table_normalize import normalize_chapter_figures_tables
+        from app.services.review_anchor import build_text_diff, canonical_markdown, snapshot_hash
+        from app.services.review_scoring import affected_dimensions
+
+        content = ch.content if isinstance(ch.content, dict) else {}
+        tiptap = content.get("tiptap_json") if isinstance(content, dict) else None
+        if not isinstance(tiptap, dict):
+            raise ValueError("章节无 TipTap 内容可排序，请先保存章节正文后重试")
+
+        before_md = canonical_markdown(current_md)
+        result = normalize_chapter_figures_tables(
+            book.id,
+            ch.index,
+            tiptap,
+            self.db,
+            book=book,
+            persist=False,
+        )
+        after_md = canonical_markdown(str(result.get("text") or ""))
+        before_hash = snapshot_hash(before_md)
+        after_hash = snapshot_hash(after_md)
+        if not after_md or before_hash == after_hash:
+            raise ValueError("图表排序预览未产生可应用修改")
+
+        diff = build_text_diff(before_md, after_md)
+        affected = affected_dimensions(issue.issue_type, issue.dimension)
+        app = review_repository.create_application(
+            self.db,
+            issue=issue,
+            review=review,
+            chapter_id=ch.id,
+            before_hash=before_hash,
+            after_hash=after_hash,
+            apply_type="normalize_figure_table_order",
+            locator_strategy="figure_table_normalize",
+            locator_confidence=0.95,
+            diff=diff,
+            affected_dimensions=affected,
+            score_before={"total_score": review.total_score, "dimensions": review.dimensions},
+        )
+        self.db.flush()
+        return {
+            "issue_id": str(issue.id),
+            "application_id": str(app.id),
+            "quote": issue.quote or "",
+            "result_text": str(diff.get("after") or ""),
+            "result_markdown": after_md,
+            "preview_kind": "replace",
+            "preview_required": True,
+            "stale": before_hash != issue.snapshot_hash,
+            "locator_strategy": "figure_table_normalize",
+            "locator_confidence": 0.95,
+            "char_start": diff.get("char_start"),
+            "char_end": diff.get("char_end"),
+            "paragraph_index": issue.paragraph_index,
+            "paragraph_id": issue.paragraph_id,
+        }
+
     def apply_finding(
         self,
         book: Book,
@@ -367,11 +488,14 @@ class ReviewWorkspaceService:
         chat_model: str,
         replacement_text: str | None = None,
         action_type: str | None = None,
+        action_option_id: str | None = None,
     ) -> dict:
-        from datetime import datetime, timezone
-
         from app.models.chapter_review import ChapterReview
         from app.repositories import review_repository
+        from app.services.review.data_evidence_policy import (
+            DATA_ACTION_OPTIONS,
+            is_data_evidence_issue,
+        )
         from app.services.review_apply import apply_review_issue_text, preview_issue_application
         from app.services.review_scoring import affected_dimensions
         from app.services.tiptap_convert import chapter_content_to_markdown
@@ -388,7 +512,37 @@ class ReviewWorkspaceService:
 
         content = ch.content if isinstance(ch.content, dict) else None
         current_md = chapter_content_to_markdown(content)
+        meta = issue.quality_evidence if isinstance(issue.quality_evidence, dict) else {}
+        fix_capability = str(meta.get("fix_capability") or "").strip()
+        if fix_capability in {"manual_only", "observe_only"}:
+            raise ValueError("该问题不支持自动生成修改预览，请人工处理或仅作观察")
+        if fix_capability == "choice_then_apply" and not (action_option_id or (replacement_text or "").strip()):
+            raise ValueError("该问题需要先选择处理方式，再生成修改预览")
+        if issue.issue_type == "figure_table_numbering":
+            return self._preview_figure_table_fix(book, ch, review, issue, current_md)
+        finding_probe = {
+            "issue_type": issue.issue_type,
+            "dimension": issue.dimension,
+            "title": issue.title,
+            "detail": issue.explanation,
+            "quote": issue.quote,
+            "product_dimension": meta.get("product_dimension"),
+        }
+
+        option_instruction = None
         act = (action_type or issue.action or "replace").strip().lower()
+        if action_option_id:
+            options = meta.get("action_options") or DATA_ACTION_OPTIONS
+            chosen = next((o for o in options if str(o.get("id")) == action_option_id), None)
+            if not chosen:
+                chosen = next((o for o in DATA_ACTION_OPTIONS if o["id"] == action_option_id), None)
+            if not chosen:
+                raise ValueError(f"未知处理方式：{action_option_id}")
+            if action_option_id == "add_source":
+                raise ValueError("请先在文献搜索中绑定来源，或手动插入（来源：机构，年份）标注后再应用")
+            act = str(chosen.get("action_type") or "revise")
+            option_instruction = str(chosen.get("instruction") or chosen.get("description") or "")
+
         preview_kind = "replace"
         if replacement_text is not None and replacement_text.strip():
             replacement = replacement_text.strip()
@@ -397,15 +551,21 @@ class ReviewWorkspaceService:
             preview_kind = "delete"
         elif act == "replace" and (issue.replacement_text or "").strip():
             replacement = issue.replacement_text.strip()
+        elif is_data_evidence_issue(finding_probe) and not option_instruction and act in {"revise", "choose", ""}:
+            raise ValueError(
+                "数据/事实类问题请先选择处理方式：补充来源、保留为估算、或删除精确比例；"
+                "系统不会自动改成空泛比例表述。"
+            )
         else:
             replacement, preview_kind = apply_review_issue_text(
                 book=book,
                 chat_model=chat_model,
-                action_type=act,
+                action_type=act if act != "choose" else "revise",
                 quote=issue.quote or "",
-                suggestion=issue.replacement_text or "",
+                suggestion=option_instruction or issue.replacement_text or "",
                 detail=issue.explanation or "",
                 context=current_md[:12000],
+                forbid_vague_ratio_rewrite=is_data_evidence_issue(finding_probe),
             )
 
         preview = preview_issue_application(
@@ -434,8 +594,6 @@ class ReviewWorkspaceService:
             affected_dimensions=affected,
             score_before={"total_score": review.total_score, "dimensions": review.dimensions},
         )
-        issue.applied_at = datetime.now(timezone.utc)
-        issue.status = "open"
         self.db.flush()
         return {
             "issue_id": str(issue.id),
@@ -452,4 +610,52 @@ class ReviewWorkspaceService:
             "char_end": preview["char_end"],
             "paragraph_index": preview["paragraph_index"],
             "paragraph_id": preview["paragraph_id"],
+        }
+
+    def batch_preview_findings(
+        self,
+        book: Book,
+        finding_ids: list[UUID],
+        *,
+        chat_model: str,
+        limit: int = 10,
+    ) -> dict:
+        requested = list(dict.fromkeys(finding_ids))
+        capped = max(1, min(int(limit or 10), 20))
+        items: list[dict] = []
+        skipped: list[dict] = []
+
+        for idx, finding_id in enumerate(requested):
+            if idx >= capped:
+                skipped.append({"finding_id": finding_id, "reason": "over_limit", "title": None})
+                continue
+            issue = self.db.get(ChapterReviewIssue, finding_id)
+            if not issue:
+                skipped.append({"finding_id": finding_id, "reason": "not_found", "title": None})
+                continue
+            ch = self.db.get(Chapter, issue.chapter_id)
+            if not ch or ch.book_id != book.id:
+                skipped.append({"finding_id": finding_id, "reason": "not_found", "title": issue.title})
+                continue
+            reason = _batch_preview_skip_reason(issue)
+            if reason:
+                skipped.append({"finding_id": finding_id, "reason": reason, "title": issue.title})
+                continue
+            try:
+                items.append(
+                    self.apply_finding(
+                        book,
+                        finding_id,
+                        chat_model=chat_model,
+                    )
+                )
+            except ValueError as exc:
+                skipped.append({"finding_id": finding_id, "reason": str(exc), "title": issue.title})
+
+        return {
+            "requested_count": len(requested),
+            "previewed_count": len(items),
+            "skipped_count": len(skipped),
+            "items": items,
+            "skipped": skipped,
         }

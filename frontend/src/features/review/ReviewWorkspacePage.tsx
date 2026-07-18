@@ -10,6 +10,7 @@ import ReviewFindingDetail from "@/features/review/ReviewFindingDetail";
 import ReviewFindingList from "@/features/review/ReviewFindingList";
 import ReviewScopeNav from "@/features/review/ReviewScopeNav";
 import {
+  batchPreviewReviewWorkspaceFindings,
   getReviewWorkspaceSummary,
   listReviewWorkspaceFindings,
   runCustomReview,
@@ -55,7 +56,7 @@ export default function ReviewWorkspacePage() {
     queryFn: () =>
       listReviewWorkspaceFindings(bookId!, {
         chapter_index: selectedChapter ?? undefined,
-        tier: selectedTier && !["resolved", "dismissed"].includes(selectedTier) ? (selectedTier as "must_fix" | "suggest" | "observe") : undefined,
+        tier: selectedTier && !["resolved", "dismissed"].includes(selectedTier) ? (selectedTier as "must_fix" | "suggest" | "observe" | "needs_verification") : undefined,
         status: statusParam,
         product_dimension: selectedDimension ?? undefined,
       }),
@@ -86,6 +87,19 @@ export default function ReviewWorkspacePage() {
     onError: () => toast.error("专项审校失败"),
   });
 
+  const batchPreviewMut = useMutation({
+    mutationFn: (findingIds: string[]) =>
+      batchPreviewReviewWorkspaceFindings(bookId!, {
+        finding_ids: findingIds,
+        limit: 10,
+      }),
+    onSuccess: (data) => {
+      toast.success(`已生成 ${data.previewed_count} 条修改预览，跳过 ${data.skipped_count} 条`);
+      void qc.invalidateQueries({ queryKey: ["reviewWorkspaceFindings", bookId] });
+    },
+    onError: () => toast.error("批量生成预览失败"),
+  });
+
   const chapterIndexes = useMemo(
     () => (outlineQ.data?.chapters ?? []).map((c) => c.index).sort((a, b) => a - b),
     [outlineQ.data?.chapters],
@@ -101,6 +115,20 @@ export default function ReviewWorkspacePage() {
     }
     return rows;
   }, [findingsQ.data, showObserve, selectedTier]);
+
+  const batchPreviewableIds = useMemo(
+    () =>
+      visibleFindings
+        .filter(
+          (finding) =>
+            finding.source === "chapter" &&
+            finding.status === "open" &&
+            finding.locatable &&
+            finding.fix_capability === "preview_apply",
+        )
+        .map((finding) => finding.id),
+    [visibleFindings],
+  );
 
   async function handleCompleteBook() {
     if (!bookId) return;
@@ -148,6 +176,7 @@ export default function ReviewWorkspacePage() {
           mustFixCount={summary?.must_fix_count ?? 0}
           suggestCount={summary?.suggest_count ?? 0}
           observeCount={summary?.observe_count ?? 0}
+          needsVerificationCount={summary?.needs_verification_count ?? 0}
           runStatus={summary?.run_status ?? null}
           latestTask={summary?.latest_task ?? null}
           running={runMut.isPending || customMut.isPending}
@@ -174,6 +203,15 @@ export default function ReviewWorkspacePage() {
           showObserve={showObserve}
           onToggleObserve={() => setShowObserve((v) => !v)}
           tierFilter={selectedTier}
+          batchPreviewableCount={batchPreviewableIds.length}
+          batchPreviewBusy={batchPreviewMut.isPending}
+          onBatchPreview={() => {
+            if (!batchPreviewableIds.length) {
+              toast.error("当前筛选下没有可自动生成预览的问题");
+              return;
+            }
+            batchPreviewMut.mutate(batchPreviewableIds);
+          }}
         />
         <ReviewFindingDetail
           bookId={bookId}

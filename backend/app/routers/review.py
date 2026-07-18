@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from typing import Any
 from uuid import UUID
@@ -41,9 +42,11 @@ from app.services import book_service
 from app.services.ai_detect import get_ai_detect_provider
 from app.services.citation_lint import lint_chapter_citation_detector
 from app.services.citation_service import list_citations_sorted
+from app.services.citation_verification import citation_to_verification_dict
 from app.services.dedupe_service import DedupeService
 from app.services.figure_lint import lint_figures
-from app.services.review_anchor import canonical_markdown, enrich_issue_anchor, snapshot_hash
+from app.services.markdown_to_tiptap import markdown_body_to_tiptap_blocks
+from app.services.review_anchor import apply_text_edit, canonical_markdown, enrich_issue_anchor, snapshot_hash
 from app.services.review_apply import apply_review_issue_text, preview_issue_application
 from app.services.review_incremental import affected_dimensions, score_changes
 from app.services.review_scoring import (
@@ -55,9 +58,11 @@ from app.services.review_scoring import (
     standardize_issue,
 )
 from app.services.review.review_finding_validator import enrich_finding_metadata, validate_finding
+from app.services.review.quality_reviewers import run_chapter_quality_review
 from app.services.tiptap_convert import chapter_content_to_markdown
 
 router = APIRouter(prefix="/books", tags=["review"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/{book_id}/chapters/{chapter_index}/review", response_model=ChapterReviewOut)
@@ -84,7 +89,7 @@ def get_latest_review(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    book_service.get_book_or_404(book_id, user, db)
+    book = book_service.get_book_or_404(book_id, user, db)
     ch = _get_chapter(book_id, chapter_index, db)
     review = review_repository.latest_review(db, ch.id)
     if not review:
@@ -324,18 +329,36 @@ def confirm_review_application(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    book_service.get_book_or_404(book_id, user, db)
+    book = book_service.get_book_or_404(book_id, user, db)
     app = db.get(ReviewApplication, application_id)
     if not app:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Application not found")
     ch = db.get(Chapter, app.chapter_id)
     if not ch:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chapter not found")
-    current_hash = snapshot_hash(canonical_markdown(_chapter_markdown(ch)))
-    if current_hash != app.after_hash:
+    current_md = canonical_markdown(_chapter_markdown(ch))
+    current_hash = snapshot_hash(current_md)
+    if current_hash == app.before_hash:
+        diff = app.diff if isinstance(app.diff, dict) else {}
+        try:
+            start = int(diff["char_start"])
+            end = int(diff["char_end"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, "预览记录缺少可应用的定位信息，请重新生成预览") from exc
+        applied_md = apply_text_edit(
+            current_md,
+            start=start,
+            end=end,
+            replacement=str(diff.get("after") or ""),
+            action=app.apply_type,
+        )
+        if snapshot_hash(applied_md) != app.after_hash:
+            raise HTTPException(status.HTTP_409_CONFLICT, "预览结果已失效，请重新生成预览")
+        _persist_chapter_markdown(ch, applied_md, db, book)
+    elif current_hash != app.after_hash:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "章节正文与预览结果不一致，请先保存预览修改或重新生成预览",
+            "章节正文已变化，请重新生成修改预览",
         )
     issue = db.get(ChapterReviewIssue, app.issue_id) if app.issue_id else None
     review = db.get(ChapterReview, app.review_id) if app.review_id else None
@@ -346,7 +369,6 @@ def confirm_review_application(
         issue.resolved_at = None
         issue.status = "open"
         review = db.get(ChapterReview, issue.review_id)
-        book = book_service.get_book_or_404(book_id, user, db)
         if review and app.affected_dimensions:
             _partial_recheck_dimensions(book, ch, _chapter_markdown(ch), db, review, list(app.affected_dimensions or []))
             review = db.get(ChapterReview, issue.review_id)
@@ -360,6 +382,20 @@ def confirm_review_application(
             total_after=review.total_score if review else None,
         )
         app.warning = {"score_changes": changes, "warning": warning} if warning else {"score_changes": changes}
+        try:
+            from app.services.review.review_preference_memory import record_review_preference
+
+            meta = issue.quality_evidence if isinstance(issue.quality_evidence, dict) else {}
+            record_review_preference(
+                db,
+                book.id,
+                decision="accepted",
+                product_dimension=meta.get("product_dimension") or issue.dimension,
+                issue_type=issue.issue_type,
+                fix_capability=meta.get("fix_capability"),
+            )
+        except Exception:
+            logger.exception("record review preference failed book=%s issue=%s", book.id, issue.id)
         db.commit()
     return ReviewConfirmApplicationOut(
         application_id=str(app.id),
@@ -579,14 +615,20 @@ def _create_review_report(
     digest = snapshot_hash(canonical)
     citations = list_citations_sorted(db, book.id)
     citation_style = book.citation_style.value if book.citation_style else "apa"
-    cite_lines = [
-        (
-            f"[{c.list_index}] {c.title} ({c.year or 'n.d.'})"
+    cite_lines = []
+    for c in citations[:200]:
+        verification = citation_to_verification_dict(c)
+        status_text = verification.get("verification_status") or c.metadata_status
+        missing = verification.get("missing_fields") or []
+        suffix = f"；核验：{status_text}"
+        if missing:
+            suffix += f"；缺字段：{'、'.join(str(x) for x in missing[:4])}"
+        line = (
+            f"[{c.list_index}] {c.title} ({c.year or 'n.d.'}{suffix})"
             if citation_style == "gb_t7714" and c.list_index is not None
-            else f"{c.title} ({c.year or 'n.d.'})"
+            else f"{c.title} ({c.year or 'n.d.'}{suffix})"
         )
-        for c in citations
-    ][:200]
+        cite_lines.append(line)
     figures = db.query(Figure).filter(Figure.book_id == book.id, Figure.chapter_index == ch.index).all()
     figure_lines = [f"- {f.figure_type.value}: {(f.caption or f.raw_annotation or '')[:120]}" for f in figures]
 
@@ -639,6 +681,35 @@ def _create_review_report(
     detector_dims["ai_signature"] = ai_dim
     issues.extend(ai_issues)
 
+    quality_result = run_chapter_quality_review(book, ch, canonical, snap)
+    for key, row in quality_result.detector_dimensions.items():
+        existing = detector_dims.get(key)
+        if existing:
+            old_score = existing.get("raw_score")
+            new_score = row.get("raw_score")
+            if old_score is None:
+                existing["raw_score"] = new_score
+            elif new_score is not None:
+                existing["raw_score"] = min(int(old_score), int(new_score))
+            existing_summary = str(existing.get("summary") or "").strip()
+            row_summary = str(row.get("summary") or "").strip()
+            if row_summary and row_summary not in existing_summary:
+                existing["summary"] = "；".join(x for x in (existing_summary, row_summary) if x)[:500]
+            existing["detector"] = ",".join(
+                dict.fromkeys(
+                    x
+                    for x in (
+                        str(existing.get("detector") or ""),
+                        str(row.get("detector") or ""),
+                    )
+                    if x
+                )
+            )
+            existing["confidence"] = max(float(existing.get("confidence") or 0), float(row.get("confidence") or 0))
+        else:
+            detector_dims[key] = row
+    issues.extend(quality_result.issues)
+
     for key in REVIEW_DIMENSIONS:
         if key not in detector_dims:
             detector_dims[key] = {
@@ -666,7 +737,14 @@ def _create_review_report(
                 "validation_passed",
                 "filter_reason",
                 "why_it_matters",
+                "evidence",
                 "basis_refs",
+                "verification_status",
+                "action_options",
+                "fix_capability",
+                "prefer_evidence_binding",
+                "basis_rule_ids",
+                "tier",
             )
             if validated.get(k) is not None
         }
@@ -766,6 +844,25 @@ def _chapter_markdown(ch: Chapter | None) -> str:
         return ""
     content = ch.content if isinstance(ch.content, dict) else None
     return chapter_content_to_markdown(content)
+
+
+def _persist_chapter_markdown(ch: Chapter, md: str, db: Session, book) -> None:
+    canonical = canonical_markdown(md)
+    doc = {"type": "doc", "content": markdown_body_to_tiptap_blocks(canonical)}
+    meta = dict(ch.content) if isinstance(ch.content, dict) else {}
+    meta["text"] = canonical
+    meta["tiptap_json"] = doc
+    ch.content = meta
+    ch.word_count = len(canonical.replace("\n", "").replace(" ", ""))
+    from app.services.citation_nodes import normalize_chapter_citations
+
+    normalized, _ = normalize_chapter_citations(db, book, ch, doc=doc)
+    if isinstance(normalized, dict):
+        refreshed = dict(ch.content) if isinstance(ch.content, dict) else meta
+        refreshed["tiptap_json"] = normalized
+        refreshed["text"] = chapter_content_to_markdown(refreshed).strip() or canonical
+        ch.content = refreshed
+    db.flush()
 
 
 def _review_out(review: ChapterReview, ch: Chapter, *, current_md: str) -> ChapterReviewOut:

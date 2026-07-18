@@ -7,6 +7,7 @@ from typing import Any
 
 from app.llm.client import LLMClient
 from app.prompts.publication_standards import CHAPTER_PUBLICATION_STANDARDS
+from app.prompts.review_quality import build_chapter_review_system_prompt
 from app.utils.json_llm import parse_llm_json
 
 logger = logging.getLogger(__name__)
@@ -31,14 +32,17 @@ REVIEW_SYSTEM = """你是一位资深图书审校编辑，熟悉中文非虚构�
       "id": "1",
       "dimension": "logic_structure|language_grammar|style_consistency|citation_sources|factual_support|figure_quality|ai_signature",
       "issue_type": "unclear_transition|grammar|unsupported_claim|generic_phrasing|...",
-      "severity": "high|medium|low",
+      "severity": "high|medium|low|needs_verification",
       "penalty": 1-30,
       "category": "logic|style|grammar|citation|structure|hallucination|figure|code|consistency|other",
-      "title": "问题标题（15字内）",
-      "detail": "问题说明",
+      "title": "问题标题（15字内，如：具体比例缺少可核验来源）",
+      "detail": "证据说明：指出原文用了什么表述、缺了什么",
+      "why_it_matters": "影响：对论证确定性/专业可信度的影响（勿复述 detail）",
       "quote": "原文中有问题的片段（尽量逐字引用，无则空字符串）",
       "suggestion": "见 action_type 说明",
-      "action_type": "replace|delete|insert|revise",
+      "action_type": "replace|delete|insert|revise|choose",
+      "action_options": ["补充来源", "保留为估算", "删除精确比例"],
+      "basis_rule_ids": ["仅当确实匹配公开规则时填写，如 data_source_attribution"],
       "paragraph_index": 0,
       "confidence": 0-1
     }
@@ -55,11 +59,21 @@ action_type 含义（必须准确分类）：
 
 要求：
 - issues 按严重程度排序，最多 12 条；无重大问题时 issues 可为空数组
-- high：事实错误、逻辑矛盾、严重语病、无来源的具体数据/案例、未入库引用；medium：表达、衔接、格式；low：润色级建议
+- severity 判定（先判断问题是否成立，再定等级）：
+  - high（必须处理）：可证伪的事实错误、逻辑矛盾、严重语病、未入库且影响论证的引用；
+    以及「无来源具体数据」仅在以下情况：该数据是章节核心结论的主证据 / 用户要求所有统计必有来源 /
+    已指定出版学术标准要求该类数据提供出处 / 数据可能影响读者决策、法律责任或专业可信度
+  - medium / needs_verification（建议处理・待核验）：具体比例、统计数字、案例缺少可核验出处，但尚非上述升格情形
+  - low：润色级建议
+- 无来源具体数据的默认标题用「具体比例缺少可核验来源」或「具体数据缺少可核验来源」，不要写成笼统「违反出版规范」
+- 若声称依据「出版规范/国家标准」，必须填写 basis_rule_ids（仅可从已注入的公开规则 id 中选择）；没有对应规则就不要写「出版规范要求」
+- why_it_matters：说明对论证可信度/读者理解的影响，不得复述 detail
+- 对数据/事实/案例缺来源类问题：action_type 用 choose 或 revise，suggestion 只列处理方式（补充来源 / 标记为估算 / 删除精确比例），
+  不要直接给出把数字改成「相当比例」「同样不低」的替换正文
 审校维度（逐项扫描）：
 - structure：大纲小节是否在正文中有对应节标题；结构是否完整
 - logic：论证链、衔接、前后矛盾
-- citation / hallucination：无来源断言、未入库引用、具体数据无出处
+- citation / hallucination：无来源断言、未入库引用、具体数据无出处（默认待核验）
 - grammar：语序与病句
 - style / consistency：术语、语气与全书宪法是否一致
 - code：代码块是否明显语法错误或与正文描述不符
@@ -69,6 +83,8 @@ action_type 含义（必须准确分类）：
 - 重点检查：无来源断言（「研究表明」等）、人名+时间+地点齐全但无出处的「案例」、与【已批准本书文献】不一致的引用
 - 勿编造书中不存在的内容；quote 必须来自给定正文
 """
+
+REVIEW_SYSTEM = build_chapter_review_system_prompt()
 
 
 class ReviewAgent:
@@ -158,13 +174,45 @@ class ReviewAgent:
         for i, item in enumerate(issues[:MAX_ISSUES]):
             if not isinstance(item, dict):
                 continue
+            location = item.get("location") if isinstance(item.get("location"), dict) else {}
+            quote = str(item.get("quote") or location.get("quote") or "")[:500]
+            suggestion = str(item.get("suggestion") or item.get("replacement_text") or "")[:2000]
+            action_options = _action_options(item.get("action_options"))
+            basis_refs = _as_str_list(item.get("basis_refs"))
+            basis_rule_ids = _as_str_list(item.get("basis_rule_ids"))
+            evidence = _as_str_list(item.get("evidence"))
+            paragraph_index = _optional_int(
+                item.get("paragraph_index") if item.get("paragraph_index") is not None else location.get("paragraph_index")
+            )
+            char_start = _optional_int(
+                item.get("char_start") if item.get("char_start") is not None else location.get("char_start")
+            )
+            char_end = _optional_int(item.get("char_end") if item.get("char_end") is not None else location.get("char_end"))
+            severity = _enum_val(
+                item.get("severity"),
+                ("high", "medium", "low", "needs_verification"),
+                "medium",
+            )
+            action_type = _enum_val(
+                item.get("action_type") or item.get("action"),
+                ("replace", "delete", "insert", "revise", "choose"),
+                _infer_action_type(quote, suggestion),
+            )
+            quality_evidence = _quality_evidence(
+                item,
+                location=location,
+                action_options=action_options,
+                basis_refs=basis_refs,
+                basis_rule_ids=basis_rule_ids,
+                evidence=evidence,
+            )
             normalized.append(
                 {
                     "id": str(item.get("id") or i + 1),
                     "dimension": str(item.get("dimension") or item.get("category") or "other"),
                     "issue_type": str(item.get("issue_type") or item.get("category") or "review_issue")[:80],
-                    "severity": _enum_val(item.get("severity"), ("high", "medium", "low"), "medium"),
-                    "penalty": _penalty(item.get("penalty"), item.get("severity")),
+                    "severity": severity,
+                    "penalty": _penalty(item.get("penalty"), severity),
                     "category": _enum_val(
                         item.get("category"),
                         (
@@ -183,18 +231,24 @@ class ReviewAgent:
                     ),
                     "title": str(item.get("title") or "待改进")[:80],
                     "detail": str(item.get("detail") or item.get("explanation") or "")[:2000],
-                    "quote": str(item.get("quote") or "")[:500],
-                    "suggestion": str(item.get("suggestion") or item.get("replacement_text") or "")[:2000],
-                    "action_type": _enum_val(
-                        item.get("action_type") or item.get("action"),
-                        ("replace", "delete", "insert", "revise"),
-                        _infer_action_type(
-                            str(item.get("quote") or ""),
-                            str(item.get("suggestion") or ""),
-                        ),
-                    ),
-                    "paragraph_index": _optional_int(item.get("paragraph_index")),
+                    "why_it_matters": str(item.get("why_it_matters") or "")[:2000],
+                    "quote": quote,
+                    "suggestion": suggestion,
+                    "action_type": action_type,
+                    "action": action_type,
+                    "paragraph_index": paragraph_index,
+                    "char_start": char_start,
+                    "char_end": char_end,
                     "confidence": _confidence(item.get("confidence")),
+                    "basis_refs": basis_refs,
+                    "basis_rule_ids": basis_rule_ids,
+                    "evidence": evidence,
+                    "action_options": action_options,
+                    "fix_capability": str(item.get("fix_capability") or ""),
+                    "product_dimension": str(item.get("product_dimension") or ""),
+                    "verification_status": str(item.get("verification_status") or ""),
+                    "tier": str(item.get("tier") or ""),
+                    "quality_evidence": quality_evidence,
                 }
             )
 
@@ -340,13 +394,78 @@ def _merge_chunk_reviews(chunk_results: list[tuple[int, dict[str, Any]]], *, max
         }
         for key, acc in dim_acc.items()
     }
-    severity_rank = {"high": 0, "medium": 1, "low": 2}
+    severity_rank = {"high": 0, "needs_verification": 1, "medium": 2, "low": 3}
     issues.sort(key=lambda i: (severity_rank.get(str(i.get("severity")), 1), -int(i.get("penalty") or 0)))
     return {
         "summary": "长章分块审校完成：" + "；".join(summaries[:4]),
         "dimensions": dimensions,
         "issues": issues[:max_issues],
     }
+
+
+def _as_str_list(raw: Any) -> list[str]:
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    return [str(raw).strip()]
+
+
+def _action_options(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    options: list[dict[str, Any]] = []
+    for idx, item in enumerate(raw):
+        if isinstance(item, dict):
+            options.append({str(k): v for k, v in item.items() if v is not None})
+        elif str(item).strip():
+            label = str(item).strip()
+            options.append(
+                {
+                    "id": f"option_{idx + 1}",
+                    "label": label[:40],
+                    "description": label,
+                    "action_type": "choose",
+                }
+            )
+    return options
+
+
+def _quality_evidence(
+    item: dict[str, Any],
+    *,
+    location: dict[str, Any],
+    action_options: list[dict[str, Any]],
+    basis_refs: list[str],
+    basis_rule_ids: list[str],
+    evidence: list[str],
+) -> dict[str, Any]:
+    meta: dict[str, Any] = {}
+    for key in (
+        "product_dimension",
+        "why_it_matters",
+        "fix_capability",
+        "verification_status",
+        "tier",
+        "source_match",
+        "missing_fields",
+        "recommended_search_query",
+    ):
+        value = item.get(key)
+        if value not in (None, "", []):
+            meta[key] = value
+    if action_options:
+        meta["action_options"] = action_options
+    if basis_refs:
+        meta["basis_refs"] = basis_refs
+    if basis_rule_ids:
+        meta["basis_rule_ids"] = basis_rule_ids
+    if evidence:
+        meta["evidence"] = evidence
+    clean_location = {str(k): v for k, v in location.items() if v not in (None, "", [])}
+    if clean_location:
+        meta["location"] = clean_location
+    return meta
 
 
 def _enum_val(raw: Any, allowed: tuple[str, ...], default: str) -> str:
@@ -392,7 +511,7 @@ def _penalty(raw: Any, severity: Any) -> int:
     try:
         return max(0, min(30, int(raw)))
     except (TypeError, ValueError):
-        return {"high": 10, "medium": 6, "low": 3}.get(str(severity or "").lower(), 6)
+        return {"high": 10, "needs_verification": 5, "medium": 6, "low": 3}.get(str(severity or "").lower(), 6)
 
 
 def _optional_int(raw: Any) -> int | None:

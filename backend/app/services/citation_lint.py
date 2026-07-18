@@ -205,11 +205,16 @@ def lint_chapter_citation_detector(
                     "dimension": "citation_sources",
                     "issue_type": _KIND_TO_ISSUE_TYPE.get(item.kind, item.kind),
                     "severity": severity,
-                    "penalty": SEVERITY_DEFAULT_PENALTY[severity],
-                    "title": _citation_title(item.kind),
+                    "penalty": SEVERITY_DEFAULT_PENALTY.get(severity, SEVERITY_DEFAULT_PENALTY["medium"]),
+                    "title": _citation_title(item.kind, item.quote),
                     "explanation": item.detail,
+                    "why_it_matters": (
+                        "具体数字会增强论述确定性；无来源时可能削弱专业可信度，需先核验或改写处理方式。"
+                        if item.kind == "unsupported_assertion"
+                        else ""
+                    ),
                     "quote": item.quote,
-                    "action": "revise",
+                    "action": "choose" if item.kind == "unsupported_assertion" else "revise",
                     "replacement_text": "",
                     "paragraph_index": loc.paragraph_index,
                     "char_start": loc.char_start,
@@ -219,7 +224,37 @@ def lint_chapter_citation_detector(
                         "kind": item.kind,
                         "suggested_title": item.suggested_title,
                         "nearby_citation_required": item.kind == "unsupported_assertion",
+                        "verification_status": (
+                            "needs_verification" if item.kind == "unsupported_assertion" else None
+                        ),
+                        "action_options": (
+                            [
+                                {
+                                    "id": "add_source",
+                                    "label": "补充来源",
+                                    "description": "绑定具体报告、机构、年份和页码",
+                                },
+                                {
+                                    "id": "mark_estimate",
+                                    "label": "保留为估算",
+                                    "description": "明确说明这是作者经验判断或非统计估计",
+                                },
+                                {
+                                    "id": "remove_number",
+                                    "label": "删除数字",
+                                    "description": "数字无法核实时，改写为不依赖精确比例的表述",
+                                },
+                            ]
+                            if item.kind == "unsupported_assertion"
+                            else None
+                        ),
+                        "basis_rule_ids": (
+                            ["data_source_attribution"] if item.kind == "unsupported_assertion" else []
+                        ),
                     },
+                    "basis_rule_ids": (
+                        ["data_source_attribution"] if item.kind == "unsupported_assertion" else []
+                    ),
                     "detector": "citation_lint",
                     "confidence": 0.88,
                 },
@@ -237,9 +272,13 @@ def lint_chapter_citation_detector(
     }
 
 
-def _citation_title(kind: str) -> str:
+def _citation_title(kind: str, quote: str = "") -> str:
+    if kind == "unsupported_assertion":
+        q = quote or ""
+        if "%" in q or "％" in q or "比例" in q:
+            return "具体比例缺少可核验来源"
+        return "具体数据缺少可核验来源"
     return {
-        "unsupported_assertion": "断言缺少来源",
         "not_in_library": "引用未入库",
         "invalid_citation_format": "引用格式异常",
         "unused_reference": "参考文献未使用",

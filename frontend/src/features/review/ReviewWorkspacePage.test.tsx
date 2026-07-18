@@ -60,6 +60,7 @@ describe("ReviewWorkspacePage", () => {
             must_fix_count: 2,
             suggest_count: 1,
             observe_count: 3,
+            needs_verification_count: 1,
             open_count: 6,
             run_status: "completed",
             by_chapter: { "1": 2 },
@@ -100,6 +101,46 @@ describe("ReviewWorkspacePage", () => {
               detector: "ai_detect",
               dimension: "ai_signature",
               issue_type: "generic_phrasing",
+              product_dimension: "argument_quality",
+              impact_scope: "sentence",
+              locatable: true,
+              task_id: null,
+              validation_passed: true,
+              filter_reason: null,
+              why_it_matters: "影响读者判断",
+              verification_status: null,
+              action_options: [],
+              fix_capability: "preview_apply",
+              prefer_evidence_binding: false,
+            },
+            {
+              id: "f2",
+              source: "chapter",
+              chapter_index: 1,
+              chapter_title: "第一章",
+              tier: "needs_verification",
+              status: "open",
+              title: "数据缺少来源",
+              detail: "具体比例缺少可核验来源",
+              quote: "90% 的团队...",
+              suggestion: null,
+              basis_refs: [],
+              category: "reference_authenticity",
+              track: null,
+              detector: "reference_authenticity_reviewer",
+              dimension: "citation_sources",
+              issue_type: "missing_citation",
+              product_dimension: "evidence_citation",
+              impact_scope: "sentence",
+              locatable: true,
+              task_id: null,
+              validation_passed: true,
+              filter_reason: null,
+              why_it_matters: "影响事实可信度",
+              verification_status: "needs_verification",
+              action_options: [],
+              fix_capability: "choice_then_apply",
+              prefer_evidence_binding: true,
             },
           ],
         });
@@ -114,8 +155,12 @@ describe("ReviewWorkspacePage", () => {
     expect(await screen.findByText("问题列表")).toBeTruthy();
     expect(await screen.findByText("选择左侧问题查看详情与依据")).toBeTruthy();
     expect(await screen.findByText("必改 (1)")).toBeTruthy();
+    expect(await screen.findByText("待核验 (1)")).toBeTruthy();
     expect(screen.getByText("2", { selector: ".text-red-700" })).toBeTruthy();
     expect(await screen.findByText("表达生硬")).toBeTruthy();
+    expect(await screen.findByText("可预览应用")).toBeTruthy();
+
+    expect(await screen.findByRole("button", { name: "batch-preview-findings" })).toBeTruthy();
 
     await waitFor(() => {
       expect(api.get).toHaveBeenCalledWith("/books/book-1/review-workspace/summary");

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.literature_agent import format_paper_citation
 from app.services.citation_formats import format_in_text_by_source
+from app.services.bibliography_upload_parser import extract_bibliography_records
 from app.models.book import Book, CitationStyle
 from app.models.chapter import Chapter
 from app.models.citation import Citation, CitationEvidence, CitationOccurrence, CitationSource
@@ -222,11 +223,7 @@ def create_citation_from_paper(
         volume=data.get("volume"),
         issue=data.get("issue"),
         pages=data.get("pages"),
-        metadata_status=(
-            "complete"
-            if data["title"] and data["authors"] and (data["year"] or doi or data.get("url"))
-            else "needs_completion"
-        ),
+        metadata_status=_citation_metadata_status(data, doi),
         format_cache=cache,
         source=source,
         source_file_id=source_file_id,
@@ -244,6 +241,18 @@ def create_citation_from_paper(
     db.commit()
     db.refresh(row)
     return row
+
+
+def _citation_metadata_status(data: dict[str, Any], doi: str | None) -> str:
+    has_core = bool(data["title"] and data["authors"] and (data["year"] or doi or data.get("url")))
+    if not has_core:
+        return "needs_completion"
+    doc_type = str(data.get("document_type") or "").lower()
+    is_uploaded = str(data.get("source") or "").lower() == "user_upload"
+    academic_type = doc_type in {"journal_article", "dissertation", "conference_paper", "j", "d", "c"}
+    if is_uploaded and academic_type and not data.get("abstract_preview"):
+        return "needs_completion"
+    return "complete"
 
 
 def list_citations_sorted(db: Session, book_id: uuid.UUID) -> list[Citation]:
@@ -459,21 +468,16 @@ def ingest_uploaded_bibliography(
     lookup_doi,
 ) -> int:
     """从上传文献的参考文献节解析条目并入库。返回新增条数。"""
-    lines = extract_bibliography_lines(text)
+    records = extract_bibliography_records(text)
     added = 0
-    for line in lines:
-        doi = parse_doi_from_line(line)
+    for record in records:
+        line = record.entry_text or record.raw_text
+        doi = record.doi or parse_doi_from_line(line)
         paper: dict[str, Any] | None = None
         if doi and lookup_doi:
-            paper = lookup_doi(doi)
+            paper = _merge_uploaded_paper_metadata(record.to_paper(), lookup_doi(doi))
         if not paper:
-            paper = {
-                "title": line[:300],
-                "authors": [],
-                "year": None,
-                "journal": "",
-                "doi": doi or "",
-            }
+            paper = record.to_paper()
         before = db.query(Citation).filter(Citation.book_id == book.id).count()
         create_citation_from_paper(
             db,
@@ -481,9 +485,24 @@ def ingest_uploaded_bibliography(
             paper,
             source=CitationSource.uploaded_file,
             source_file_id=file_id,
-            raw_text=line,
+            raw_text=record.raw_text or line,
         )
         after = db.query(Citation).filter(Citation.book_id == book.id).count()
         if after > before:
             added += 1
     return added
+
+
+def _merge_uploaded_paper_metadata(uploaded: dict[str, Any], looked_up: dict[str, Any] | None) -> dict[str, Any]:
+    if not looked_up:
+        return uploaded
+    merged = dict(uploaded)
+    for key, value in looked_up.items():
+        if value not in (None, "", [], {}):
+            merged[key] = value
+    for key in ("abstract_preview", "volume", "issue", "pages", "url", "document_type"):
+        if not merged.get(key) and uploaded.get(key):
+            merged[key] = uploaded[key]
+    if not merged.get("source"):
+        merged["source"] = uploaded.get("source") or "user_upload"
+    return merged

@@ -1,15 +1,17 @@
 import { ChevronLeft } from "lucide-react";
 import { useState } from "react";
 import toast from "react-hot-toast";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getBook } from "@/api/books";
+import { generateOutline } from "@/api/outline";
 import { sendTurn } from "@/features/assistant/api/assistantApi";
 import AdvancedSettingsDrawer from "@/features/assistant/components/AdvancedSettingsDrawer";
 import ConversationPanel from "@/features/assistant/components/ConversationPanel";
 import ProjectBriefPanel from "@/features/assistant/components/ProjectBriefPanel";
 import SourceLibraryPanel from "@/features/assistant/components/SourceLibraryPanel";
 import { useAssistantConversation } from "@/features/assistant/hooks/useAssistantConversation";
+import { useWritingBasis } from "@/features/assistant/hooks/useWritingBasis";
 import { completeProjectStart, useIntake } from "@/features/intake/api/intakeApi";
 
 type TopicItem = {
@@ -26,7 +28,9 @@ type Props = {
 };
 
 export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Props) {
+  const qc = useQueryClient();
   const intakeQuery = useIntake(bookId);
+  const basisQuery = useWritingBasis(bookId);
   const initialMessage = intakeQuery.data?.intake?.raw_goal_text ?? null;
   const conv = useAssistantConversation(bookId, { initialMessage });
   const bookQuery = useQuery({
@@ -44,13 +48,34 @@ export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Pro
 
   async function handleProceed() {
     setProceeding(true);
+    const toastId = toast.loading("正在完成启动并生成大纲…");
     try {
+      // 先完成启动；不要立刻 refetch intake，否则父页会判定启动结束并闪回设定页
       await completeProjectStart(bookId);
+      const book = await getBook(bookId);
+      // 乐观标记生成中，用户若此时回到书架可看到「大纲生成中」而非误以为已就绪
+      qc.setQueryData(["book", bookId], { ...book, status: "outline_generating" });
+      void qc.invalidateQueries({ queryKey: ["books"] });
+      const nextOutline = await generateOutline(bookId, {
+        topic_override: null,
+        target_audience: book.target_audience?.trim() || null,
+        topic_brief: book.topic_brief?.trim() || null,
+      });
+      qc.setQueryData(["outline", bookId], nextOutline);
+      const freshBook = await getBook(bookId);
+      qc.setQueryData(["book", bookId], freshBook);
+      toast.success("大纲已生成", { id: toastId });
+      // 大纲就绪后再刷新 intake，父页才会离开助手进入大纲步
       await intakeQuery.refetch();
-      toast.success("可以开始规划大纲了");
       await onComplete?.();
     } catch {
-      toast.error("进入大纲失败，请补充创作意图或检查网络");
+      toast.error("生成大纲失败，请补充创作意图或检查网络后重试", { id: toastId });
+      try {
+        const fresh = await getBook(bookId);
+        qc.setQueryData(["book", bookId], fresh);
+      } catch {
+        /* ignore */
+      }
     } finally {
       setProceeding(false);
     }
@@ -81,9 +106,10 @@ export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Pro
         <header className="mb-3 flex items-center gap-3 px-1">
           <button
             type="button"
-            className="icon-button h-9 shrink-0 px-2 text-sm text-slate-600"
-            title="返回书架"
+            className="icon-button h-9 shrink-0 px-2 text-sm text-slate-600 disabled:opacity-50"
+            title={proceeding ? "大纲生成中，完成后可返回" : "返回书架"}
             aria-label="返回书架"
+            disabled={proceeding}
             onClick={() => onExit?.()}
           >
             <ChevronLeft className="h-5 w-5" />
@@ -156,12 +182,17 @@ export default function ProjectAssistantPage({ bookId, onComplete, onExit }: Pro
           </div>
           <div className="flex w-80 shrink-0 flex-col border-l border-slate-200 bg-white">
             <ProjectBriefPanel
+              book={book}
               intake={intakeQuery.data?.intake}
-              bookTitle={book?.title ?? "书稿"}
-              loading={intakeQuery.isLoading}
+              basis={basisQuery.data ?? conv.lastBasis ?? null}
+              loading={intakeQuery.isLoading || basisQuery.isLoading}
               proceeding={proceeding}
               onProceed={() => void handleProceed()}
               onOpenAdvanced={() => setAdvancedOpen(true)}
+              onBookUpdated={(b) => {
+                qc.setQueryData(["book", bookId], b);
+                void bookQuery.refetch();
+              }}
             />
           </div>
         </div>

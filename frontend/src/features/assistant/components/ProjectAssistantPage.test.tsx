@@ -10,6 +10,10 @@ vi.mock("@/api/books", () => ({
   getBook: vi.fn().mockResolvedValue({ id: "book-1", title: "书稿1" }),
 }));
 
+vi.mock("@/api/outline", () => ({
+  generateOutline: vi.fn().mockResolvedValue({ title: "书稿1", chapters: [], total_chapters: 0, estimated_words: 0 }),
+}));
+
 vi.mock("@/features/intake/api/intakeApi", () => ({
   useIntake: () => ({
     data: { intake: { raw_goal_text: "测试意图", status: "collecting" } },
@@ -17,6 +21,22 @@ vi.mock("@/features/intake/api/intakeApi", () => ({
     refetch: vi.fn(),
   }),
   completeProjectStart: vi.fn(),
+}));
+
+vi.mock("@/features/assistant/hooks/useWritingBasis", () => ({
+  useWritingBasis: () => ({
+    data: {
+      id: "basis-1",
+      book_promise: "",
+      reader_outcome: "",
+      scope: "",
+      depth: "",
+      voice: "",
+      must_avoid: [],
+      must_keep: [],
+    },
+    isLoading: false,
+  }),
 }));
 
 vi.mock("@/features/assistant/hooks/useAssistantConversation", () => ({
@@ -57,6 +77,6 @@ describe("ProjectAssistantPage", () => {
     expect(screen.getByText("项目要点")).toBeTruthy();
     expect(screen.getByText("资料库")).toBeTruthy();
     expect(screen.getByRole("button", { name: "返回书架" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "进入大纲规划" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "生成大纲" })).toBeTruthy();
   });
 });

@@ -273,6 +273,18 @@ class FormatStrategyService:
         self.db.flush()
         return strategy
 
+    def apply_after_outline(self, book: Book, *, force: bool = True) -> BookFormatStrategy:
+        """大纲生成后的公共后处理：生成栏目策略并自动写入各章 column_labels。
+
+        对用户无独立确认步骤；内部仍复用 generate/confirm 实现。
+        """
+        strategy = self.generate(book, force=force)
+        if strategy.status == FormatStrategyStatus.draft:
+            return self.confirm(book, strategy)
+        suggestions = _normalize_chapter_suggestions(strategy.chapter_suggestions)
+        self._sync_column_labels(book.id, suggestions)
+        return strategy
+
     def to_dict(self, strategy: BookFormatStrategy | None) -> dict[str, Any] | None:
         if not strategy:
             return None

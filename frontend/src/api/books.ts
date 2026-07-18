@@ -38,6 +38,16 @@ export async function setupRecommend(
   return data;
 }
 
+/** 根据创作意图推断并写入类型/体裁/标签/主题要点等（用户主动触发）。 */
+export async function inferBookSetup(id: string): Promise<Book> {
+  const { data } = await client.post<{ book: Book }>(
+    `/books/${id}/setup/infer`,
+    {},
+    { timeout: SETUP_RECOMMEND_TIMEOUT_MS },
+  );
+  return data.book;
+}
+
 export async function duplicateBook(
   id: string,
   options?: { copy_outline?: boolean },

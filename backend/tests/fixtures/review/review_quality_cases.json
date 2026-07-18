@@ -1,0 +1,220 @@
+[
+  {
+    "id": "title_practical_guide_marketing_tail",
+    "area": "title_quality",
+    "book_style": "practical_guide",
+    "auto_runnable": false,
+    "input": {
+      "title": "AI自动化写书终极秘籍：从选题到出版一套全流程秒懂实战指南",
+      "chapter_title": null
+    },
+    "expected": {
+      "rule_id": "title.marketing_tail.v1",
+      "tier": "suggest",
+      "fix_capability": "choice_then_apply",
+      "reason": "标题过长且含终极、秒懂等营销词，应给候选标题而非强制替换"
+    }
+  },
+  {
+    "id": "title_academic_undefined_theory",
+    "area": "title_quality",
+    "book_style": "academic_monograph",
+    "auto_runnable": false,
+    "input": {
+      "title": "智能社会中的镜像认知跃迁理论研究",
+      "known_terms": ["智能社会", "认知"],
+      "user_sources": []
+    },
+    "expected": {
+      "rule_id": "title.undefined_theory_term.v1",
+      "tier": "needs_verification",
+      "fix_capability": "manual_only",
+      "reason": "标题出现疑似自造理论名词，需用户或文献确认"
+    }
+  },
+  {
+    "id": "paragraph_adjacent_echo_preview_merge",
+    "area": "paragraph_echo",
+    "book_style": "popular_science",
+    "auto_runnable": false,
+    "input": {
+      "paragraphs": [
+        "人工智能正在改变知识生产方式，它不仅影响工具，也影响人们理解世界的方式。",
+        "人工智能正在重塑知识生产方式，它不仅改变工具，也改变我们理解世界的方式。"
+      ]
+    },
+    "expected": {
+      "rule_id": "paragraph.adjacent_similarity.v1",
+      "tier": "suggest",
+      "fix_capability": "preview_apply",
+      "reason": "相邻段落语义和句式高度重复，可预览合并"
+    }
+  },
+  {
+    "id": "paragraph_template_loop_choice",
+    "area": "paragraph_echo",
+    "book_style": "opinion_commentary",
+    "auto_runnable": false,
+    "input": {
+      "paragraphs": [
+        "从技术角度看，这一变化带来了新的可能。",
+        "从产业角度看，这一变化带来了新的空间。",
+        "从教育角度看，这一变化带来了新的机会。"
+      ]
+    },
+    "expected": {
+      "rule_id": "paragraph.repeated_skeleton.v1",
+      "tier": "suggest",
+      "fix_capability": "choice_then_apply",
+      "reason": "句式骨架重复，但可能承担分论点，需要用户选择合并、补例证或保留"
+    }
+  },
+  {
+    "id": "reference_cnki_missing_abstract",
+    "area": "reference_authenticity",
+    "book_style": "academic_monograph",
+    "auto_runnable": false,
+    "input": {
+      "reference": "[50]王佳,朱敏.对强人工智能及其理论预设的考察——基于中文屋论证的批判视角[J].心智与计算,2010,4(1):1-7."
+    },
+    "expected": {
+      "rule_id": "reference.cnki_metadata_required.v1",
+      "tier": "needs_verification",
+      "fix_capability": "choice_then_apply",
+      "reason": "学术文献缺摘要时只能作为弱依据，应提示用户补充含摘要导出"
+    }
+  },
+  {
+    "id": "figure_caption_ai_signature_false_positive",
+    "area": "ai_text_risk",
+    "book_style": "technical_deep_dive",
+    "auto_runnable": true,
+    "candidate_finding": {
+      "quote": "Figure 1 Overview",
+      "detector": "ai_detect_v2",
+      "dimension": "ai_signature",
+      "issue_type": "generic_phrasing",
+      "severity": "high",
+      "title": "图题疑似模板化"
+    },
+    "expected": {
+      "validator_result": "drop",
+      "rule_id": "ai.figure_caption_false_positive.v1",
+      "tier": "observe",
+      "fix_capability": "observe_only",
+      "reason": "图题和表题不应被 AI 文本风险检测误报"
+    }
+  },
+  {
+    "id": "data_percentage_missing_source",
+    "area": "reference_authenticity",
+    "book_style": "business_management",
+    "auto_runnable": true,
+    "candidate_finding": {
+      "quote": "90% of teams spend more than half of their planning time on coordination.",
+      "detector": "citation_review_v1",
+      "dimension": "citation_sources",
+      "issue_type": "missing_citation",
+      "severity": "high",
+      "title": "Specific percentage lacks a verifiable source",
+      "detail": "The sentence gives a precise percentage without source metadata."
+    },
+    "expected": {
+      "validator_result": "keep",
+      "rule_id": "reference.unsourced_statistic.v1",
+      "tier": "needs_verification",
+      "fix_capability": "choice_then_apply",
+      "action_option_ids": ["add_source", "mark_estimate", "remove_number"],
+      "reason": "具体比例缺来源时应让用户选择补来源、标为估计或删数字"
+    }
+  },
+  {
+    "id": "logic_high_without_quote_downgraded",
+    "area": "content_logic",
+    "book_style": "popular_science",
+    "auto_runnable": true,
+    "candidate_finding": {
+      "quote": "",
+      "detector": "logic_review_v1",
+      "dimension": "logic",
+      "severity": "high",
+      "title": "章节逻辑跳跃"
+    },
+    "expected": {
+      "validator_result": "keep",
+      "rule_id": "validator.must_fix_requires_quote.v1",
+      "tier": "observe",
+      "fix_capability": "manual_only",
+      "reason": "没有定位依据的高风险问题不能强制展示为 must_fix"
+    }
+  },
+  {
+    "id": "logic_high_locatable_kept",
+    "area": "content_logic",
+    "book_style": "popular_science",
+    "auto_runnable": true,
+    "chapter_md": "The chapter first defines the model. Therefore, this chapter concludes that all education problems can be solved by automation. The next paragraph gives no evidence.",
+    "candidate_finding": {
+      "quote": "Therefore, this chapter concludes that all education problems can be solved by automation.",
+      "detector": "logic_review_v1",
+      "dimension": "logic",
+      "severity": "high",
+      "title": "结论外推过度"
+    },
+    "expected": {
+      "validator_result": "keep",
+      "rule_id": "validator.locatable_high_kept.v1",
+      "tier": "must_fix",
+      "fix_capability": "manual_only",
+      "reason": "能定位且影响核心论证的高风险问题可以保留"
+    }
+  },
+  {
+    "id": "figure_table_numbering_preview_apply",
+    "area": "layout_format",
+    "book_style": "technical_deep_dive",
+    "auto_runnable": false,
+    "input": {
+      "chapter": "第3章",
+      "figures": ["图3-1 模型结构", "图3-3 调用链路", "图3-2 数据流"]
+    },
+    "expected": {
+      "rule_id": "layout.figure_table_order.v1",
+      "tier": "suggest",
+      "fix_capability": "preview_apply",
+      "reason": "图表编号排序可调用已有一键排序函数处理"
+    }
+  },
+  {
+    "id": "first_line_indent_preview_apply",
+    "area": "layout_format",
+    "book_style": "textbook",
+    "auto_runnable": false,
+    "input": {
+      "paragraph_style": "normal_body",
+      "first_line_indent": 0,
+      "text": "本节介绍智能体系统的基本构成。"
+    },
+    "expected": {
+      "rule_id": "layout.first_line_indent.v1",
+      "tier": "suggest",
+      "fix_capability": "preview_apply",
+      "reason": "普通正文段落缺首行缩进可预览后一键应用"
+    }
+  },
+  {
+    "id": "ai_slop_generic_summary_low",
+    "area": "ai_text_risk",
+    "book_style": "practical_guide",
+    "auto_runnable": false,
+    "input": {
+      "paragraph": "综上所述，人工智能的发展对于企业来说既是机遇也是挑战。我们需要全面、系统、深入地理解这一变化，并在实践中不断探索。"
+    },
+    "expected": {
+      "rule_id": "ai.generic_summary.v1",
+      "tier": "suggest",
+      "fix_capability": "preview_apply",
+      "reason": "空泛总结可压缩或删除，但不应给 AI 率百分比结论"
+    }
+  }
+]

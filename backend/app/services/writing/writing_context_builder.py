@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models.book import Book
+from app.models.citation import Citation
 from app.models.generation_context_snapshot import GenerationContextSnapshot
 from app.models.intake import InputUnderstanding, ProjectIntake, WritingPlan, UnderstandingStatus, WritingPlanStatus
 from app.models.material import MaterialTerm, OutlineConstraint, WritingRequirement
@@ -17,6 +18,7 @@ from app.models.book_format_strategy import BookFormatStrategy, FormatStrategySt
 from app.services.writing.format_strategy_service import FormatStrategyService
 from app.services.writing.writing_basis_service import WritingBasisService
 from app.services.assistant.project_memory_service import ProjectMemoryService
+from app.services.citation_verification import citation_to_verification_dict
 
 
 class WritingContextBuilder:
@@ -83,6 +85,43 @@ class WritingContextBuilder:
             return rows
         return [r for r in rows if r.scope == "book" or r.chapter_index in (None, chapter_index)]
 
+    def _citation_summaries(self, book_id: UUID) -> list[dict]:
+        rows = (
+            self.db.query(Citation)
+            .filter(Citation.book_id == book_id)
+            .order_by(Citation.created_at.desc())
+            .limit(200)
+            .all()
+        )
+        summaries: list[dict] = []
+        for row in rows:
+            verification = citation_to_verification_dict(row)
+            summaries.append(
+                {
+                    "id": str(row.id),
+                    "title": row.title or "",
+                    "authors": row.authors or [],
+                    "year": row.year,
+                    "journal": row.journal or "",
+                    "doi": row.doi or "",
+                    "url": row.url or "",
+                    "document_type": row.document_type,
+                    "metadata_status": row.metadata_status,
+                    "source": row.source.value if hasattr(row.source, "value") else str(row.source),
+                    "source_file_id": str(row.source_file_id) if row.source_file_id else None,
+                    "volume": row.volume,
+                    "issue": row.issue,
+                    "pages": row.pages,
+                    "has_abstract": bool((row.abstract_preview or "").strip()),
+                    "verification_status": verification.get("verification_status"),
+                    "source_match": verification.get("source_match"),
+                    "missing_fields": verification.get("missing_fields") or [],
+                    "recommended_search_query": verification.get("recommended_search_query") or "",
+                    "verification": verification,
+                }
+            )
+        return summaries
+
     def build_snapshot(self, book_id: UUID, *, chapter_index: int | None = None) -> dict:
         book = self.db.query(Book).filter(Book.id == book_id).first()
         basis = self._confirmed_basis(book_id)
@@ -128,6 +167,15 @@ class WritingContextBuilder:
         format_svc = FormatStrategyService(self.db)
         format_dict = format_svc.to_dict(format_strategy)
 
+        source_materials: dict = {}
+        try:
+            from app.services.sources.source_outline_bridge import materials_from_outline_contract
+
+            if book:
+                source_materials = materials_from_outline_contract(self.db, book)
+        except Exception:
+            source_materials = {}
+
         return {
             "book_id": str(book_id),
             "writing_basis_id": str(basis.id) if basis else None,
@@ -155,6 +203,12 @@ class WritingContextBuilder:
             "must_avoid": must_avoid,
             "material_policy": material_policy,
             "outline_policy": outline_policy,
+            "source_outline_blocks": source_materials.get("source_outline_blocks") or [],
+            "source_requirement_blocks": source_materials.get("source_requirement_blocks") or [],
+            "source_manuscript_blocks": source_materials.get("source_manuscript_blocks") or [],
+            "source_reference_outline_blocks": source_materials.get("source_reference_outline_blocks") or [],
+            "outline_contract": source_materials.get("contract"),
+            "citations": self._citation_summaries(book_id),
             "chapter_index": chapter_index,
         }
 
@@ -227,9 +281,48 @@ class WritingContextBuilder:
         policy = snap.get("material_policy") or []
         if policy:
             parts.append("【资料使用策略】\n" + "\n".join(f"- {x}" for x in policy[:10]))
+        citations = snap.get("citations") or []
+        if citations:
+            lines: list[str] = []
+            for item in citations[:30]:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or "").strip()
+                if not title:
+                    continue
+                authors = "、".join(str(a) for a in (item.get("authors") or [])[:3] if str(a).strip())
+                year = item.get("year") or "n.d."
+                status = item.get("verification_status") or item.get("metadata_status") or "needs_verification"
+                missing = item.get("missing_fields") or []
+                missing_text = f"；缺字段：{'、'.join(str(x) for x in missing[:4])}" if missing else ""
+                query = str(item.get("recommended_search_query") or "").strip()
+                query_text = f"；建议检索：{query[:120]}" if query and status in {"needs_verification", "mismatch", "unreachable"} else ""
+                prefix = f"{authors}，" if authors else ""
+                lines.append(f"- {prefix}{title}（{year}；核验：{status}{missing_text}{query_text}）")
+            if lines:
+                parts.append("【本书文献与核验状态】\n" + "\n".join(lines))
         outline_policy = snap.get("outline_policy") or []
         if outline_policy:
             parts.append("【大纲规则】\n" + "\n".join(f"- {x}" for x in outline_policy[:10]))
+        if snap.get("source_outline_blocks"):
+            parts.append(
+                "【已确认主大纲】\n" + "\n---\n".join(str(x)[:2000] for x in snap["source_outline_blocks"][:2])
+            )
+        if snap.get("source_reference_outline_blocks"):
+            parts.append(
+                "【参考大纲】\n"
+                + "\n---\n".join(str(x)[:1500] for x in snap["source_reference_outline_blocks"][:2])
+            )
+        if snap.get("source_requirement_blocks"):
+            parts.append(
+                "【已确认写作要求】\n"
+                + "\n---\n".join(str(x)[:2000] for x in snap["source_requirement_blocks"][:2])
+            )
+        if snap.get("source_manuscript_blocks"):
+            parts.append(
+                "【初稿结构线索】\n"
+                + "\n---\n".join(str(x)[:1200] for x in snap["source_manuscript_blocks"][:2])
+            )
         format_strategy = snap.get("format_strategy") if isinstance(snap.get("format_strategy"), dict) else None
         if format_strategy:
             summary_lines: list[str] = []
@@ -287,6 +380,7 @@ class WritingContextBuilder:
             "intent_effects": snap.get("intent_effects"),
             "format_strategy_id": snap.get("format_strategy_id"),
             "chapter_index": snap.get("chapter_index"),
+            "citations": snap.get("citations"),
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -309,23 +403,140 @@ class WritingContextBuilder:
         self.db.flush()
         return row
 
+    # Stage whitelist: which source/context keys may enter each generation stage
+    _STAGE_ALLOW: dict[str, frozenset[str]] = {
+        "outline": frozenset(
+            {
+                "writing_basis",
+                "writing_basis_id",
+                "format_strategy",
+                "format_strategy_id",
+                "requirements",
+                "requirement_ids",
+                "outline_constraints",
+                "outline_constraint_ids",
+                "must_keep",
+                "must_avoid",
+                "material_policy",
+                "outline_policy",
+                "intent_effects",
+                "plan_text",
+                "understanding_text",
+                "source_outline_blocks",
+                "source_reference_outline_blocks",
+                "source_requirement_blocks",
+                "source_manuscript_blocks",  # only when contract says structure_hint_only
+                "outline_contract",
+                "material_terms",
+            }
+        ),
+        "narrative": frozenset(
+            {
+                "writing_basis",
+                "writing_basis_id",
+                "format_strategy",
+                "format_strategy_id",
+                "requirements",
+                "must_keep",
+                "must_avoid",
+                "material_policy",
+                "outline_policy",
+                "intent_effects",
+                "plan_text",
+                "understanding_text",
+                "source_requirement_blocks",
+                "material_terms",
+            }
+        ),
+        "chapter": frozenset(
+            {
+                "writing_basis",
+                "writing_basis_id",
+                "format_strategy",
+                "format_strategy_id",
+                "requirements",
+                "outline_constraints",
+                "must_keep",
+                "must_avoid",
+                "material_policy",
+                "intent_effects",
+                "source_requirement_blocks",
+                "material_terms",
+                "chapter_index",
+            }
+        ),
+        "review": frozenset(
+            {
+                "writing_basis",
+                "writing_basis_id",
+                "requirements",
+                "must_keep",
+                "must_avoid",
+                "material_policy",
+                "citation_policy",
+                "citations",
+                "source_requirement_blocks",
+                "material_terms",
+            }
+        ),
+    }
+
+    def apply_stage_whitelist(self, snap: dict, stage: str) -> dict:
+        allow = self._STAGE_ALLOW.get(stage)
+        if not allow:
+            return snap
+        meta_keys = frozenset(
+            {
+                "book_id",
+                "chapter_index",
+                "writing_basis_id",
+                "format_strategy_id",
+                "understanding_id",
+                "writing_plan_id",
+                "requirement_ids",
+                "outline_constraint_ids",
+                "plan_json",
+                "intent_json",
+                "impact_map",
+                "legacy_user_material",
+            }
+        )
+        out = {k: v for k, v in snap.items() if k in allow or k in meta_keys}
+        # Outline: drop manuscript blocks unless contract permits short hints
+        if stage == "outline":
+            contract = snap.get("outline_contract") if isinstance(snap.get("outline_contract"), dict) else {}
+            if contract.get("manuscript_policy") != "structure_hint_only":
+                out["source_manuscript_blocks"] = []
+            else:
+                out["source_manuscript_blocks"] = [
+                    str(x)[:1500] for x in (snap.get("source_manuscript_blocks") or [])[:2]
+                ]
+        else:
+            out.pop("source_outline_blocks", None)
+            out.pop("source_reference_outline_blocks", None)
+            out.pop("source_manuscript_blocks", None)
+            out.pop("outline_contract", None)
+        return out
+
     def build_for_outline(self, book_id: UUID) -> dict:
-        snap = self.build_snapshot(book_id)
+        snap = self.apply_stage_whitelist(self.build_snapshot(book_id), "outline")
         self.persist_snapshot(book_id, "outline", snap)
         return snap
 
     def build_for_narrative(self, book_id: UUID) -> dict:
-        snap = self.build_snapshot(book_id)
+        snap = self.apply_stage_whitelist(self.build_snapshot(book_id), "narrative")
         self.persist_snapshot(book_id, "narrative", snap)
         return snap
 
     def build_for_chapter(self, book_id: UUID, chapter_index: int) -> dict:
-        snap = self.build_snapshot(book_id, chapter_index=chapter_index)
+        snap = self.apply_stage_whitelist(
+            self.build_snapshot(book_id, chapter_index=chapter_index), "chapter"
+        )
         self.persist_snapshot(book_id, "chapter", snap)
         return snap
 
     def build_for_review(self, book_id: UUID) -> dict:
-        snap = self.build_snapshot(book_id)
+        snap = self.apply_stage_whitelist(self.build_snapshot(book_id), "review")
         self.persist_snapshot(book_id, "review", snap)
         return snap
 

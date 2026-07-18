@@ -18,6 +18,8 @@ from app.schemas.review_workspace import (
     ReviewWorkspaceRunIn,
     ReviewWorkspaceRunOut,
     ReviewWorkspaceSummaryOut,
+    WorkspaceFindingBatchPreviewIn,
+    WorkspaceFindingBatchPreviewOut,
     WorkspaceFindingApplyIn,
     WorkspaceFindingApplyOut,
     WorkspaceFindingOut,
@@ -187,8 +189,30 @@ def review_workspace_apply_finding(
             chat_model=_chat_model_for_book(book, user, db),
             replacement_text=body.replacement_text,
             action_type=body.action_type,
+            action_option_id=body.action_option_id,
         )
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
     db.commit()
     return WorkspaceFindingApplyOut(**result)
+
+
+@router.post(
+    "/{book_id}/review-workspace/findings/batch-preview",
+    response_model=WorkspaceFindingBatchPreviewOut,
+)
+def review_workspace_batch_preview_findings(
+    book_id: UUID,
+    body: WorkspaceFindingBatchPreviewIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    book = book_service.get_book_or_404(book_id, user, db)
+    result = ReviewWorkspaceService(db).batch_preview_findings(
+        book,
+        body.finding_ids,
+        chat_model=_chat_model_for_book(book, user, db),
+        limit=body.limit,
+    )
+    db.commit()
+    return WorkspaceFindingBatchPreviewOut(**result)

@@ -44,6 +44,19 @@ const TAB_LABELS: Record<LiteratureTab, string> = {
   official_docs: "官方文档",
 };
 
+/** 资料与引用：来源分类（与后端 source_registry 对齐的起步标签） */
+const SOURCE_TYPE_FILTERS = [
+  { id: "all", label: "全部" },
+  { id: "paper", label: "论文" },
+  { id: "book", label: "图书" },
+  { id: "government", label: "政府/政策" },
+  { id: "statistics", label: "统计数据" },
+  { id: "industry_report", label: "行业报告" },
+  { id: "newspaper", label: "报刊" },
+  { id: "web", label: "普通网页" },
+  { id: "user_material", label: "用户资料" },
+] as const;
+
 type Props = {
   bookId: string;
   citationStyle: CitationStyle | null;
@@ -92,6 +105,7 @@ export default function LiteraturePanel({
   const [query, setQuery] = useState(defaultQuery);
   const [searching, setSearching] = useState(false);
   const [tab, setTab] = useState<LiteratureTab>("papers");
+  const [sourceTypeFilter, setSourceTypeFilter] = useState<(typeof SOURCE_TYPE_FILTERS)[number]["id"]>("all");
   const [tabbed, setTabbed] = useState<Record<LiteratureTab, LiteraturePaper[]>>(emptyTabbed);
   const [refinedQueries, setRefinedQueries] = useState<string[]>([]);
   const [mustInclude, setMustInclude] = useState<string[]>([]);
@@ -262,7 +276,16 @@ export default function LiteraturePanel({
     }
   }
 
-  const results = tabbed[tab] ?? [];
+  const results = (tabbed[tab] ?? []).filter((p) => {
+    if (sourceTypeFilter === "all") return true;
+    const src = String(p.source || p.source_label || "").toLowerCase();
+    if (sourceTypeFilter === "paper") {
+      return ["openalex", "crossref", "semantic_scholar", "arxiv", "paper"].some((k) => src.includes(k)) || tab === "papers";
+    }
+    if (sourceTypeFilter === "web") return src.includes("web") || tab === "wiki" || tab === "official_docs";
+    if (sourceTypeFilter === "user_material") return src.includes("user");
+    return src.includes(sourceTypeFilter);
+  });
 
   function toggle(p: LiteraturePaper) {
     const k = literaturePaperKey(p);
@@ -486,6 +509,22 @@ export default function LiteraturePanel({
                 onClick={() => setTab(k)}
               >
                 {TAB_LABELS[k]} ({tabbed[k].length})
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {SOURCE_TYPE_FILTERS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                className={`rounded px-2 py-0.5 text-[10px] ${
+                  sourceTypeFilter === f.id
+                    ? "bg-slate-800 text-white"
+                    : "border border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+                onClick={() => setSourceTypeFilter(f.id)}
+              >
+                {f.label}
               </button>
             ))}
           </div>
