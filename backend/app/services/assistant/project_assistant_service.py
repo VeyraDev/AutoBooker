@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.constants.style_types import StyleType
+from app.constants.style_types import STYLE_TYPE_LABELS, StyleType
 from app.llm.client import LLMClient
 from app.llm.providers import resolve_assistant_model
 from app.models.assistant_turn import AssistantTrace, AssistantTurn
@@ -31,11 +32,9 @@ from app.services.assistant.book_settings_context import (
     set_setting_origin,
 )
 from app.services.assistant.context_compression_service import ContextCompressionService
-from app.services.assistant.external_search_service import ExternalSearchService
 from app.services.assistant.project_memory_service import ProjectMemoryService
 from app.services.assistant.quick_fill_ops import record_quick_fill, snapshot_settings, undo_quick_fill
 from app.services.assistant.tool_orchestrator import ToolOrchestrator
-from app.services.literature_search_service import LiteratureSearchService
 from app.services.sources.source_library_service import SourceLibraryService
 from app.services.writing.writing_basis_service import WritingBasisService
 from app.utils.json_llm import parse_llm_json
@@ -56,6 +55,7 @@ def _trim_papers(items: Any, limit: int = 30) -> list[dict[str, Any]]:
             continue
         out.append(
             {
+                "id": p.get("id"),
                 "title": p.get("title"),
                 "authors": list(p.get("authors") or [])[:5],
                 "year": p.get("year"),
@@ -65,6 +65,17 @@ def _trim_papers(items: Any, limit: int = 30) -> list[dict[str, Any]]:
                 "doi": p.get("doi"),
                 "external_id": p.get("external_id"),
                 "abstract_preview": (str(p.get("abstract_preview") or "")[:200] or None),
+                "snippet": (str(p.get("snippet") or p.get("abstract_preview") or "")[:500] or None),
+                "source_type": p.get("source_type"),
+                "provider": p.get("provider") or p.get("source"),
+                "publisher": p.get("publisher"),
+                "published_at": p.get("published_at"),
+                "relevance": p.get("relevance"),
+                "credibility_hint": p.get("credibility_hint"),
+                "citeability": p.get("citeability"),
+                "metadata_missing": list(p.get("metadata_missing") or []),
+                "isbn": p.get("isbn"),
+                "degraded": p.get("degraded"),
             }
         )
     return out
@@ -77,11 +88,20 @@ def _compact_search_result(sr: dict[str, Any]) -> dict[str, Any]:
         "github": _trim_papers(result.get("github")),
         "wiki": _trim_papers(result.get("wiki")),
         "official_docs": _trim_papers(result.get("official_docs")),
+        "books": _trim_papers(result.get("books")),
+        "news": _trim_papers(result.get("news")),
+        "government": _trim_papers(result.get("government")),
+        "industry_reports": _trim_papers(result.get("industry_reports")),
+        "technical": _trim_papers(result.get("technical")),
+        "web": _trim_papers(result.get("web")),
         "items": _trim_papers(result.get("items")),
         "refined_queries": list(result.get("refined_queries") or [])[:8],
         "warnings": list(result.get("warnings") or [])[:5],
         "source_hint": result.get("source_hint"),
         "query": result.get("query") or sr.get("raw_query"),
+        "facets": list(result.get("facets") or [])[:7],
+        "execution": result.get("execution") or {},
+        "plan": result.get("plan") or {},
     }
     # person_works fields
     for key in ("person", "institution", "role", "candidates", "works", "research_directions", "source_scope", "needs_disambiguation"):
@@ -99,6 +119,17 @@ def _compact_search_result(sr: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _tool_search_type(name: str, payload: dict[str, Any]) -> str:
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+    plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
+    intent = plan.get("intent") if isinstance(plan.get("intent"), dict) else {}
+    return str(
+        payload.get("search_type")
+        or intent.get("kind")
+        or ("person_works" if name == "search_person_works" else "web")
+    )
+
+
 def extract_search_result_from_turn(turn: AssistantTurn) -> dict[str, Any] | None:
     """Recover search payload from persisted turn (basis_patch or tool_calls)."""
     meta = turn.basis_patch if isinstance(turn.basis_patch, dict) else {}
@@ -109,14 +140,13 @@ def extract_search_result_from_turn(turn: AssistantTurn) -> dict[str, Any] | Non
     for r in tools:
         if not isinstance(r, dict) or not r.get("ok"):
             continue
-        if r.get("name") not in {"search_references", "search_literature", "search_person_works"}:
+        if r.get("name") not in {"search_references", "search_sources", "search_literature", "search_person_works"}:
             continue
         payload = r.get("data") if isinstance(r.get("data"), dict) else {}
         wrapped = {
             "ok": True,
             "mode": payload.get("mode") or "user_query",
-            "search_type": payload.get("search_type")
-            or ("person_works" if r.get("name") == "search_person_works" else "literature"),
+            "search_type": _tool_search_type(str(r.get("name") or ""), payload),
             "raw_query": payload.get("raw_query") or "",
             "queries": payload.get("queries") or payload.get("queries_used") or [],
             "summary": payload.get("summary") or "",
@@ -133,6 +163,7 @@ _STARTUP_TOOL_NAMES = frozenset(
         "inspect_workbook",
         "read_sheet_range",
         "search_references",
+        "search_sources",
         "suggest_book_settings",
         "assess_outline_sources",
         # legacy still accepted inside loop
@@ -299,6 +330,52 @@ def _apply_book_settings_patch(
     return updated
 
 
+_REQUESTED_STYLE_LABELS = {
+    "biography": "人物传记",
+    "memoir": "回忆录",
+    "fiction": "虚构文学",
+}
+
+
+def _reconcile_setting_patch(
+    book: Book,
+    requested_patch: dict[str, Any],
+    updated_fields: list[str],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Return values that actually took effect and explicit rejection metadata."""
+    current = current_book_settings(book)
+    applied = {
+        field: current.get(field)
+        for field in dict.fromkeys(updated_fields)
+        if field in current
+    }
+    rejections: list[dict[str, Any]] = []
+    requested_style = str(requested_patch.get("style_type") or "").strip()
+    if requested_style and requested_style not in _VALID_STYLES:
+        rejections.append(
+            {
+                "field": "style_type",
+                "requested_value": requested_style,
+                "requested_label": _REQUESTED_STYLE_LABELS.get(requested_style, requested_style),
+                "current_value": current.get("style_type"),
+                "current_label": STYLE_TYPE_LABELS.get(str(current.get("style_type") or ""), str(current.get("style_type") or "")),
+                "reason": "unsupported_writing_route",
+            }
+        )
+
+    settings = dict(book.ai_inferred_settings) if isinstance(book.ai_inferred_settings, dict) else {}
+    if rejections:
+        rejected = rejections[0]
+        settings["pending_writing_spec"] = {
+            **rejected,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    elif "style_type" in applied:
+        settings.pop("pending_writing_spec", None)
+    book.ai_inferred_settings = settings
+    return applied, rejections
+
+
 def _silent_sync_basis(book: Book, basis: Any) -> None:
     """Downstream compatibility only — not a second settings form."""
     if book.topic_brief:
@@ -404,19 +481,45 @@ _MACHINE_LEAK_RE = (
 )
 
 
-def _format_patch_value(value: Any) -> str:
+def _format_patch_value(field: str, value: Any) -> str:
     if isinstance(value, list):
         return "、".join(str(x).strip() for x in value if str(x).strip())
+    if field == "book_type":
+        return {"nonfiction": "大众非虚构", "academic": "学术专著"}.get(str(value), str(value))
+    if field == "style_type":
+        return STYLE_TYPE_LABELS.get(str(value), str(value))
     return str(value).strip()
+
+
+def _strip_declared_setting_dump(message: str) -> str:
+    """Remove model-authored field dumps; the server appends only applied changes."""
+    kept: list[str] = []
+    dropping = False
+    for line in (message or "").splitlines():
+        stripped = line.strip()
+        if "本轮已写入正式设定" in stripped:
+            dropping = True
+            continue
+        if dropping:
+            normalized = stripped.lstrip("-*• ")
+            if not stripped or any(
+                normalized.startswith(f"{label}：") or normalized.startswith(f"{label}:")
+                for label in _FIELD_LABELS_ZH.values()
+            ):
+                continue
+            dropping = False
+        kept.append(line)
+    return "\n".join(kept).strip()
 
 
 def _ensure_user_facing_update_message(
     message: str,
     patch: dict[str, Any],
     decisions: list[dict[str, Any]],
+    rejections: list[dict[str, Any]] | None = None,
 ) -> str:
     """Strip machine field dumps; if patch applied but reply hides it, append a natural summary."""
-    text = (message or "").strip()
+    text = _strip_declared_setting_dump(message)
     # Drop lines that are clearly machine-field dumps
     cleaned_lines: list[str] = []
     for line in text.splitlines():
@@ -434,13 +537,25 @@ def _ensure_user_facing_update_message(
         cleaned_lines.append(line)
     text = "\n".join(cleaned_lines).strip()
 
-    if not patch:
-        return text
+    rejection_notes: list[str] = []
+    for rejection in rejections or []:
+        if rejection.get("field") != "style_type":
+            continue
+        requested = str(rejection.get("requested_label") or rejection.get("requested_value") or "该体裁")
+        current = str(rejection.get("current_label") or rejection.get("current_value") or "现有体裁")
+        rejection_notes.append(
+            f"已识别到“{requested}”这一写作体裁，但当前二级体裁与写作 Prompt 路由尚未支持该规格，"
+            f"因此没有覆盖现有的“{current}”。该要求已作为待支持写作规格保留。"
+        )
 
-    # If reply already explains updates in Chinese labels, keep it
+    if not patch:
+        return "\n\n".join(part for part in [text, *rejection_notes] if part)
+
+    # A natural explanation plus the authoritative right panel is enough; do not
+    # turn every successful patch back into a fixed field-by-field template.
     zh_hits = sum(1 for label in _FIELD_LABELS_ZH.values() if label in text)
-    if zh_hits >= min(2, len(patch)) and not any(tok in text for tok in _MACHINE_LEAK_RE):
-        return text
+    if text and not any(tok in text for tok in _MACHINE_LEAK_RE):
+        return "\n\n".join([text, *rejection_notes])
 
     reasons = {
         str(d.get("field")): str(d.get("reason") or "").strip()
@@ -450,7 +565,7 @@ def _ensure_user_facing_update_message(
     bullets: list[str] = []
     for key, value in patch.items():
         label = _FIELD_LABELS_ZH.get(key, key)
-        rendered = _format_patch_value(value)
+        rendered = _format_patch_value(key, value)
         if not rendered:
             continue
         reason = reasons.get(key) or ""
@@ -459,15 +574,16 @@ def _ensure_user_facing_update_message(
         else:
             bullets.append(f"- {label}：{rendered}")
     if not bullets:
-        return text
+        return "\n\n".join([text, *rejection_notes])
 
-    summary = "本轮已写入正式设定：\n" + "\n".join(bullets)
+    summary = "已更新的正式设定：\n" + "\n".join(bullets)
     if not text:
-        return summary
+        return "\n\n".join([summary, *rejection_notes])
     # If text still leaks machine keys, prefer summary + cleaned remainder without dumps
     if any(tok in text for tok in _MACHINE_LEAK_RE) or zh_hits < 1:
-        return f"{summary}\n\n{text}" if text and not any(tok in text for tok in _MACHINE_LEAK_RE[:8]) else summary
-    return f"{text}\n\n{summary}"
+        base = f"{summary}\n\n{text}" if text and not any(tok in text for tok in _MACHINE_LEAK_RE[:8]) else summary
+        return "\n\n".join([base, *rejection_notes])
+    return "\n\n".join([text, summary, *rejection_notes])
 
 
 def _book_support_query(book: Book) -> str:
@@ -490,8 +606,6 @@ class ProjectAssistantService:
         self._tools = ToolOrchestrator(db)
         self._memories = ProjectMemoryService(db)
         self._compression = ContextCompressionService(db)
-        self._external = ExternalSearchService()
-        self._literature = LiteratureSearchService(db)
 
     def _build_user_prompt(
         self,
@@ -556,7 +670,7 @@ class ProjectAssistantService:
         # Legacy: search_request → search_references tool
         search_req = _as_dict(data.get("search_request"))
         if search_req.get("required") and not any(
-            str(c.get("name")) in {"search_references", "search_literature", "search_person_works"} for c in calls
+            str(c.get("name")) in {"search_references", "search_sources", "search_literature", "search_person_works"} for c in calls
         ):
             calls.append(
                 {
@@ -620,13 +734,12 @@ class ProjectAssistantService:
             batch = self._tools.execute(book, user, safe_calls, chapter_index=chapter_index)
             executed_tools.extend(batch)
             for r in batch:
-                if r.get("name") in {"search_references", "search_literature", "search_person_works"} and r.get("ok"):
+                if r.get("name") in {"search_references", "search_sources", "search_literature", "search_person_works"} and r.get("ok"):
                     payload = r.get("data") if isinstance(r.get("data"), dict) else {}
                     search_result = {
                         "ok": True,
                         "mode": payload.get("mode") or "user_query",
-                        "search_type": payload.get("search_type")
-                        or ("person_works" if r.get("name") == "search_person_works" else "literature"),
+                        "search_type": _tool_search_type(str(r.get("name") or ""), payload),
                         "raw_query": payload.get("raw_query") or "",
                         "queries": payload.get("queries") or payload.get("queries_used") or [],
                         "result": payload.get("result") if "result" in payload else payload,
@@ -704,12 +817,12 @@ class ProjectAssistantService:
             batch = self._tools.execute(book, user, leftover, chapter_index=chapter_index)
             executed_tools.extend(batch)
             for r in batch:
-                if r.get("name") in {"search_references", "search_literature", "search_person_works"} and r.get("ok"):
+                if r.get("name") in {"search_references", "search_sources", "search_literature", "search_person_works"} and r.get("ok"):
                     payload = r.get("data") if isinstance(r.get("data"), dict) else {}
                     search_result = {
                         "ok": True,
                         "mode": payload.get("mode") or "user_query",
-                        "search_type": payload.get("search_type") or "literature",
+                        "search_type": _tool_search_type(str(r.get("name") or ""), payload),
                         "raw_query": payload.get("raw_query") or "",
                         "queries": payload.get("queries") or [],
                         "result": payload.get("result") if "result" in payload else payload,
@@ -823,9 +936,10 @@ class ProjectAssistantService:
             {k: v for k, v in raw_patch.items() if v is not None},
             setting_decisions,
         )
-        _apply_book_settings_patch(book, filtered, setting_decisions=setting_decisions)
+        updated_fields = _apply_book_settings_patch(book, filtered, setting_decisions=setting_decisions)
+        applied_patch, setting_rejections = _reconcile_setting_patch(book, filtered, updated_fields)
         assistant_message = _ensure_user_facing_update_message(
-            assistant_message, filtered, setting_decisions
+            assistant_message, applied_patch, setting_decisions, setting_rejections
         )
 
         extracted = _apply_extracted_requirements(
@@ -839,7 +953,9 @@ class ProjectAssistantService:
         self.db.flush()
 
         turn_meta = {
-            "book_settings_patch": filtered,
+            "book_settings_patch": applied_patch,
+            "requested_book_settings_patch": filtered,
+            "setting_rejections": setting_rejections,
             "setting_decisions": setting_decisions,
             "assistant_mode": mode,
             "tool_iterations": len(executed_tools),
@@ -932,6 +1048,7 @@ class ProjectAssistantService:
             "book_settings": current_book_settings(book),
             "setting_origins": get_setting_origins(book),
             "setting_decisions": setting_decisions,
+            "setting_rejections": setting_rejections,
             "extracted_requirements": extracted,
             "file_judgements": file_judgements,
             "outline_route": outline_route,

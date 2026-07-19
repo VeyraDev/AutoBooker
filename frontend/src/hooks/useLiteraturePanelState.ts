@@ -9,6 +9,7 @@ export type LiteraturePanelPersisted = {
   refinedQueries: string[];
   sourceHint: string;
   selectedKeys: string[];
+  items?: LiteraturePaper[];
 };
 
 function storageKey(bookId: string, mode: string) {

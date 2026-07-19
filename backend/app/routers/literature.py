@@ -7,12 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.agents.literature_agent import (
-    LiteratureAgent,
-    _preserve_english_raw_query,
-    _should_skip_auto_refine,
-    format_paper_citation,
-)
+from app.agents.literature_agent import format_paper_citation
 from app.database import get_db
 from app.models.citation import CitationSource
 from app.models.user import User
@@ -29,6 +24,7 @@ from app.schemas.literature import (
     LiteratureSearchIn,
     LiteratureSearchOut,
 )
+from app.schemas.source_search import SourceSearchIn
 from app.services import book_service
 from app.services.citation_service import (
     create_citation_from_paper,
@@ -37,12 +33,9 @@ from app.services.citation_service import (
     paper_to_dict,
 )
 from app.services.literature_content import build_quote_paragraph, fetch_paper_quotable_snippet
-from app.services.literature_profiles import (
-    SOURCE_LABELS,
-    literature_profile,
-    profile_source_hint,
-)
+from app.services.literature_profiles import SOURCE_LABELS
 from app.services.literature_query_refiner import refine_literature_query
+from app.services.source_search.service import UnifiedSourceSearchService
 
 router = APIRouter(prefix="/books", tags=["literature"])
 
@@ -89,52 +82,29 @@ def literature_search(
     db: Session = Depends(get_db),
 ):
     book = book_service.get_book_or_404(book_id, user, db)
-    profile = literature_profile(book.book_type, book.style_type)
-    agent = LiteratureAgent()
+    raw_q = body.query.strip() or next((q.strip() for q in (body.refined_queries or []) if q.strip()), "")
 
-    raw_q = body.query.strip()
-    must_inc = body.must_include or []
-    must_exc = body.must_exclude or []
-
-    if _should_skip_auto_refine(raw_q):
-        # 短英文专有名词：忽略 session/前端带来的旧 refined_queries
-        queries = [raw_q]
-        must_inc = []
-        must_exc = []
-    else:
-        queries = body.refined_queries or []
-        if not queries and not body.skip_refine:
-            refined = refine_literature_query(db, book, raw_query=raw_q)
-            queries = refined["refined_queries"]
-            must_inc = refined.get("must_include") or must_inc
-            must_exc = refined.get("must_exclude") or must_exc
-        elif not queries:
-            queries = [raw_q] if raw_q else []
-        queries = _preserve_english_raw_query(raw_q, queries)
-
-    if not queries:
+    if not raw_q:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "请提供检索词或先生成检索词")
-
-    tabbed = agent.search_tabbed(
-        queries,
-        profile,
-        rows=body.rows,
-        must_include=must_inc,
-        must_exclude=must_exc,
-        raw_query=raw_q,
+    unified = UnifiedSourceSearchService().search(
+        SourceSearchIn(
+            query=raw_q,
+            rows=body.rows,
+            requested_source_types=["paper", "technical", "web"],
+        ),
+        book=book,
     )
-
-    papers = _to_papers(tabbed["papers"])
-    github = _to_papers(tabbed["github"])
-    wiki = _to_papers(tabbed["wiki"])
-    official = _to_papers(tabbed["official_docs"])
+    papers = _to_papers(unified.papers)
+    github = _to_papers(unified.github)
+    wiki = _to_papers(unified.wiki)
+    official = _to_papers(unified.official_docs)
     flat = papers + github + wiki + official
 
     book.last_literature_query = {
-        "query": body.query,
-        "refined_queries": tabbed.get("refined_queries") or queries,
-        "must_include": must_inc,
-        "must_exclude": must_exc,
+        "query": raw_q,
+        "refined_queries": unified.refined_queries,
+        "intent": unified.plan.intent.model_dump(),
+        "execution": unified.execution.model_dump(),
     }
     db.commit()
 
@@ -143,10 +113,10 @@ def literature_search(
         github=github,
         wiki=wiki,
         official_docs=official,
-        refined_queries=tabbed.get("refined_queries") or queries,
-        warnings=tabbed.get("warnings") or [],
-        profile=profile,
-        source_hint=profile_source_hint(profile),
+        refined_queries=unified.refined_queries,
+        warnings=unified.warnings,
+        profile="unified",
+        source_hint=unified.source_hint,
         items=flat,
     )
 

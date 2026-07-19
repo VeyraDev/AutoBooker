@@ -90,3 +90,9 @@ class Book(Base):
     )
     citations = relationship("Citation", back_populates="book", cascade="all, delete-orphan")
     figures = relationship("Figure", back_populates="book", cascade="all, delete-orphan")
+
+    @property
+    def pending_writing_spec(self):
+        settings = self.ai_inferred_settings if isinstance(self.ai_inferred_settings, dict) else {}
+        pending = settings.get("pending_writing_spec")
+        return dict(pending) if isinstance(pending, dict) else None

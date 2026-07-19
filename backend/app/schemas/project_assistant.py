@@ -76,6 +76,16 @@ class SourceOut(BaseModel):
     status: str
     summary: str | None = None
     detected_roles: list[str] = Field(default_factory=list)
+    source_url: str | None = None
+    source_type: str | None = None
+    provider: str | None = None
+    retrieved_at: datetime | None = None
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
+    reference_file_id: UUID | None = None
+    index_status: str | None = None
+    lifecycle_status: str | None = None
+    chunk_count: int = 0
+    used_stages: list[str] = Field(default_factory=list)
     segments: list[SourceSegmentOut] = Field(default_factory=list)
 
 
@@ -104,6 +114,7 @@ class TurnOut(BaseModel):
     book_settings: dict[str, Any] = Field(default_factory=dict)
     setting_origins: dict[str, Any] = Field(default_factory=dict)
     setting_decisions: list[dict[str, Any]] = Field(default_factory=list)
+    setting_rejections: list[dict[str, Any]] = Field(default_factory=list)
     extracted_requirements: list[dict[str, Any]] = Field(default_factory=list)
     confirmed_requirements: list[dict[str, Any]] = Field(default_factory=list)
     file_judgements: list[dict[str, Any]] = Field(default_factory=list)

@@ -637,7 +637,23 @@ def _create_review_report(
 ) -> ChapterReview:
     canonical = canonical_markdown(md)
     digest = snapshot_hash(canonical)
+    from app.services.sources.stage_source_context_service import StageSourceContextService
+
+    evidence_query = f"{ch.title or ''}\n{canonical[:5000]}"
+    source_items = StageSourceContextService(db).retrieve(
+        book.id,
+        stage="review",
+        query=evidence_query,
+        top_k=16,
+    )
+    selected_citation_ids = {
+        str(item.get("citation_id"))
+        for item in source_items
+        if item.get("source_kind") == "citation" and item.get("citation_id")
+    }
     citations = list_citations_sorted(db, book.id)
+    if selected_citation_ids:
+        citations = [row for row in citations if str(row.id) in selected_citation_ids]
     citation_style = book.citation_style.value if book.citation_style else "apa"
     cite_lines = []
     for c in citations[:200]:
@@ -652,13 +668,16 @@ def _create_review_report(
             if citation_style == "gb_t7714" and c.list_index is not None
             else f"{c.title} ({c.year or 'n.d.'}{suffix})"
         )
+        abstract = (c.abstract_preview or c.quotable_snippet or "").strip()
+        if abstract:
+            line += f"；证据摘要：{abstract[:500]}"
         cite_lines.append(line)
     figures = db.query(Figure).filter(Figure.book_id == book.id, Figure.chapter_index == ch.index).all()
     figure_lines = [f"- {f.figure_type.value}: {(f.caption or f.raw_annotation or '')[:120]}" for f in figures]
 
     wcb = WritingContextBuilder(db)
-    snap = wcb.build_for_review(book.id)
-    user_material = wcb.to_prompt_block(snap)[:4000] or book.user_material or ""
+    snap = wcb.build_for_review(book.id, source_items=source_items)
+    user_material = wcb.to_prompt_block(snap)[:10000] or book.user_material or ""
     if review_context_block:
         user_material = f"{user_material}\n\n{review_context_block}".strip()
 

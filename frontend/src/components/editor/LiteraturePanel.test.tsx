@@ -18,13 +18,19 @@ const citationApi = vi.hoisted(() => ({
   weaveCitation: vi.fn(),
 }));
 
+const sourceSearchApi = vi.hoisted(() => ({
+  addSourceSearchResults: vi.fn(),
+  listSourceSearchCapabilities: vi.fn(),
+  searchSources: vi.fn(),
+}));
+
 vi.mock("@/api/citations", () => citationApi);
 
 vi.mock("@/api/literature", () => ({
-  addSelectedLiterature: vi.fn(),
   refineLiteratureQuery: vi.fn(),
-  searchLiterature: vi.fn(),
 }));
+
+vi.mock("@/api/sourceSearch", () => sourceSearchApi);
 
 vi.mock("react-hot-toast", () => ({
   default: {
@@ -98,6 +104,49 @@ beforeEach(() => {
     created_at: "2026-07-19T11:00:00Z",
     finished_at: "2026-07-19T11:00:01Z",
   });
+  sourceSearchApi.listSourceSearchCapabilities.mockResolvedValue([
+    { id: "paper", label: "论文", available: true, connectors: ["openalex"] },
+    { id: "news", label: "新闻/访谈", available: true, connectors: ["tavily"] },
+  ]);
+  sourceSearchApi.searchSources.mockResolvedValue({
+    query: "人物访谈",
+    papers: [],
+    github: [],
+    wiki: [],
+    official_docs: [],
+    refined_queries: ["人物访谈 新闻 采访 专访 报道"],
+    items: [
+      {
+        id: "news-1",
+        title: "一次公开访谈",
+        authors: [],
+        url: "https://example.com/interview",
+        source_type: "news",
+        provider: "tavily",
+        snippet: "访谈摘要",
+        citeability: false,
+        metadata_missing: ["责任者", "日期"],
+      },
+    ],
+    facets: [{ id: "news", label: "新闻/访谈", count: 1 }],
+    execution: {
+      requested_source_types: ["news"],
+      attempted_connectors: ["tavily:news"],
+      successful_connectors: ["tavily:news"],
+      failed_connectors: {},
+      unavailable_source_types: [],
+      degraded: false,
+      duration_ms: 320,
+      result_counts: { news: 1 },
+    },
+  });
+  sourceSearchApi.addSourceSearchResults.mockResolvedValue({
+    target: "source_library",
+    added_count: 1,
+    sources: [],
+    citations: [],
+    rejected: [],
+  });
 });
 
 afterEach(() => {
@@ -106,6 +155,29 @@ afterEach(() => {
 });
 
 describe("LiteraturePanel citation verification", () => {
+  it("runs a new backend search when the source group changes", async () => {
+    renderPanel();
+    const input = await screen.findByPlaceholderText("人物、事件、图书、政策、报告或主题…");
+    await userEvent.type(input, "人物访谈");
+    await userEvent.click(screen.getByRole("button", { name: "搜索" }));
+
+    await waitFor(() => expect(sourceSearchApi.searchSources).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("一次公开访谈")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "新闻/访谈 (1)" }));
+    await waitFor(() => expect(sourceSearchApi.searchSources).toHaveBeenCalledTimes(2));
+    expect(sourceSearchApi.searchSources.mock.calls[1][1].sourceTypes).toEqual(["news"]);
+    await userEvent.click(await screen.findByLabelText("选择：一次公开访谈"));
+    expect(screen.getByRole("button", { name: "加入文献库" }).hasAttribute("disabled")).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "加入资料库" }));
+    await waitFor(() => {
+      expect(sourceSearchApi.addSourceSearchResults).toHaveBeenCalledWith(
+        "book-1",
+        "source_library",
+        expect.arrayContaining([expect.objectContaining({ title: "一次公开访谈" })]),
+      );
+    });
+  });
+
   it("renders verification status and refreshes a single citation", async () => {
     renderPanel();
 

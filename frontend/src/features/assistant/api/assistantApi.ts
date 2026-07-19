@@ -50,6 +50,11 @@ export type SourceItem = {
   status: string;
   summary?: string | null;
   detected_roles?: string[];
+  reference_file_id?: string | null;
+  index_status?: string | null;
+  lifecycle_status?: string | null;
+  chunk_count?: number;
+  used_stages?: string[];
   segments?: SourceSegment[];
 };
 
@@ -89,6 +94,7 @@ export type TurnResponse = {
   book_settings?: Record<string, unknown>;
   setting_origins?: Record<string, SettingOrigin>;
   setting_decisions?: Record<string, unknown>[];
+  setting_rejections?: Record<string, unknown>[];
   extracted_requirements?: ExtractedRequirement[];
   confirmed_requirements?: ExtractedRequirement[];
   file_judgements?: Record<string, unknown>[];

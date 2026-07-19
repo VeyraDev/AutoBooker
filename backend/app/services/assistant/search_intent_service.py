@@ -21,15 +21,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SearchIntent:
-    search_type: str = "person_works"
+    search_type: str = "web"
     person_name: str = ""
     person_name_raw: str = ""
     institution: str | None = None
     role: str | None = None
     topic: str | None = None
     language: list[str] = field(default_factory=lambda: ["zh", "en"])
-    source_types: list[str] = field(default_factory=lambda: ["academic", "official_institution"])
-    require_author_match: bool = True
+    source_types: list[str] = field(default_factory=lambda: ["web"])
+    require_author_match: bool = False
     needs_disambiguation: bool = False
     display_query: str = ""
     raw_query: str = ""
@@ -54,32 +54,22 @@ class SearchIntent:
 def _weak_fallback_intent(raw: str) -> SearchIntent:
     """Weak rule fallback only when LLM fails — not the primary path."""
     text = re.sub(r"\s+", " ", (raw or "").strip())
-    # Prefer existing parser as last resort, without treating it as capability.
-    try:
-        from app.services.assistant.person_search_intent import build_person_search_intent
+    from app.schemas.source_search import SourceSearchPlanIn
+    from app.services.source_search.planner import SourceSearchPlanner
 
-        legacy = build_person_search_intent(text, query=text)
-        return SearchIntent(
-            search_type="person_works",
-            person_name=legacy.person_name,
-            person_name_raw=legacy.person_name_raw,
-            institution=legacy.institution,
-            role=legacy.role,
-            topic=legacy.topic,
-            language=list(legacy.language),
-            source_types=list(legacy.source_types),
-            require_author_match=legacy.require_author_match,
-            display_query=legacy.display_query or text,
-            raw_query=text,
-        )
-    except Exception:
-        return SearchIntent(
-            search_type="person_works",
-            person_name=text,
-            person_name_raw=text,
-            display_query=text,
-            raw_query=text,
-        )
+    plan = SourceSearchPlanner().build(SourceSearchPlanIn(query=text))
+    kind = plan.intent.kind
+    is_person = kind in {"person_profile", "person_works"}
+    return SearchIntent(
+        search_type=kind,
+        person_name=text if is_person else "",
+        person_name_raw=text if is_person else "",
+        topic=text,
+        source_types=list(plan.requested_source_types),
+        require_author_match=kind == "person_works",
+        display_query=text,
+        raw_query=text,
+    )
 
 
 def refine_search_intent(
@@ -108,39 +98,52 @@ def refine_search_intent(
     except Exception as exc:
         logger.warning("search intent LLM failed, weak fallback: %s", exc)
         intent = _weak_fallback_intent(raw)
-        if hint in {"person_works", "literature"}:
+        if hint and hint != "auto":
             intent.search_type = hint
+            intent.source_types = {
+                "person_profile": ["web", "news"],
+                "person_works": ["book", "paper", "web"],
+                "literature": ["paper"],
+                "book": ["book"],
+                "event_news": ["news", "web"],
+                "organization": ["web", "news"],
+                "government_data": ["government"],
+                "industry_report": ["industry_report"],
+                "technical": ["technical"],
+                "web": ["web"],
+            }.get(hint, intent.source_types)
         return intent
 
-    st = str(data.get("search_type") or hint or "person_works").strip()
-    if st not in {"person_works", "literature", "web"}:
-        st = "person_works" if hint != "literature" else "literature"
+    st = str(data.get("search_type") or hint or "web").strip()
+    allowed_types = {
+        "person_profile", "person_works", "literature", "book", "event_news",
+        "organization", "government_data", "industry_report", "technical", "web",
+    }
+    if st not in allowed_types:
+        st = "web"
 
     person = str(data.get("person_name") or "").strip()
     institution = str(data.get("institution") or "").strip() or None
     role = str(data.get("role") or "").strip() or None
     topic = str(data.get("topic") or "").strip() or None
     languages = data.get("language") if isinstance(data.get("language"), list) else ["zh", "en"]
-    source_types = (
-        data.get("source_types")
-        if isinstance(data.get("source_types"), list)
-        else ["academic", "official_institution"]
-    )
+    source_types = data.get("source_types") if isinstance(data.get("source_types"), list) else ["web"]
+    allowed_sources = {"paper", "book", "news", "government", "industry_report", "technical", "web"}
+    source_types = [str(value) for value in source_types if str(value) in allowed_sources]
     display = str(data.get("display_query") or "").strip() or raw
-    if not person and st == "person_works":
+    if not person and st in {"person_profile", "person_works"}:
         person = raw
 
     return SearchIntent(
         search_type=st,
-        person_name=person or raw,
+        person_name=person,
         person_name_raw=str(data.get("person_name_raw") or raw).strip() or raw,
         institution=institution,
         role=role,
         topic=topic,
         language=[str(x) for x in languages if str(x).strip()][:4] or ["zh", "en"],
-        source_types=[str(x) for x in source_types if str(x).strip()][:6]
-        or ["academic", "official_institution"],
-        require_author_match=bool(data.get("require_author_match", True)),
+        source_types=source_types[:7] or ["web"],
+        require_author_match=bool(data.get("require_author_match", st == "person_works")),
         needs_disambiguation=bool(data.get("needs_disambiguation", False)),
         display_query=display,
         raw_query=raw,
@@ -154,7 +157,7 @@ def refine_search_queries(
 ) -> list[str]:
     if isinstance(intent, dict):
         intent = SearchIntent(
-            search_type=str(intent.get("search_type") or "person_works"),
+            search_type=str(intent.get("search_type") or "web"),
             person_name=str(intent.get("person_name") or "").strip(),
             person_name_raw=str(intent.get("person_name_raw") or "").strip(),
             institution=str(intent.get("institution") or "").strip() or None,
@@ -166,7 +169,7 @@ def refine_search_queries(
             raw_query=str(intent.get("raw_query") or "").strip(),
         )
 
-    if intent.search_type == "literature":
+    if intent.search_type not in {"person_profile", "person_works"}:
         prompt = SEARCH_QUERIES_LITERATURE_PROMPT.format(
             raw_query=intent.raw_query or intent.display_query or intent.topic or "",
             topic=intent.topic or "",
@@ -203,7 +206,7 @@ def refine_search_queries(
         queries = _weak_fallback_queries(intent)
 
     # Person search: do NOT force 3 English fillers
-    if intent.search_type != "literature":
+    if intent.search_type in {"person_profile", "person_works"}:
         return list(dict.fromkeys(queries))[:8]
 
     # Literature: soft prefer some English but no hard filler mandate for person path

@@ -131,7 +131,7 @@ export default function RightPanel({
       <div className="right-panel-tab-bar">
         {tabBtn("detail", <ClipboardList className="h-4 w-4" aria-hidden />, "章节细则")}
         {tabBtn("refs", <ImageIcon className="h-4 w-4" aria-hidden />, "图表速览")}
-        {tabBtn("literature", <GraduationCap className="h-4 w-4" aria-hidden />, "文献搜索")}
+        {tabBtn("literature", <GraduationCap className="h-4 w-4" aria-hidden />, "资料搜索")}
         {tabBtn("ai", <MessageSquareText className="h-4 w-4" aria-hidden />, "AI 助手")}
         {tabBtn("review", <ShieldCheck className="h-4 w-4" aria-hidden />, "审阅")}
         {tabBtn("memory", <Brain className="h-4 w-4" aria-hidden />, "项目记忆")}

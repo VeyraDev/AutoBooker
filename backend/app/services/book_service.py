@@ -134,6 +134,9 @@ def update_book(book: Book, payload: dict, db: Session) -> Book:
         from app.services.writing.project_seed import mark_classification_source
 
         mark_classification_source(book, "user")
+        settings = dict(book.ai_inferred_settings) if isinstance(book.ai_inferred_settings, dict) else {}
+        settings.pop("pending_writing_spec", None)
+        book.ai_inferred_settings = settings
 
     # Field-level origins for startup assistant protection
     from app.services.assistant.book_settings_context import set_setting_origin

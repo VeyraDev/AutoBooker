@@ -73,6 +73,15 @@ function literaturePayloadFromToolData(data: Record<string, unknown>): {
       items,
       profile: src.profile as string | undefined,
       source_hint: src.source_hint as string | undefined,
+      books: (src.books as LiteratureSearchResult["books"]) ?? [],
+      news: (src.news as LiteratureSearchResult["news"]) ?? [],
+      government: (src.government as LiteratureSearchResult["government"]) ?? [],
+      industry_reports: (src.industry_reports as LiteratureSearchResult["industry_reports"]) ?? [],
+      technical: (src.technical as LiteratureSearchResult["technical"]) ?? [],
+      web: (src.web as LiteratureSearchResult["web"]) ?? [],
+      facets: (src.facets as LiteratureSearchResult["facets"]) ?? [],
+      execution: src.execution as LiteratureSearchResult["execution"],
+      plan: src.plan as LiteratureSearchResult["plan"],
     },
   };
 }
@@ -82,7 +91,7 @@ export function buildSeedFromToolResults(results: ToolResult[]): PanelToolSeed {
   for (const r of results) {
     if (!r.ok) continue;
     const data = r.data ?? {};
-    if (r.panel_hint === "literature" || r.name === "search_references" || r.name === "search_literature") {
+    if (r.panel_hint === "literature" || r.name === "search_references" || r.name === "search_sources" || r.name === "search_literature") {
       const lit = literaturePayloadFromToolData(data);
       if (lit) {
         seed.literatureQuery = lit.query;

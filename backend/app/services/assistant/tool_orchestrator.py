@@ -11,6 +11,7 @@ from app.llm.client import LLMClient
 from app.llm.providers import resolve_assistant_model
 from app.models.book import Book
 from app.models.user import User
+from app.schemas.source_search import SourceSearchIn
 from app.prompts.assistant.topic_proposal import (
     TOPIC_PROPOSAL_SYSTEM,
     build_topic_proposal_user_prompt,
@@ -18,18 +19,17 @@ from app.prompts.assistant.topic_proposal import (
     parse_topic_proposal,
 )
 from app.services.assistant.book_settings_context import assess_outline_sources, current_book_settings
-from app.services.assistant.external_search_service import ExternalSearchService
 from app.services.assistant.project_memory_service import ProjectMemoryService
 from app.services.assistant.search_intent_service import prepare_search, refine_search_intent, refine_search_queries
 from app.services.assistant.source_retrieve_service import retrieve_source_context
 from app.services.assistant.suggest_book_settings import suggest_book_settings
 from app.services.assistant.workbook_service import inspect_workbook, read_sheet_range
 from app.services.figure_service import get_chapter_figures
-from app.services.literature_search_service import LiteratureSearchService
 from app.services.outline_text import serialize_book_outline_markdown
 from app.services.review.review_workspace_service import ReviewWorkspaceService
 from app.services.sources.source_library_service import SourceLibraryService
 from app.services.sources.source_outline_bridge import confirm_source_usage, prepare_outline_context
+from app.services.source_search.service import UnifiedSourceSearchService
 from app.services.writing.writing_basis_service import WritingBasisService
 
 
@@ -58,9 +58,8 @@ class ToolOrchestrator:
         self._sources = SourceLibraryService(db)
         self._basis = WritingBasisService(db)
         self._memories = ProjectMemoryService(db)
-        self._literature = LiteratureSearchService(db)
+        self._source_search = UnifiedSourceSearchService()
         self._review = ReviewWorkspaceService(db)
-        self._external = ExternalSearchService()
         self._llm = LLMClient()
 
     def execute(
@@ -142,17 +141,7 @@ class ToolOrchestrator:
                         person = str(intent_arg.get("person_name") or intent_arg.get("display_query") or "").strip()
                     if not person and not intent_arg:
                         raise ValueError("先调用 prepare_search，或提供 person_name / intent+queries")
-                    data = self._external.search_person_works(
-                        person,
-                        institution=str(args.get("institution") or "").strip() or None,
-                        topic=str(args.get("topic") or "").strip() or None,
-                        role=str(args.get("role") or "").strip() or None,
-                        query=str(args.get("query") or person).strip() or None,
-                        selected_candidate_id=str(args.get("selected_candidate_id") or "").strip() or None,
-                        intent=intent_arg,
-                        queries=queries_arg,
-                        prepare_if_missing=True,
-                    )
+                    data = self._person_search_result(book, str(args.get("query") or person).strip(), rows=20)
                     last_search = data
                     cand_n = len(data.get("candidates") or [])
                     summary = (
@@ -213,11 +202,7 @@ class ToolOrchestrator:
                     if not search_data:
                         person = str(args.get("person_name") or args.get("person") or "").strip()
                         if person:
-                            search_data = self._external.search_person_works(
-                                person,
-                                institution=str(args.get("institution") or "").strip() or None,
-                                topic=str(args.get("topic") or "").strip() or None,
-                            )
+                            search_data = self._person_search_result(book, person)
                     if not search_data:
                         raise ValueError("需要先 search_person_works 或提供 person_name")
                     model = resolve_assistant_model(user)
@@ -285,7 +270,7 @@ class ToolOrchestrator:
                             data={"title": title, "rationale": rationale},
                         )
                     )
-                elif name == "search_literature":
+                elif name in {"search_literature", "search_sources"}:
                     query = str(args.get("query") or "").strip()
                     queries_arg = args.get("queries") if isinstance(args.get("queries"), list) else None
                     if not query and last_prepare and last_prepare.get("queries"):
@@ -297,13 +282,21 @@ class ToolOrchestrator:
                         query = str(queries_arg[0]).strip()
                     ch_idx = args.get("chapter_index", chapter_index)
                     ch_idx = int(ch_idx) if ch_idx is not None else None
-                    data = self._literature.search(
-                        book,
-                        query=query,
-                        queries=[str(q) for q in (queries_arg or []) if str(q).strip()][:8] or None,
-                        chapter_index=ch_idx,
-                        skip_refine=bool(queries_arg),
-                    )
+                    requested = args.get("source_types") if isinstance(args.get("source_types"), list) else []
+                    allowed = {"paper", "book", "news", "government", "industry_report", "technical", "web"}
+                    source_types = [str(value) for value in requested if str(value) in allowed]
+                    if name == "search_literature" and not source_types:
+                        source_types = ["paper"]
+                    data = self._source_search.search(
+                        SourceSearchIn(
+                            query=query,
+                            rows=int(args.get("rows") or 20),
+                            scope="chapter" if ch_idx is not None else "book",
+                            chapter_index=ch_idx,
+                            requested_source_types=source_types,
+                        ),
+                        book=book,
+                    ).model_dump(mode="json")
                     if queries_arg:
                         data = {**data, "queries_used": [str(q) for q in queries_arg if str(q).strip()][:8]}
                     results.append(_tool_result(name, ok=True, panel_hint="literature", data=data))
@@ -471,6 +464,34 @@ class ToolOrchestrator:
                 results.append(_tool_result(name, ok=False, error=str(exc)))
         return results
 
+    def _person_search_result(self, book: Book, query: str, *, rows: int = 20) -> dict[str, Any]:
+        unified = self._source_search.search(
+            SourceSearchIn(
+                query=query,
+                rows=rows,
+                scope="book",
+                requested_source_types=["book", "paper", "web"],
+            ),
+            book=book,
+        ).model_dump(mode="json")
+        works = [
+            {
+                **item,
+                "source": item.get("provider"),
+                "abstract_preview": item.get("snippet"),
+            }
+            for item in unified.get("items") or []
+        ]
+        return {
+            **unified,
+            "person": query,
+            "works": works,
+            "candidates": [],
+            "research_directions": [],
+            "needs_disambiguation": False,
+            "source_scope": unified.get("source_hint") or "统一资料搜索",
+        }
+
     def _search_references(
         self,
         book: Book,
@@ -483,7 +504,7 @@ class ToolOrchestrator:
         """Business-level search: intent → queries → multi-source → return candidates (no ingest)."""
         mode = str(args.get("mode") or "user_query").strip() or "user_query"
         raw_query = str(args.get("raw_query") or args.get("query") or "").strip()
-        progress: list[dict[str, Any]] = [{"stage": "intent", "message": "正在识别人物、机构和研究主题"}]
+        progress: list[dict[str, Any]] = [{"stage": "intent", "message": "正在识别查询意图和合适的资料来源"}]
 
         if mode == "book_support" and not raw_query:
             bits = [
@@ -496,16 +517,25 @@ class ToolOrchestrator:
         if not raw_query:
             raise ValueError("raw_query required")
 
-        model = resolve_assistant_model(user)
-        hint = str(args.get("search_type") or "").strip() or None
+        del user, last_prepare
         source_types = args.get("source_types") if isinstance(args.get("source_types"), list) else []
-        if not hint and source_types:
-            joined = " ".join(str(x) for x in source_types).lower()
-            if "person" in joined or "作者" in joined:
-                hint = "person_works"
-        prepared = prepare_search(raw_query, search_type_hint=hint, model=model)
-        intent = prepared.get("intent") or {}
-        queries = list(prepared.get("queries") or [])
+        allowed = {"paper", "book", "news", "government", "industry_report", "technical", "web"}
+        requested = [str(value) for value in source_types if str(value) in allowed]
+        ch_idx = args.get("chapter_index", chapter_index)
+        ch_idx = int(ch_idx) if ch_idx is not None else None
+        result = self._source_search.search(
+            SourceSearchIn(
+                query=raw_query,
+                rows=int(args.get("rows") or 25),
+                scope="chapter" if ch_idx is not None else "book",
+                chapter_index=ch_idx,
+                requested_source_types=requested,
+            ),
+            book=book,
+        ).model_dump(mode="json")
+        plan = result.get("plan") or {}
+        intent = plan.get("intent") or {}
+        queries = list((plan.get("queries_by_source") or {}).values())
         progress.append(
             {
                 "stage": "queries",
@@ -513,60 +543,21 @@ class ToolOrchestrator:
                 "queries": queries[:8],
             }
         )
-        st = str(intent.get("search_type") or hint or "literature")
-        ch_idx = args.get("chapter_index", chapter_index)
-        ch_idx = int(ch_idx) if ch_idx is not None else None
-
-        if st == "person_works":
-            result = self._external.search_person_works(
-                str(intent.get("person_name") or raw_query),
-                intent=intent,
-                queries=queries,
-                prepare_if_missing=False,
-            )
-            progress.append(
-                {
-                    "stage": "completed",
-                    "found": len(result.get("works") or []),
-                    "candidates": len(result.get("candidates") or []),
-                }
-            )
-            return {
-                "mode": mode,
-                "search_type": "person_works",
-                "raw_query": raw_query,
-                "queries": queries,
-                "prepare": prepared,
-                "progress": progress,
-                "result": result,
-                "auto_ingested": False,
-                "summary": (
-                    f"执行了 {len(queries) or 1} 组查询，作品 {len(result.get('works') or [])} 条，"
-                    f"候选身份 {len(result.get('candidates') or [])} 个。结果未自动入库。"
-                ),
-            }
-
-        lit = self._literature.search(
-            book,
-            query=raw_query,
-            queries=queries or None,
-            chapter_index=ch_idx,
-            skip_refine=bool(queries),
-        )
-        items = lit.get("items") or lit.get("papers") or []
+        st = str(intent.get("kind") or "web")
+        items = result.get("items") or []
         progress.append({"stage": "completed", "remaining": len(items), "queries_run": len(queries) or 1})
         return {
             "mode": mode,
-            "search_type": "literature",
+            "search_type": st,
             "raw_query": raw_query,
-            "queries": queries or lit.get("refined_queries") or [],
-            "prepare": prepared,
+            "queries": queries,
+            "prepare": {"intent": intent, "queries": queries},
             "progress": progress,
-            "result": lit,
+            "result": result,
             "auto_ingested": False,
             "summary": (
-                f"执行了 {len(queries) or 1} 组查询，共返回 {len(items)} 条候选。"
-                f"结果未自动入库，请用户筛选后加入资料库。"
+                f"执行了 {len(result.get('execution', {}).get('attempted_connectors') or [])} 个来源调用，"
+                f"共返回 {len(items)} 条候选。结果未自动入库，请用户筛选后加入资料库或文献库。"
             ),
         }
 

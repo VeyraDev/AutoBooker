@@ -24,6 +24,22 @@ def test_context_hash_changes_when_must_avoid_changes():
     assert wcb.context_hash(snap1) != wcb.context_hash(snap2)
 
 
+def test_stage_whitelist_keeps_traceable_source_items():
+    wcb = WritingContextBuilder(_NoDb())  # type: ignore[arg-type]
+    source_items = [
+        {
+            "source_kind": "upload",
+            "source_id": "source-1",
+            "chunk_id": "chunk-1",
+            "locator": "第5页",
+            "content": "事实依据",
+        }
+    ]
+    for stage in ("outline", "narrative", "chapter", "review"):
+        out = wcb.apply_stage_whitelist({"book_id": "book-1", "source_items": source_items}, stage)
+        assert out["source_items"] == source_items
+
+
 def test_fallback_legacy_user_material_without_plan():
     wcb = WritingContextBuilder(_NoDb())  # type: ignore[arg-type]
     snap = {

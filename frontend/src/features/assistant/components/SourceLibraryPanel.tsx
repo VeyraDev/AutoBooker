@@ -19,6 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
   read: "已读取",
   needs_confirm: "需要确认",
   failed: "读取失败",
+  indexed: "全文已索引",
 };
 
 const SEGMENT_TYPE_LABEL: Record<string, string> = {
@@ -32,6 +33,13 @@ const SEGMENT_TYPE_LABEL: Record<string, string> = {
   case_material: "案例素材",
   table_material: "表格素材",
   figure_material: "图表素材",
+};
+
+const STAGE_LABEL: Record<string, string> = {
+  outline: "大纲",
+  narrative: "叙事宪法",
+  chapter: "章节写作",
+  review: "审校",
 };
 
 function apiErrorMessage(error: unknown, fallback: string): string {
@@ -71,6 +79,7 @@ function statusBadgeClass(status: string) {
   if (status === "failed") return "text-red-600";
   if (status === "needs_confirm") return "text-amber-600";
   if (status === "reading") return "text-indigo-600";
+  if (status === "indexed") return "text-emerald-600";
   return "text-slate-500";
 }
 
@@ -382,6 +391,9 @@ export default function SourceLibraryPanel({
                       {segmentCount > 0 && !sourceOpen ? (
                         <span className="text-slate-400"> · {segmentCount} 个解析片段</span>
                       ) : null}
+                      {(s.chunk_count ?? 0) > 0 ? (
+                        <span className="text-slate-400"> · {s.chunk_count} 个全文分块</span>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -389,6 +401,11 @@ export default function SourceLibraryPanel({
                 {sourceOpen ? (
                   <div className="space-y-2 border-t border-slate-100 px-2 pb-2 pt-1.5">
                     {s.summary ? <p className="text-slate-600">{s.summary}</p> : null}
+                    {(s.used_stages?.length ?? 0) > 0 ? (
+                      <p className="text-[10px] text-emerald-700">
+                        已用于：{s.used_stages?.map((stage) => STAGE_LABEL[stage] ?? stage).join("、")}
+                      </p>
+                    ) : null}
 
                     {segmentCount > 0 ? (
                       <div>
@@ -456,14 +473,14 @@ export default function SourceLibraryPanel({
                       </div>
                     ) : null}
 
-                    {s.status !== "read" ? (
+                    {s.status !== "read" && s.status !== "indexed" && (s.status === "failed" || !s.reference_file_id) ? (
                       <button
                         type="button"
                         className="text-indigo-600 disabled:opacity-50"
                         disabled={busy}
                         onClick={() => void handleRead(s.id)}
                       >
-                        读取/识别片段
+                        {s.status === "failed" && s.reference_file_id ? "重新索引" : "读取/识别片段"}
                       </button>
                     ) : null}
                   </div>

@@ -1,0 +1,61 @@
+[
+  {"query":"鲁迅是谁","intent":"person_profile"},
+  {"query":"钱学森生平经历","intent":"person_profile"},
+  {"query":"张桂梅人物简介","intent":"person_profile"},
+  {"query":"苏东坡传记资料","intent":"person_profile"},
+  {"query":"屠呦呦的履历","intent":"person_profile"},
+
+  {"query":"鲁迅代表作","intent":"person_works"},
+  {"query":"莫言有哪些著作","intent":"person_works"},
+  {"query":"余华作品清单","intent":"person_works"},
+  {"query":"王阳明的著作","intent":"person_works"},
+  {"query":"works by Virginia Woolf","intent":"person_works"},
+
+  {"query":"城市可步行性研究综述","intent":"literature"},
+  {"query":"儿童依恋关系论文","intent":"literature"},
+  {"query":"数字人文学术文献","intent":"literature"},
+  {"query":"乡村教育期刊研究","intent":"literature"},
+  {"query":"睡眠质量 DOI","intent":"literature"},
+
+  {"query":"寻找敦煌学图书","intent":"book"},
+  {"query":"家庭教育书籍推荐资料","intent":"book"},
+  {"query":"ISBN 9787101003048","intent":"book"},
+  {"query":"商务印书馆出版物","intent":"book"},
+  {"query":"哪本书讲宋代城市生活","intent":"book"},
+
+  {"query":"某地洪水事件最新报道","intent":"event_news"},
+  {"query":"新能源汽车新闻","intent":"event_news"},
+  {"query":"作家人物访谈","intent":"event_news"},
+  {"query":"企业创始人专访","intent":"event_news"},
+  {"query":"发布会最近发生了什么","intent":"event_news"},
+
+  {"query":"中国作家协会机构资料","intent":"organization"},
+  {"query":"某科技公司官网","intent":"organization"},
+  {"query":"国家博物馆组织沿革","intent":"organization"},
+  {"query":"中国科学院研究院介绍","intent":"organization"},
+  {"query":"国际消费者协会资料","intent":"organization"},
+
+  {"query":"人口普查官方数据","intent":"government_data"},
+  {"query":"著作权法现行法规","intent":"government_data"},
+  {"query":"国家统计局年度公报","intent":"government_data"},
+  {"query":"图书出版管理条例","intent":"government_data"},
+  {"query":"教育部最新政策","intent":"government_data"},
+
+  {"query":"新能源汽车行业报告","intent":"industry_report"},
+  {"query":"养老产业白皮书","intent":"industry_report"},
+  {"query":"在线阅读市场规模","intent":"industry_report"},
+  {"query":"生成式内容产业蓝皮书","intent":"industry_report"},
+  {"query":"咖啡消费研究报告","intent":"industry_report"},
+
+  {"query":"FastAPI 官方文档","intent":"technical"},
+  {"query":"GitHub markdown parser","intent":"technical"},
+  {"query":"支付接口 API 文档","intent":"technical"},
+  {"query":"开源排版代码库","intent":"technical"},
+  {"query":"某 SDK 使用说明","intent":"technical"},
+
+  {"query":"园林中的月洞门","intent":"general_web"},
+  {"query":"为什么人会怀念故乡","intent":"general_web"},
+  {"query":"宋代市民生活","intent":"general_web"},
+  {"query":"远距离友谊如何维持","intent":"general_web"},
+  {"query":"民间年画的颜色含义","intent":"general_web"}
+]

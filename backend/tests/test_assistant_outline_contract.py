@@ -202,5 +202,5 @@ def test_critic_no_rule_patch_or_full_dump_markers():
     assert "prepare_search" in external or "SearchIntent" in external
     assert "唯一正式书稿设定" in startup or "book_settings" in startup
     assert "outline_route" in startup
-    assert "search_request" in startup
+    assert "search_sources" in startup
     assert "reader_outcome" not in startup or "不得要求用户填写" in startup

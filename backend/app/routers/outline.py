@@ -187,8 +187,19 @@ def generate_outline(
         project_seed = resolve_project_seed(book, db)
         outline_topic = (body.topic_override or "").strip() or (book.topic_brief or "").strip() or project_seed[:500]
         query = f"{outline_topic} {(book.discipline or '')}".strip()
-        parser = DocumentParserAgent(db, book.id)
-        snippets = parser.retrieve(query or project_seed[:500], top_k=5)
+        from app.services.sources.stage_source_context_service import StageSourceContextService
+
+        source_items = StageSourceContextService(db).retrieve(
+            book.id,
+            stage="outline",
+            query=query or project_seed[:500],
+            top_k=10,
+        )
+        snippets = [
+            f"来源：{item.get('title')}｜定位：{item.get('locator')}\n{item.get('content') or ''}"
+            for item in source_items
+            if item.get("content")
+        ]
 
         # 仅消费助手 prepare_outline_context 契约 + 已确认要求；禁止资料库全量倾倒
         source_mats = materials_from_outline_contract(db, book)
@@ -222,7 +233,7 @@ def generate_outline(
         from app.services.writing.writing_context_builder import WritingContextBuilder
 
         wcb = WritingContextBuilder(db)
-        snap = wcb.build_for_outline(book.id)
+        snap = wcb.build_for_outline(book.id, source_items=source_items)
         cfg["writing_context"] = wcb.to_prompt_block(snap)
 
         agent = OutlineAgent()

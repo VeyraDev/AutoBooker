@@ -70,10 +70,21 @@ class IntakeItem(Base):
     intake_id = Column(UUID(as_uuid=True), ForeignKey("project_intakes.id", ondelete="CASCADE"), nullable=False, index=True)
     item_type = Column(Enum(IntakeItemType, name="intake_item_type"), nullable=False)
     asset_id = Column(UUID(as_uuid=True), ForeignKey("binary_assets.id", ondelete="SET NULL"), nullable=True)
+    reference_file_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("reference_files.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     text_content = Column(Text, nullable=True)
     filename = Column(String(500), nullable=True)
     parsed_preview = Column(Text, nullable=True)
     detected_roles = Column(JSONB, nullable=True)
+    source_url = Column(String(2000), nullable=True)
+    source_type = Column(String(64), nullable=True)
+    provider = Column(String(64), nullable=True)
+    retrieved_at = Column(DateTime(timezone=True), nullable=True)
+    source_metadata = Column(JSONB, nullable=True)
     status = Column(Enum(IntakeItemStatus, name="intake_item_status"), nullable=False, default=IntakeItemStatus.pending)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

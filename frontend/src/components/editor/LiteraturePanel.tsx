@@ -20,7 +20,11 @@ import {
   weaveCitation,
   type CitationOccurrence,
 } from "@/api/citations";
-import { addSelectedLiterature, refineLiteratureQuery, searchLiterature } from "@/api/literature";
+import {
+  addSourceSearchResults,
+  listSourceSearchCapabilities,
+  searchSources,
+} from "@/api/sourceSearch";
 import type { CitationStyle } from "@/types/book";
 import {
   literaturePaperKey,
@@ -29,6 +33,10 @@ import {
   type CitationVerificationJob,
   type LiteraturePaper,
   type LiteratureTab,
+  type SourceCapability,
+  type SourceFacet,
+  type SourceSearchExecution,
+  type SourceType,
 } from "@/types/literature";
 import { mergeLiteratureSelection } from "@/lib/literatureSelection";
 import {
@@ -36,31 +44,34 @@ import {
   citationSequenceLabel,
 } from "@/lib/citationManagement";
 
-function isShortEnglishQuery(text: string): boolean {
-  const q = text.trim();
-  if (!q || /[\u4e00-\u9fff]/.test(q)) return false;
-  return /^[A-Za-z0-9+_.# -]+$/.test(q) && q.split(/\s+/).length <= 3;
+function normalizeSearchItems(result: import("@/types/literature").LiteratureSearchResult): LiteraturePaper[] {
+  const modern = (result.items ?? []).filter((item) => item.source_type);
+  if (modern.length) {
+    return modern.map((item) => ({
+      ...item,
+      source: item.source ?? item.provider,
+      source_label: item.source_label ?? item.provider,
+      abstract_preview: item.abstract_preview ?? item.snippet,
+    }));
+  }
+  const groups: Array<[SourceType, LiteraturePaper[] | undefined]> = [
+    ["paper", result.papers],
+    ["book", result.books],
+    ["news", result.news],
+    ["government", result.government],
+    ["industry_report", result.industry_reports],
+    ["technical", [...(result.technical ?? []), ...(result.github ?? []), ...(result.official_docs ?? [])]],
+    ["web", [...(result.web ?? []), ...(result.wiki ?? [])]],
+  ];
+  return groups.flatMap(([sourceType, items]) =>
+    (items ?? []).map((item) => ({
+      ...item,
+      source_type: sourceType,
+      provider: item.provider ?? item.source ?? "unknown",
+      snippet: item.snippet ?? item.abstract_preview ?? "",
+    })),
+  );
 }
-
-const TAB_LABELS: Record<LiteratureTab, string> = {
-  papers: "论文",
-  github: "GitHub",
-  wiki: "百科",
-  official_docs: "官方文档",
-};
-
-/** 资料与引用：来源分类（与后端 source_registry 对齐的起步标签） */
-const SOURCE_TYPE_FILTERS = [
-  { id: "all", label: "全部" },
-  { id: "paper", label: "论文" },
-  { id: "book", label: "图书" },
-  { id: "government", label: "政府/政策" },
-  { id: "statistics", label: "统计数据" },
-  { id: "industry_report", label: "行业报告" },
-  { id: "newspaper", label: "报刊" },
-  { id: "web", label: "普通网页" },
-  { id: "user_material", label: "用户资料" },
-] as const;
 
 const BULK_VERIFY_CONFIRM_THRESHOLD = 50;
 
@@ -178,11 +189,14 @@ export default function LiteraturePanel({
   const [query, setQuery] = useState(defaultQuery);
   const [searching, setSearching] = useState(false);
   const [tab, setTab] = useState<LiteratureTab>("papers");
-  const [sourceTypeFilter, setSourceTypeFilter] = useState<(typeof SOURCE_TYPE_FILTERS)[number]["id"]>("all");
+  const [sourceTypeFilter, setSourceTypeFilter] = useState<"all" | SourceType>("all");
   const [tabbed, setTabbed] = useState<Record<LiteratureTab, LiteraturePaper[]>>(emptyTabbed);
+  const [searchItems, setSearchItems] = useState<LiteraturePaper[]>([]);
+  const [capabilities, setCapabilities] = useState<SourceCapability[]>([]);
+  const [facets, setFacets] = useState<SourceFacet[]>([]);
+  const [execution, setExecution] = useState<SourceSearchExecution | null>(null);
+  const [searchWarnings, setSearchWarnings] = useState<string[]>([]);
   const [refinedQueries, setRefinedQueries] = useState<string[]>([]);
-  const [mustInclude, setMustInclude] = useState<string[]>([]);
-  const [mustExclude, setMustExclude] = useState<string[]>([]);
   const [sourceHint, setSourceHint] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<CitationRecord[]>([]);
@@ -231,6 +245,20 @@ export default function LiteraturePanel({
   }, [refreshSaved]);
 
   useEffect(() => {
+    let cancelled = false;
+    void listSourceSearchCapabilities(bookId)
+      .then((rows) => {
+        if (!cancelled) setCapabilities(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setCapabilities([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId]);
+
+  useEffect(() => {
     if (view === "manage") {
       void refreshSaved();
       void refreshVerificationJobs();
@@ -277,6 +305,10 @@ export default function LiteraturePanel({
       wiki: externalSearchResult.wiki ?? [],
       official_docs: externalSearchResult.official_docs ?? [],
     });
+    setSearchItems(normalizeSearchItems(externalSearchResult));
+    setFacets(externalSearchResult.facets ?? []);
+    setExecution(externalSearchResult.execution ?? null);
+    setSearchWarnings(externalSearchResult.warnings ?? []);
     setRefinedQueries(externalSearchResult.refined_queries ?? []);
     setSourceHint(externalSearchResult.source_hint ?? "");
     setView("search");
@@ -290,6 +322,11 @@ export default function LiteraturePanel({
     setQuery(saved.query);
     setTab(saved.tab);
     setTabbed(saved.tabbed);
+    setSearchItems(saved.items ?? normalizeSearchItems({
+      ...saved.tabbed,
+      refined_queries: saved.refinedQueries,
+      items: [],
+    }));
     setRefinedQueries(saved.refinedQueries);
     setSourceHint(saved.sourceHint);
     setSelected(new Set(saved.selectedKeys));
@@ -304,51 +341,31 @@ export default function LiteraturePanel({
       refinedQueries,
       sourceHint,
       selectedKeys: [...selected],
+      items: searchItems,
     });
-  }, [bookId, persistMode, query, tab, tabbed, refinedQueries, sourceHint, selected]);
+  }, [bookId, persistMode, query, tab, tabbed, refinedQueries, sourceHint, selected, searchItems]);
 
-  async function runRefine(scope: "book" | "chapter") {
-    setSearching(true);
-    try {
-      const res = await refineLiteratureQuery(bookId, {
-        scope,
-        chapterIndex: scope === "chapter" ? chapterIndex : undefined,
-        rawQuery: query.trim(),
-      });
-      setRefinedQueries(res.refined_queries);
-      setMustInclude(res.must_include ?? []);
-      setMustExclude(res.must_exclude ?? []);
-      if (res.refined_queries.length && !isShortEnglishQuery(query)) {
-        setQuery(res.refined_queries[0]);
-      }
-      toast.success("已生成检索词");
-    } catch {
-      toast.error("生成检索词失败");
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  async function runSearch() {
-    const q = query.trim();
+  async function runSearch(nextSourceType: "all" | SourceType = sourceTypeFilter) {
+    const q = query.trim() || refinedQueries[0]?.trim() || "";
     if (!q && !refinedQueries.length) {
-      toast.error("请输入检索词或先生成检索词");
+      toast.error("请输入要查找的资料");
       return;
     }
-    const shortEn = isShortEnglishQuery(q);
     const gen = ++searchGen.current;
     setSearching(true);
     setSelected(new Set());
     setTabbed(emptyTabbed());
+    setSearchItems([]);
+    setExecution(null);
+    setSearchWarnings([]);
     const signal = beginSearchAbort();
     try {
-      const res = await searchLiterature(bookId, {
+      const res = await searchSources(bookId, {
         query: q,
         rows: 25,
-        refined_queries: shortEn ? undefined : refinedQueries.length ? refinedQueries : undefined,
-        must_include: shortEn ? undefined : mustInclude.length ? mustInclude : undefined,
-        must_exclude: shortEn ? undefined : mustExclude.length ? mustExclude : undefined,
-        skip_refine: shortEn || refinedQueries.length > 0,
+        scope: chapterIndex == null ? "book" : "chapter",
+        chapterIndex: chapterIndex ?? undefined,
+        sourceTypes: nextSourceType === "all" ? [] : [nextSourceType],
         signal,
       });
       if (gen !== searchGen.current) return;
@@ -358,56 +375,36 @@ export default function LiteraturePanel({
         wiki: res.wiki ?? [],
         official_docs: res.official_docs ?? [],
       });
-      if (shortEn) {
-        setRefinedQueries([]);
-        setMustInclude([]);
-        setMustExclude([]);
-      } else {
-        setRefinedQueries(res.refined_queries ?? refinedQueries);
-      }
+      const items = normalizeSearchItems(res);
+      setSearchItems(items);
+      setFacets(res.facets ?? []);
+      setExecution(res.execution ?? null);
+      setSearchWarnings(res.warnings ?? []);
+      setRefinedQueries(res.refined_queries ?? refinedQueries);
       setSourceHint(res.source_hint || "");
-      const total =
-        (res.papers?.length ?? 0) +
-        (res.github?.length ?? 0) +
-        (res.wiki?.length ?? 0) +
-        (res.official_docs?.length ?? 0);
       if (res.warnings?.length) {
         toast(res.warnings[0], { icon: "⚠️", duration: 5000 });
       }
-      if (!total) toast("未找到相关文献，可尝试英文关键词或换检索词");
+      if (!items.length && !res.warnings?.length) toast("未找到相关资料，可调整关键词或来源范围");
       else {
-        const gh = res.github?.length ?? 0;
-        const parts = [
-          `论文 ${res.papers?.length ?? 0}`,
-          gh ? `GitHub ${gh}` : "",
-          `百科 ${res.wiki?.length ?? 0}`,
-          `文档 ${res.official_docs?.length ?? 0}`,
-        ].filter(Boolean);
-        toast.success(`检索完成：${parts.join(" · ")}${gh ? "（仓库见 GitHub 标签）" : ""}`);
-        if (gh > 0 && shortEn) setTab("github");
+        const parts = (res.facets ?? []).filter((facet) => facet.count > 0).map((facet) => `${facet.label} ${facet.count}`);
+        if (items.length) toast.success(`检索完成：${parts.join(" · ") || `${items.length} 条资料`}`);
       }
     } catch (err) {
       if (axios.isCancel(err)) return;
       if (axios.isAxiosError(err) && err.code === "ECONNABORTED") {
-        toast.error("检索超时（约 3 分钟），请减少检索词或稍后重试");
+        toast.error("资料搜索超时，已保留当前结果，请稍后重试");
       } else {
-        toast.error("文献检索失败，请查看网络或稍后重试");
+        toast.error("暂时无法完成资料搜索，请稍后重试");
       }
     } finally {
       if (gen === searchGen.current) setSearching(false);
     }
   }
 
-  const results = (tabbed[tab] ?? []).filter((p) => {
-    if (sourceTypeFilter === "all") return true;
-    const src = String(p.source || p.source_label || "").toLowerCase();
-    if (sourceTypeFilter === "paper") {
-      return ["openalex", "crossref", "semantic_scholar", "arxiv", "paper"].some((k) => src.includes(k)) || tab === "papers";
-    }
-    if (sourceTypeFilter === "web") return src.includes("web") || tab === "wiki" || tab === "official_docs";
-    if (sourceTypeFilter === "user_material") return src.includes("user");
-    return src.includes(sourceTypeFilter);
-  });
+  const results = searchItems.filter(
+    (item) => sourceTypeFilter === "all" || item.source_type === sourceTypeFilter,
+  );
 
   function toggle(p: LiteraturePaper) {
     const k = literaturePaperKey(p);
@@ -419,29 +416,30 @@ export default function LiteraturePanel({
     });
   }
 
-  const allPapers = [...tabbed.papers, ...tabbed.github, ...tabbed.wiki, ...tabbed.official_docs];
+  const allPapers = searchItems;
   const selectedPapers = allPapers.filter((p) => selected.has(literaturePaperKey(p)));
 
-  async function handleAddToBook() {
+  async function handleAddResults(target: "source_library" | "citation_library") {
     if (!selectedPapers.length) {
-      toast.error("请先勾选文献");
+      toast.error("请先勾选资料");
       return;
     }
     setBusy(true);
     try {
-      await addSelectedLiterature(bookId, selectedPapers);
-      await refreshSaved();
+      const result = await addSourceSearchResults(bookId, target, selectedPapers);
+      if (target === "citation_library") await refreshSaved();
       setSelected(new Set());
-      const baseMsg = `已加入本书（${selectedPapers.length} 条）`;
-      if (!citationStyle) {
-        toast.success(`${baseMsg}。尚未选择引用格式，请先在书稿设定中选择。`, {
+      const label = target === "source_library" ? "资料库" : "文献库";
+      if (result.rejected.length) {
+        toast(`已加入${label} ${result.added_count} 条，${result.rejected.length} 条因元数据不完整未加入。`, {
+          icon: "⚠️",
           duration: 5000,
         });
       } else {
-        toast.success(baseMsg);
+        toast.success(`已加入${label}（${result.added_count} 条）`);
       }
     } catch {
-      toast.error("加入本书失败");
+      toast.error(target === "source_library" ? "加入资料库失败" : "加入文献库失败");
     } finally {
       setBusy(false);
     }
@@ -571,10 +569,10 @@ export default function LiteraturePanel({
   }
 
   const hintText = sourceHint
-    ? `当前检索来源：${sourceHint}。选择需要的文献并加入本书。`
+    ? `当前来源覆盖：${sourceHint}。结果可分别加入资料库或文献库。`
     : isSetup
-      ? "选择需要的文献并加入本书。"
-      : "将文献加入本书后，可在引用管理中插入引用或生成引用句。";
+      ? "搜索人物、图书、新闻、政策、报告、技术资料、网页或论文。"
+      : "资料可用于写作依据；满足引用元数据要求的结果才能进入文献库。";
   const citationHint = !citationStyle
     ? "尚未选择引用格式，请先在书稿设定中选择。"
     : null;
@@ -597,49 +595,21 @@ export default function LiteraturePanel({
       <>
       <div className="space-y-2">
         {!embedded ? (
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">文献检索</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">资料搜索</p>
         ) : null}
         <p className="text-[11px] leading-relaxed text-slate-500">{hintText}</p>
         {citationHint ? (
           <p className="text-[11px] leading-relaxed text-amber-700">{citationHint}</p>
         ) : null}
-        <div className="flex flex-wrap gap-2">
-          {isSetup ? (
-            <button
-              type="button"
-              className="btn-secondary h-9 px-3 text-xs"
-              disabled={searching}
-              onClick={() => void runRefine("book")}
-            >
-              生成检索词
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="btn-secondary h-9 px-3 text-xs"
-                disabled={searching || chapterIndex == null}
-                onClick={() => void runRefine("chapter")}
-              >
-                基于本章
-              </button>
-              <button
-                type="button"
-                className="btn-secondary h-9 px-3 text-xs"
-                disabled={searching}
-                onClick={() => void runRefine("book")}
-              >
-                基于全书
-              </button>
-            </>
-          )}
-        </div>
+        <p className="text-[10px] text-slate-400">
+          检索范围：{chapterIndex == null ? "全书" : `第 ${chapterIndex + 1} 章`}
+        </p>
         <div className="flex gap-2">
           <input
             className="input h-9 flex-1 text-sm"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="标题、作者、关键词…"
+            placeholder="人物、事件、图书、政策、报告或主题…"
             onKeyDown={(e) => {
               if (e.key === "Enter") void runSearch();
             }}
@@ -654,38 +624,9 @@ export default function LiteraturePanel({
             搜索
           </button>
         </div>
-        {(refinedQueries.length > 0 || mustInclude.length > 0 || mustExclude.length > 0) ? (
-          <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-2 text-[10px] text-slate-600">
-            {refinedQueries.length > 0 ? (
-              <p className="mb-1">
-                <span className="font-medium">检索词：</span>
-                {refinedQueries.map((q) => (
-                  <span key={q} className="mr-1 inline-block rounded bg-white px-1.5 py-0.5 border border-slate-200">
-                    {q}
-                  </span>
-                ))}
-              </p>
-            ) : null}
-            {mustInclude.length > 0 ? (
-              <p className="mb-1">
-                <span className="font-medium text-emerald-700">必须包含：</span>
-                {mustInclude.join(" · ")}
-              </p>
-            ) : null}
-            {mustExclude.length > 0 ? (
-              <p>
-                <span className="font-medium text-red-700">排除：</span>
-                {mustExclude.join(" · ")}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
-      {(searching || tabbed.papers.length > 0 ||
-        tabbed.github.length > 0 ||
-        tabbed.wiki.length > 0 ||
-        tabbed.official_docs.length > 0) ? (
+      {(searching || searchItems.length > 0 || execution || searchWarnings.length > 0) ? (
         <div className="space-y-2">
           {searching ? (
             <p className="flex items-center gap-2 text-xs text-violet-600">
@@ -694,35 +635,48 @@ export default function LiteraturePanel({
             </p>
           ) : null}
           <div className="flex flex-wrap gap-1">
-            {(Object.keys(TAB_LABELS) as LiteratureTab[]).map((k) => (
-              <button
-                key={k}
-                type="button"
-                className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${
-                  tab === k ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-600"
-                }`}
-                onClick={() => setTab(k)}
-              >
-                {TAB_LABELS[k]} ({tabbed[k].length})
-              </button>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {SOURCE_TYPE_FILTERS.map((f) => (
+            {([{ id: "all", label: "智能综合", available: true }, ...capabilities] as Array<{
+              id: "all" | SourceType;
+              label: string;
+              available: boolean;
+              unavailable_reason?: string | null;
+            }>).map((f) => (
               <button
                 key={f.id}
                 type="button"
                 className={`rounded px-2 py-0.5 text-[10px] ${
                   sourceTypeFilter === f.id
                     ? "bg-slate-800 text-white"
-                    : "border border-slate-200 text-slate-600 hover:bg-slate-50"
+                    : "border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45"
                 }`}
-                onClick={() => setSourceTypeFilter(f.id)}
+                disabled={!f.available}
+                title={!f.available ? f.unavailable_reason ?? "来源未配置" : undefined}
+                onClick={() => {
+                  if (!f.available) return;
+                  setSourceTypeFilter(f.id);
+                  if (query.trim() || refinedQueries.length) void runSearch(f.id);
+                }}
               >
-                {f.label}
+                {f.label}{!f.available ? "（未配置）" : ""}
+                {f.id !== "all" ? ` (${facets.find((facet) => facet.id === f.id)?.count ?? 0})` : ""}
               </button>
             ))}
           </div>
+          {execution ? (
+            <div className="space-y-1 border-l-2 border-slate-200 pl-2 text-[10px] text-slate-500">
+              <p>
+                已调用 {execution.attempted_connectors.length} 个连接器，成功 {execution.successful_connectors.length} 个，
+                用时 {(execution.duration_ms / 1000).toFixed(1)} 秒
+                {execution.degraded ? " · 已降级" : ""}
+              </p>
+              {Object.keys(execution.failed_connectors).length ? (
+                <p className="text-amber-700">部分来源失败：{Object.keys(execution.failed_connectors).join("、")}</p>
+              ) : null}
+              {searchWarnings.map((warning) => (
+                <p key={warning} className="text-amber-700">{warning}</p>
+              ))}
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-slate-500">检索结果（已选 {selected.size}）</span>
             <div className="flex flex-wrap items-center gap-2">
@@ -745,12 +699,20 @@ export default function LiteraturePanel({
               ) : null}
               <button
                 type="button"
-                className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
+                className="btn-secondary h-8 px-3 text-xs disabled:opacity-50"
                 disabled={busy || !selected.size}
-                  onClick={() => void handleAddToBook()}
-                >
-                  加入本书
-                </button>
+                onClick={() => void handleAddResults("source_library")}
+              >
+                加入资料库
+              </button>
+              <button
+                type="button"
+                className="btn-primary h-8 px-3 text-xs disabled:opacity-50"
+                disabled={busy || !selectedPapers.some((item) => item.citeability)}
+                onClick={() => void handleAddResults("citation_library")}
+              >
+                加入文献库
+              </button>
             </div>
           </div>
           <ul
@@ -776,11 +738,18 @@ export default function LiteraturePanel({
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      {p.source_label ? (
+                      {p.provider || p.source_label ? (
                         <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-600">
-                          {p.source_label}
+                          {p.provider || p.source_label}
                         </span>
                       ) : null}
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${
+                          p.citeability ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                        }`}
+                      >
+                        {p.citeability ? "可入文献库" : "仅作资料"}
+                      </span>
                       {href ? (
                         <a
                           href={href}
@@ -807,6 +776,11 @@ export default function LiteraturePanel({
                     {p.abstract_preview ? (
                       <p className="mt-1 line-clamp-3 text-[10px] leading-snug text-slate-600">
                         {p.abstract_preview}
+                      </p>
+                    ) : null}
+                    {!p.citeability && p.metadata_missing?.length ? (
+                      <p className="mt-1 text-[10px] text-amber-700">
+                        文献元数据缺少：{p.metadata_missing.join("、")}
                       </p>
                     ) : null}
                     {p.doi ? (
@@ -934,7 +908,7 @@ export default function LiteraturePanel({
           {savedLoading ? (
             <p className="text-xs text-slate-500">加载中…</p>
           ) : saved.length === 0 ? (
-            <p className="text-xs text-slate-500">暂无本书文献，请先在文献搜索中加入。</p>
+            <p className="text-xs text-slate-500">暂无本书文献，请先在资料搜索中加入文献库。</p>
           ) : (
             <div className="max-h-[560px] space-y-2 overflow-y-auto pr-1">
               {saved.map((citation) => {

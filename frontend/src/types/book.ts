@@ -53,6 +53,15 @@ export interface Book {
     tiptap_json?: Record<string, unknown>;
   } | null;
   constitution_stale?: boolean;
+  pending_writing_spec?: {
+    field?: string;
+    requested_value?: string;
+    requested_label?: string;
+    current_value?: string;
+    current_label?: string;
+    reason?: string;
+    updated_at?: string;
+  } | null;
   created_at: string;
   updated_at: string | null;
 }

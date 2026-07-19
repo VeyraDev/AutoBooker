@@ -125,6 +125,9 @@ def startup_turn_output_instruction() -> str:
 - search_references
   {"mode": "user_query|book_support", "raw_query": "...", "source_types": [], "chapter_index": null}
 
+- search_sources
+  {"query": "...", "source_types": [], "chapter_index": null}
+
 - suggest_book_settings
   {"fields_to_complete": null, "relevant_source_ids": null, "mode": "quick_fill|normal"}
 

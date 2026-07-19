@@ -12,7 +12,12 @@ from app.services.assistant.book_settings_context import (
     set_setting_origin,
 )
 from app.services.assistant.outline_readiness import get_missing_outline_settings
-from app.services.assistant.project_assistant_service import _filter_patch_by_origins
+from app.services.assistant.project_assistant_service import (
+    _apply_book_settings_patch,
+    _ensure_user_facing_update_message,
+    _filter_patch_by_origins,
+    _reconcile_setting_patch,
+)
 from app.services.assistant.quick_fill_ops import record_quick_fill, undo_quick_fill
 
 
@@ -116,8 +121,6 @@ def test_setting_origins_roundtrip():
 
 
 def test_user_facing_message_strips_machine_fields_and_summarizes():
-    from app.services.assistant.project_assistant_service import _ensure_user_facing_update_message
-
     leaked = (
         "好的，收到书名。\n"
         "topic_brief: 本书探讨健康城市\n"
@@ -137,6 +140,30 @@ def test_user_facing_message_strips_machine_fields_and_summarizes():
     )
     assert "topic_brief" not in out
     assert "[object Object]" not in out
-    assert "主题要点" in out
-    assert "学科领域" in out
-    assert "城市规划" in out
+    assert out == "好的，收到书名。"
+
+
+def test_unsupported_biography_style_is_not_claimed_as_applied():
+    book = _book(title="正式书名", style_type="popular_science")
+    requested = {"book_type": "nonfiction", "style_type": "biography"}
+    decisions = [
+        {"field": "book_type", "decision_type": "explicit"},
+        {"field": "style_type", "decision_type": "inferred"},
+    ]
+
+    updated = _apply_book_settings_patch(book, requested, setting_decisions=decisions)
+    applied, rejections = _reconcile_setting_patch(book, requested, updated)
+    out = _ensure_user_facing_update_message(
+        "已基于资料调整定位。\n\n本轮已写入正式设定：\n- 一级分类：nonfiction\n- 二级体裁：biography",
+        applied,
+        decisions,
+        rejections,
+    )
+
+    assert book.style_type == "popular_science"
+    assert "style_type" not in applied
+    assert rejections[0]["requested_label"] == "人物传记"
+    assert book.ai_inferred_settings["pending_writing_spec"]["requested_value"] == "biography"
+    assert "二级体裁：biography" not in out
+    assert "人物传记" in out
+    assert "没有覆盖" in out

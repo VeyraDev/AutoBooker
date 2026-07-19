@@ -61,14 +61,24 @@ export default function ProjectBriefPanel({
       ? STYLE_LABELS[book.style_type as StyleType]
       : book?.style_type || "—";
 
-  const bookRows: { key: string; label: string; value: string }[] = [
+  const pendingStyle = book?.pending_writing_spec?.field === "style_type"
+    ? book.pending_writing_spec
+    : null;
+  const bookRows: { key: string; label: string; value: string; warning?: string }[] = [
     { key: "title", label: "书名", value: book?.title?.trim() || "—" },
     {
       key: "book_type",
       label: "一级分类",
       value: book?.book_type ? BOOK_TYPE_LABEL[book.book_type] ?? book.book_type : "—",
     },
-    { key: "style_type", label: "二级体裁", value: styleLabel },
+    {
+      key: "style_type",
+      label: "二级体裁",
+      value: styleLabel,
+      warning: pendingStyle
+        ? `识别到“${pendingStyle.requested_label || pendingStyle.requested_value}”，当前写作路由尚未支持，未自动覆盖。`
+        : undefined,
+    },
     { key: "target_audience", label: "目标读者", value: book?.target_audience?.trim() || "—" },
     {
       key: "disciplines",
@@ -152,6 +162,9 @@ export default function ProjectBriefPanel({
                     {hint ? <span className="ml-1 text-slate-300">· {hint}</span> : null}
                   </dt>
                   <dd className="mt-0.5 whitespace-pre-wrap text-slate-700">{row.value}</dd>
+                  {row.warning ? (
+                    <p className="mt-1 text-[11px] leading-relaxed text-amber-700">{row.warning}</p>
+                  ) : null}
                 </div>
               );
             })}

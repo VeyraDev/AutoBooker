@@ -13,6 +13,7 @@ from app.models.citation import Citation
 from app.models.generation_context_snapshot import GenerationContextSnapshot
 from app.models.intake import InputUnderstanding, ProjectIntake, WritingPlan, UnderstandingStatus, WritingPlanStatus
 from app.models.material import MaterialTerm, OutlineConstraint, WritingRequirement
+from app.models.reference import FileLifecycleStatus, ParseStatus, ReferenceFile
 from app.models.writing_basis import WritingBasis, WritingBasisStatus
 from app.models.book_format_strategy import BookFormatStrategy, FormatStrategyStatus
 from app.services.writing.format_strategy_service import FormatStrategyService
@@ -86,10 +87,30 @@ class WritingContextBuilder:
             WritingRequirement.book_id == book_id,
             WritingRequirement.active.is_(True),
         )
-        rows = q.all()
+        rows = self._only_effective_file_rows(q.all())
         if chapter_index is None:
             return rows
         return [r for r in rows if r.scope == "book" or r.chapter_index in (None, chapter_index)]
+
+    def _only_effective_file_rows(self, rows: list) -> list:
+        file_ids = {row.source_file_id for row in rows if getattr(row, "source_file_id", None)}
+        if not file_ids:
+            return rows
+        effective_ids = {
+            row.id
+            for row in self.db.query(ReferenceFile)
+            .filter(
+                ReferenceFile.id.in_(file_ids),
+                ReferenceFile.parse_status == ParseStatus.done,
+                ReferenceFile.lifecycle_status == FileLifecycleStatus.effective,
+            )
+            .all()
+        }
+        return [
+            row
+            for row in rows
+            if getattr(row, "source_file_id", None) is None or row.source_file_id in effective_ids
+        ]
 
     def _citation_summaries(self, book_id: UUID) -> list[dict]:
         rows = (
@@ -133,8 +154,10 @@ class WritingContextBuilder:
         basis = self._confirmed_basis(book_id)
         understanding, plan = self._confirmed_plan(book_id)
         requirements = self._requirements(book_id, chapter_index)
-        terms = self.db.query(MaterialTerm).filter(MaterialTerm.book_id == book_id, MaterialTerm.active.is_(True)).all()
-        constraints = (
+        terms = self._only_effective_file_rows(
+            self.db.query(MaterialTerm).filter(MaterialTerm.book_id == book_id, MaterialTerm.active.is_(True)).all()
+        )
+        constraints = self._only_effective_file_rows(
             self.db.query(OutlineConstraint)
             .filter(OutlineConstraint.book_id == book_id, OutlineConstraint.active.is_(True))
             .all()
@@ -225,6 +248,7 @@ class WritingContextBuilder:
             "citations": self._citation_summaries(book_id),
             "review_rule_candidates": review_rule_candidates,
             "confirmed_review_rules": confirmed_review_rules,
+            "source_items": [],
             "chapter_index": chapter_index,
         }
 
@@ -386,6 +410,13 @@ class WritingContextBuilder:
         legacy = (snap.get("legacy_user_material") or "").strip()
         if legacy and not snap.get("writing_plan_id") and not snap.get("writing_basis_id"):
             parts.append(f"【用户资料（兼容）】\n{legacy[:3000]}")
+        source_items = snap.get("source_items") or []
+        if source_items:
+            from app.services.sources.stage_source_context_service import StageSourceContextService
+
+            source_block = StageSourceContextService.format_for_prompt(source_items, char_budget=8000)
+            if source_block:
+                parts.append(source_block)
         return "\n\n".join(parts).strip()
 
     def context_hash(self, snap: dict) -> str:
@@ -405,6 +436,7 @@ class WritingContextBuilder:
             "citations": snap.get("citations"),
             "review_rule_candidates": snap.get("review_rule_candidates"),
             "confirmed_review_rules": snap.get("confirmed_review_rules"),
+            "source_items": snap.get("source_items") or [],
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -418,6 +450,7 @@ class WritingContextBuilder:
             format_strategy_id=UUID(snap["format_strategy_id"]) if snap.get("format_strategy_id") else None,
             requirement_ids=snap.get("requirement_ids") or [],
             outline_constraint_ids=snap.get("outline_constraint_ids") or [],
+            source_items=snap.get("source_items") or [],
             context_hash=self.context_hash(snap),
             prompt_excerpt=excerpt,
             source_module=source_module,
@@ -452,6 +485,7 @@ class WritingContextBuilder:
                 "source_manuscript_blocks",  # only when contract says structure_hint_only
                 "outline_contract",
                 "material_terms",
+                "source_items",
             }
         ),
         "narrative": frozenset(
@@ -470,6 +504,7 @@ class WritingContextBuilder:
                 "understanding_text",
                 "source_requirement_blocks",
                 "material_terms",
+                "source_items",
             }
         ),
         "chapter": frozenset(
@@ -487,6 +522,7 @@ class WritingContextBuilder:
                 "source_requirement_blocks",
                 "material_terms",
                 "chapter_index",
+                "source_items",
             }
         ),
         "review": frozenset(
@@ -503,6 +539,7 @@ class WritingContextBuilder:
                 "confirmed_review_rules",
                 "source_requirement_blocks",
                 "material_terms",
+                "source_items",
             }
         ),
     }
@@ -544,25 +581,44 @@ class WritingContextBuilder:
             out.pop("outline_contract", None)
         return out
 
-    def build_for_outline(self, book_id: UUID) -> dict:
-        snap = self.apply_stage_whitelist(self.build_snapshot(book_id), "outline")
+    def _with_source_items(self, snap: dict, source_items: list[dict] | None) -> dict:
+        snap["source_items"] = list(source_items or [])
+        return snap
+
+    def build_for_outline(self, book_id: UUID, *, source_items: list[dict] | None = None) -> dict:
+        snap = self.apply_stage_whitelist(
+            self._with_source_items(self.build_snapshot(book_id), source_items), "outline"
+        )
         self.persist_snapshot(book_id, "outline", snap)
         return snap
 
-    def build_for_narrative(self, book_id: UUID) -> dict:
-        snap = self.apply_stage_whitelist(self.build_snapshot(book_id), "narrative")
+    def build_for_narrative(self, book_id: UUID, *, source_items: list[dict] | None = None) -> dict:
+        snap = self.apply_stage_whitelist(
+            self._with_source_items(self.build_snapshot(book_id), source_items), "narrative"
+        )
         self.persist_snapshot(book_id, "narrative", snap)
         return snap
 
-    def build_for_chapter(self, book_id: UUID, chapter_index: int) -> dict:
+    def build_for_chapter(
+        self,
+        book_id: UUID,
+        chapter_index: int,
+        *,
+        source_items: list[dict] | None = None,
+    ) -> dict:
         snap = self.apply_stage_whitelist(
-            self.build_snapshot(book_id, chapter_index=chapter_index), "chapter"
+            self._with_source_items(
+                self.build_snapshot(book_id, chapter_index=chapter_index), source_items
+            ),
+            "chapter",
         )
         self.persist_snapshot(book_id, "chapter", snap)
         return snap
 
-    def build_for_review(self, book_id: UUID) -> dict:
-        snap = self.apply_stage_whitelist(self.build_snapshot(book_id), "review")
+    def build_for_review(self, book_id: UUID, *, source_items: list[dict] | None = None) -> dict:
+        snap = self.apply_stage_whitelist(
+            self._with_source_items(self.build_snapshot(book_id), source_items), "review"
+        )
         self.persist_snapshot(book_id, "review", snap)
         return snap
 

@@ -117,10 +117,21 @@ def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> Non
             return
         n = db.query(func.count(Chapter.id)).filter(Chapter.book_id == book_id).scalar() or 0
         outline_md = serialize_book_outline_markdown(book_id, db)
+        from app.services.sources.stage_source_context_service import StageSourceContextService
+
+        source_query = " ".join(
+            part for part in [book.title or "", book.discipline or "", book.topic_brief or ""] if part
+        )
+        source_items = StageSourceContextService(db).retrieve(
+            book_id,
+            stage="narrative",
+            query=source_query or outline_md[:1200],
+            top_k=6,
+        )
         from app.services.writing.writing_context_builder import WritingContextBuilder
 
         wcb = WritingContextBuilder(db)
-        snap = wcb.build_for_narrative(book_id)
+        snap = wcb.build_for_narrative(book_id, source_items=source_items)
         context_block = wcb.to_prompt_block(snap)
         if context_block.strip():
             outline_md = context_block + "\n\n---\n\n" + outline_md
@@ -506,15 +517,48 @@ async def generate_chapter_stream(
                 yield f"data: {json.dumps({'error': 'narrative_failed'}, ensure_ascii=False)}\n\n"
                 return
 
-            memory = build_book_memory(book_id, chapter_index, db)
-            parser = DocumentParserAgent(db, book_id)
-            summary_q = (ch.summary or "") + " " + ch.title
-            rag_snippets = parser.retrieve(summary_q.strip() or (book_live.title or ""), top_k=4)
+            chapter_meta = ch.content if isinstance(ch.content, dict) else {}
+            summary_q = " ".join(
+                part
+                for part in [
+                    ch.title or "",
+                    ch.summary or "",
+                    " ".join(str(x) for x in (chapter_meta.get("key_points") or [])),
+                    book_live.title or "",
+                ]
+                if part
+            )
+            from app.services.sources.stage_source_context_service import StageSourceContextService
+
+            source_items = StageSourceContextService(db).retrieve(
+                book_id,
+                stage="chapter",
+                query=summary_q,
+                top_k=12,
+            )
+            memory = build_book_memory(
+                book_id,
+                chapter_index,
+                db,
+                source_items=source_items,
+            )
+            rag_snippets = [
+                f"来源ID：{item.get('source_id')}｜{item.get('title')}｜定位：{item.get('locator')}\n"
+                f"{item.get('content') or ''}"
+                for item in source_items
+                if item.get("source_kind") != "citation" and item.get("content")
+            ]
+            citation_ids = [
+                str(item.get("citation_id"))
+                for item in source_items
+                if item.get("source_kind") == "citation" and item.get("citation_id")
+            ]
             cite_blocks, rag_trimmed = merge_grounding_for_writer(
                 db,
                 book_live,
                 rag_snippets,
                 chapter_context=summary_q,
+                citation_ids=citation_ids,
             )
             memory["citation_policy"] = build_citation_policy_block(
                 bool(cite_blocks), bool(rag_trimmed)

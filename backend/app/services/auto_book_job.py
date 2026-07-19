@@ -125,8 +125,19 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
         patch_job_checkpoint(db, job, stage_message="正在生成全书大纲")
         book.status = BookStatus.outline_generating
         db.commit()
-        parser = DocumentParserAgent(db, book.id)
-        snippets = parser.retrieve(project_seed[:500], top_k=5)
+        from app.services.sources.stage_source_context_service import StageSourceContextService
+
+        source_items = StageSourceContextService(db).retrieve(
+            book.id,
+            stage="outline",
+            query=project_seed[:1000],
+            top_k=10,
+        )
+        snippets = [
+            f"来源：{item.get('title')}｜定位：{item.get('locator')}\n{item.get('content') or ''}"
+            for item in source_items
+            if item.get("content")
+        ]
         from app.services.material_parse_service import get_book_level_writing_rules, get_primary_outline_for_book
         from app.services.sources.source_outline_bridge import (
             materials_from_outline_contract,
@@ -164,7 +175,7 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
         from app.services.writing.writing_context_builder import WritingContextBuilder
 
         wcb = WritingContextBuilder(db)
-        snap = wcb.build_for_outline(book.id)
+        snap = wcb.build_for_outline(book.id, source_items=source_items)
         cfg["writing_context"] = wcb.to_prompt_block(snap)
         outline = OutlineAgent().generate(cfg, snippets, model=outline_model)
         from app.services.material_parse_service import merge_outline_with_primary

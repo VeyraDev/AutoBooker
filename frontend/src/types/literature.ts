@@ -1,4 +1,5 @@
 export interface LiteraturePaper {
+  id?: string;
   title: string;
   year?: number | null;
   authors: string[];
@@ -18,6 +19,51 @@ export interface LiteraturePaper {
   issue?: string | null;
   pages?: string | null;
   quotable_snippet?: string | null;
+  snippet?: string;
+  published_at?: string | null;
+  source_type?: SourceType;
+  provider?: string;
+  domain?: string;
+  relevance?: number;
+  credibility_hint?: "high" | "medium" | "unknown";
+  citeability?: boolean;
+  metadata_missing?: string[];
+  isbn?: string;
+  degraded?: boolean;
+}
+
+export type SourceType =
+  | "paper"
+  | "book"
+  | "news"
+  | "government"
+  | "industry_report"
+  | "technical"
+  | "web";
+
+export interface SourceCapability {
+  id: SourceType;
+  label: string;
+  available: boolean;
+  connectors: string[];
+  unavailable_reason?: string | null;
+}
+
+export interface SourceFacet {
+  id: SourceType;
+  label: string;
+  count: number;
+}
+
+export interface SourceSearchExecution {
+  requested_source_types: SourceType[];
+  attempted_connectors: string[];
+  successful_connectors: string[];
+  failed_connectors: Record<string, string>;
+  unavailable_source_types: SourceType[];
+  degraded: boolean;
+  duration_ms: number;
+  result_counts: Partial<Record<SourceType, number>>;
 }
 
 export interface LiteratureSearchResult {
@@ -30,6 +76,20 @@ export interface LiteratureSearchResult {
   items: LiteraturePaper[];
   profile?: string;
   source_hint?: string;
+  books?: LiteraturePaper[];
+  news?: LiteraturePaper[];
+  government?: LiteraturePaper[];
+  industry_reports?: LiteraturePaper[];
+  technical?: LiteraturePaper[];
+  web?: LiteraturePaper[];
+  facets?: SourceFacet[];
+  execution?: SourceSearchExecution;
+  plan?: {
+    scope?: "manual" | "book" | "chapter";
+    chapter_index?: number | null;
+    intent?: { kind?: string; display_query?: string; rationale?: string };
+    requested_source_types?: SourceType[];
+  };
 }
 
 export interface LiteratureRefineResult {
@@ -51,6 +111,7 @@ export interface LiteratureQuoteBlock {
 }
 
 export function literaturePaperKey(p: LiteraturePaper): string {
+  if (p.id) return p.id;
   if (p.external_id && p.source) return `${p.source}:${p.external_id}`.toLowerCase();
   if (p.doi?.trim()) return `doi:${p.doi.toLowerCase()}`;
   return (p.title || "").toLowerCase();

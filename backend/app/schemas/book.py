@@ -92,6 +92,7 @@ class BookOut(BaseModel):
     user_material: str | None = None
     bibliography: dict | None = None
     constitution_stale: bool = False
+    pending_writing_spec: dict | None = None
     created_at: datetime
     updated_at: datetime | None
 

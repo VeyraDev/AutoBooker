@@ -23,7 +23,13 @@ from app.utils.json_llm import parse_llm_json
 logger = logging.getLogger(__name__)
 
 
-def build_book_memory(book_id: uuid.UUID, chapter_index: int, db: Session) -> dict[str, Any]:
+def build_book_memory(
+    book_id: uuid.UUID,
+    chapter_index: int,
+    db: Session,
+    *,
+    source_items: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     book = db.get(Book, book_id)
     if not book:
         raise ValueError("Book not found")
@@ -74,7 +80,7 @@ def build_book_memory(book_id: uuid.UUID, chapter_index: int, db: Session) -> di
         from app.services.writing.writing_context_builder import WritingContextBuilder
 
         wcb = WritingContextBuilder(db)
-        snap = wcb.build_for_chapter(book_id, chapter_index)
+        snap = wcb.build_for_chapter(book_id, chapter_index, source_items=source_items)
         block = wcb.to_prompt_block(snap)
         if block.strip():
             user_material = block[:6000]
