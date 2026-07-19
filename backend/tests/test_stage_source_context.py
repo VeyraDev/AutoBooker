@@ -6,10 +6,17 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from app.agents.document_parser import DocumentParserAgent
+from app.models.intake import IntakeItemStatus
 from app.models.reference import FileLifecycleStatus, FilePurpose, ParseStatus, ReferenceFile
 from app.services.assistant.source_retrieve_service import retrieve_source_context
-from app.services.sources.source_ingestion_service import SourceIngestionService
-from app.services.sources.stage_source_context_service import _chunk_locator, _query_tokens, _score
+from app.services.sources.source_ingestion_service import SourceIngestionService, build_role_scan_text
+from app.services.sources.stage_context_builder import _role_source_is_effective
+from app.services.sources.stage_source_context_service import (
+    StageSourceContextService,
+    _chunk_locator,
+    _query_tokens,
+    _score,
+)
 from app.services.writing.writing_context_builder import WritingContextBuilder
 
 
@@ -67,6 +74,60 @@ def test_full_text_chunking_keeps_start_middle_end_and_locators(tmp_path):
     assert "MIDDLE_UNIQUE_FACT" in combined
     assert "END_UNIQUE_FACT" in combined
     assert all(row.get("paragraph_index") for row in rows)
+
+
+def test_role_scan_samples_mixed_file_from_start_middle_and_end():
+    chunks = []
+    for index in range(40):
+        marker = ""
+        if index == 0:
+            marker = "START_OUTLINE"
+        elif index == 20:
+            marker = "MIDDLE_REQUIREMENT"
+        elif index == 39:
+            marker = "END_STYLE_SAMPLE"
+        chunks.append(
+            SimpleNamespace(
+                content=f"分块{index} {marker}",
+                page_number=index + 1,
+                heading_path=[],
+                paragraph_index=index + 1,
+                chunk_index=index,
+            )
+        )
+
+    sampled = build_role_scan_text(chunks, max_chunks=21)  # type: ignore[arg-type]
+
+    assert "START_OUTLINE" in sampled
+    assert "MIDDLE_REQUIREMENT" in sampled
+    assert "END_STYLE_SAMPLE" in sampled
+    assert "第21页" in sampled
+
+
+def test_role_segment_cannot_bypass_file_lifecycle_gate():
+    source = SimpleNamespace(
+        status=IntakeItemStatus.parsed,
+        reference_file_id=uuid4(),
+    )
+    pending = SimpleNamespace(
+        parse_status=ParseStatus.done,
+        lifecycle_status=FileLifecycleStatus.pending_confirmation,
+    )
+    failed = SimpleNamespace(
+        parse_status=ParseStatus.failed,
+        lifecycle_status=FileLifecycleStatus.failed,
+    )
+    effective = SimpleNamespace(
+        parse_status=ParseStatus.done,
+        lifecycle_status=FileLifecycleStatus.effective,
+    )
+
+    assert not _role_source_is_effective(source, pending)  # type: ignore[arg-type]
+    assert not _role_source_is_effective(source, failed)  # type: ignore[arg-type]
+    assert _role_source_is_effective(source, effective)  # type: ignore[arg-type]
+
+    source.status = IntakeItemStatus.disabled
+    assert not _role_source_is_effective(source, effective)  # type: ignore[arg-type]
 
 
 def test_chinese_relevance_and_precise_locator():
@@ -141,3 +202,57 @@ def test_assistant_retrieval_uses_stage_context(monkeypatch):
     assert result["segments"][0]["reference_file_id"] == "file-1"
     assert result["segments"][0]["location"] == "第3页"
     assert result["segments"][0]["text"] == "正文中的真实片段"
+
+
+def test_review_sources_prefer_actual_chapter_usage_over_supplemental_duplicate():
+    actual = [
+        {
+            "source_id": "source-1",
+            "chunk_id": "chunk-1",
+            "title": "写作时资料",
+            "usage_origin": "chapter_generation",
+        }
+    ]
+    supplemental = [
+        {
+            "source_id": "source-1",
+            "chunk_id": "chunk-1",
+            "title": "审校重新命中的同一资料",
+            "usage_origin": "review_retrieval",
+        },
+        {
+            "source_id": "source-2",
+            "chunk_id": "chunk-2",
+            "title": "审校补充资料",
+            "usage_origin": "review_retrieval",
+        },
+    ]
+
+    merged = StageSourceContextService.merge_usage_items(actual, supplemental)
+
+    assert len(merged) == 2
+    assert merged[0]["title"] == "写作时资料"
+    assert merged[0]["usage_origin"] == "chapter_generation"
+    assert merged[1]["usage_origin"] == "review_retrieval"
+
+
+def test_review_evidence_binding_keeps_source_locator_and_usage_origin():
+    items = [
+        {
+            "source_id": "source-1",
+            "chunk_id": "chunk-3",
+            "title": "傅忠强访谈",
+            "locator": "第8页 · 第3段",
+            "content": "傅忠强在访谈中回顾了汽车金融业务的早期探索。",
+            "usage_origin": "chapter_generation",
+            "generation_id": "generation-1",
+        }
+    ]
+
+    refs = StageSourceContextService.match_source_refs("傅忠强早期汽车金融探索", items)
+
+    assert refs[0]["source_id"] == "source-1"
+    assert refs[0]["chunk_id"] == "chunk-3"
+    assert refs[0]["locator"] == "第8页 · 第3段"
+    assert refs[0]["usage_origin"] == "chapter_generation"
+    assert refs[0]["generation_id"] == "generation-1"

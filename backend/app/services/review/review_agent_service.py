@@ -121,7 +121,6 @@ class ReviewAgentService:
             raise
 
     def _run_book_scope(self, book: Book, task: ReviewTask) -> dict:
-        snap = self.wcb.build_for_review(book.id)
         chapters = (
             self.db.query(Chapter)
             .filter(Chapter.book_id == book.id)
@@ -129,6 +128,19 @@ class ReviewAgentService:
             .all()
         )
         chapters = [c for c in chapters if not is_bibliography_chapter(c)]
+        from app.services.sources.stage_context_builder import StageContextBuilder
+
+        review_query = " ".join(
+            [book.title or ""]
+            + [f"{chapter.title or ''} {chapter.summary or ''}" for chapter in chapters[:30]]
+        )
+        stage_context = StageContextBuilder(self.db).build(
+            book.id,
+            stage="review",
+            query=review_query,
+            top_k=20,
+        )
+        snap = stage_context["snapshot"]
 
         run = BookReviewStageRun(
             book_id=book.id,
@@ -223,7 +235,6 @@ class ReviewAgentService:
         md = _chapter_markdown(ch)
         if not md.strip():
             raise ValueError("Chapter has no content")
-        snap = self.wcb.build_for_review(book.id)
         task_block = task.summary_text or ""
         _create_review_report(book, ch, md, self.db, review_context_block=task_block)
         return {"run_id": None, "message": f"第{chapter_index}章审校完成"}

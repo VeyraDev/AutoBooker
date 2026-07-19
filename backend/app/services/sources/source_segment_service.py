@@ -60,8 +60,15 @@ class SourceSegmentService:
             .all()
         )
 
-    def extract_segments(self, book: Book, item: IntakeItem, *, force: bool = False) -> list[SourceSegment]:
-        text = _item_full_text(item)
+    def extract_segments(
+        self,
+        book: Book,
+        item: IntakeItem,
+        *,
+        force: bool = False,
+        text_override: str | None = None,
+    ) -> list[SourceSegment]:
+        text = (text_override or _item_full_text(item)).strip()
         if len(text) < 200:
             return self.list_for_source(item.id)
         existing = self.list_for_source(item.id)

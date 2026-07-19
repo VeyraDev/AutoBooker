@@ -7,7 +7,6 @@ import os
 from datetime import datetime, timezone
 from uuid import UUID
 
-from app.agents.document_parser import DocumentParserAgent
 from app.agents.literature_agent import LiteratureAgent
 from app.agents.outline_agent import OutlineAgent
 from app.database import SessionLocal
@@ -125,14 +124,15 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
         patch_job_checkpoint(db, job, stage_message="正在生成全书大纲")
         book.status = BookStatus.outline_generating
         db.commit()
-        from app.services.sources.stage_source_context_service import StageSourceContextService
+        from app.services.sources.stage_context_builder import StageContextBuilder
 
-        source_items = StageSourceContextService(db).retrieve(
+        stage_context = StageContextBuilder(db).build(
             book.id,
             stage="outline",
             query=project_seed[:1000],
             top_k=10,
         )
+        source_items = stage_context["source_items"]
         snippets = [
             f"来源：{item.get('title')}｜定位：{item.get('locator')}\n{item.get('content') or ''}"
             for item in source_items
@@ -172,11 +172,7 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
             "source_reference_outline_blocks": source_mats.get("source_reference_outline_blocks") or [],
             "outline_contract": source_mats.get("contract"),
         }
-        from app.services.writing.writing_context_builder import WritingContextBuilder
-
-        wcb = WritingContextBuilder(db)
-        snap = wcb.build_for_outline(book.id, source_items=source_items)
-        cfg["writing_context"] = wcb.to_prompt_block(snap)
+        cfg["writing_context"] = stage_context["prompt_block"]
         outline = OutlineAgent().generate(cfg, snippets, model=outline_model)
         from app.services.material_parse_service import merge_outline_with_primary
 

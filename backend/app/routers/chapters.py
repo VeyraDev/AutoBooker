@@ -14,7 +14,6 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.agents.chapter_writer import ChapterWriterAgent
-from app.agents.document_parser import DocumentParserAgent
 from app.constants.style_types import StyleType
 from app.services.citation_grounding import (
     build_citation_policy_block,
@@ -117,22 +116,18 @@ def _ensure_narrative_constitution_thread(book_id: UUID, chat_model: str) -> Non
             return
         n = db.query(func.count(Chapter.id)).filter(Chapter.book_id == book_id).scalar() or 0
         outline_md = serialize_book_outline_markdown(book_id, db)
-        from app.services.sources.stage_source_context_service import StageSourceContextService
+        from app.services.sources.stage_context_builder import StageContextBuilder
 
         source_query = " ".join(
             part for part in [book.title or "", book.discipline or "", book.topic_brief or ""] if part
         )
-        source_items = StageSourceContextService(db).retrieve(
+        stage_context = StageContextBuilder(db).build(
             book_id,
             stage="narrative",
             query=source_query or outline_md[:1200],
             top_k=6,
         )
-        from app.services.writing.writing_context_builder import WritingContextBuilder
-
-        wcb = WritingContextBuilder(db)
-        snap = wcb.build_for_narrative(book_id, source_items=source_items)
-        context_block = wcb.to_prompt_block(snap)
+        context_block = stage_context["prompt_block"]
         if context_block.strip():
             outline_md = context_block + "\n\n---\n\n" + outline_md
         agent = NarrativeAgent()
@@ -528,19 +523,22 @@ async def generate_chapter_stream(
                 ]
                 if part
             )
-            from app.services.sources.stage_source_context_service import StageSourceContextService
+            from app.services.sources.stage_context_builder import StageContextBuilder
 
-            source_items = StageSourceContextService(db).retrieve(
+            stage_context = StageContextBuilder(db).build(
                 book_id,
                 stage="chapter",
                 query=summary_q,
+                chapter_index=chapter_index,
                 top_k=12,
             )
+            source_items = stage_context["source_items"]
             memory = build_book_memory(
                 book_id,
                 chapter_index,
                 db,
                 source_items=source_items,
+                stage_context=stage_context,
             )
             rag_snippets = [
                 f"来源ID：{item.get('source_id')}｜{item.get('title')}｜定位：{item.get('locator')}\n"

@@ -99,6 +99,37 @@ def _evidence_items_from_meta(meta: dict, basis_refs: list[str]) -> list[dict]:
                     "examples": [],
                 }
             )
+    source_refs = meta.get("source_refs") if isinstance(meta, dict) else None
+    if isinstance(source_refs, list):
+        for idx, item in enumerate(source_refs[:5], start=1):
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "资料来源").strip()
+            locator = str(item.get("locator") or "未提供定位").strip()
+            origin = str(item.get("usage_origin") or "stage_retrieval").strip()
+            source_id = str(item.get("source_id") or item.get("citation_id") or "").strip()
+            detail = f"{title}；定位：{locator}；使用来源：{origin}"
+            if source_id:
+                detail += f"；来源ID：{source_id}"
+            items.append(
+                {
+                    "type": "source_evidence",
+                    "label": f"候选资料依据 {idx}",
+                    "detail": detail[:500],
+                    "source": origin,
+                    "examples": [],
+                }
+            )
+    if isinstance(meta, dict) and meta.get("evidence_gap"):
+        items.append(
+            {
+                "type": "evidence_gap",
+                "label": "资料缺口",
+                "detail": "未在本章实际使用资料或审校补充资料中找到可直接支持该表述的依据。",
+                "source": "stage_context",
+                "examples": [],
+            }
+        )
     verification_status = str(meta.get("verification_status") or "").strip() if isinstance(meta, dict) else ""
     if verification_status:
         items.append(
@@ -192,7 +223,7 @@ class ReviewWorkspaceService:
             "paragraph_id": issue.paragraph_id,
             "paragraph_index": issue.paragraph_index,
             "char_start": issue.char_start,
-            "char_end": issue.char_end,
+            "char_end": getattr(issue, "char_end", None),
             "category": issue.issue_type,
             "track": None,
             "detector": issue.detector,

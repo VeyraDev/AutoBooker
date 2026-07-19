@@ -458,6 +458,14 @@ class WritingContextBuilder:
         )
         self.db.add(row)
         self.db.flush()
+        persisted_items: list[dict] = []
+        for raw in snap.get("source_items") or []:
+            if not isinstance(raw, dict):
+                continue
+            item = dict(raw)
+            item["generation_id"] = item.get("generation_id") or str(row.id)
+            persisted_items.append(item)
+        row.source_items = persisted_items
         return row
 
     # Stage whitelist: which source/context keys may enter each generation stage

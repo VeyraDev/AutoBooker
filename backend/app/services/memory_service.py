@@ -29,6 +29,7 @@ def build_book_memory(
     db: Session,
     *,
     source_items: list[dict[str, Any]] | None = None,
+    stage_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     book = db.get(Book, book_id)
     if not book:
@@ -80,8 +81,12 @@ def build_book_memory(
         from app.services.writing.writing_context_builder import WritingContextBuilder
 
         wcb = WritingContextBuilder(db)
-        snap = wcb.build_for_chapter(book_id, chapter_index, source_items=source_items)
-        block = wcb.to_prompt_block(snap)
+        if stage_context and isinstance(stage_context.get("snapshot"), dict):
+            snap = stage_context["snapshot"]
+            block = str(stage_context.get("prompt_block") or wcb.to_prompt_block(snap))
+        else:
+            snap = wcb.build_for_chapter(book_id, chapter_index, source_items=source_items)
+            block = wcb.to_prompt_block(snap)
         if block.strip():
             user_material = block[:6000]
         elif (book.user_material or "").strip():

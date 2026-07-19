@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from app.services.writing.writing_context_builder import WritingContextBuilder
 
 
 class _NoDb:
     pass
+
+
+class _SnapshotDb:
+    def __init__(self):
+        self.row = None
+
+    def add(self, row):
+        self.row = row
+
+    def flush(self):
+        if self.row is not None and self.row.id is None:
+            self.row.id = uuid4()
 
 
 def test_context_hash_changes_when_must_avoid_changes():
@@ -38,6 +52,27 @@ def test_stage_whitelist_keeps_traceable_source_items():
     for stage in ("outline", "narrative", "chapter", "review"):
         out = wcb.apply_stage_whitelist({"book_id": "book-1", "source_items": source_items}, stage)
         assert out["source_items"] == source_items
+
+
+def test_persisted_source_usage_has_generation_id():
+    db = _SnapshotDb()
+    wcb = WritingContextBuilder(db)  # type: ignore[arg-type]
+    book_id = uuid4()
+    snap = {
+        "source_items": [
+            {
+                "source_id": "source-1",
+                "chunk_id": "chunk-1",
+                "usage_type": "reference_evidence",
+                "reason": "与章节主题相关",
+            }
+        ]
+    }
+
+    row = wcb.persist_snapshot(book_id, "chapter", snap)
+
+    assert row.source_items[0]["generation_id"] == str(row.id)
+    assert row.source_items[0]["usage_type"] == "reference_evidence"
 
 
 def test_fallback_legacy_user_material_without_plan():

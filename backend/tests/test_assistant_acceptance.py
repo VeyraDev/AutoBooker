@@ -125,11 +125,12 @@ def test_acceptance_07_book_editor_no_legacy_intake_gate():
     assert "ProjectAssistantPage" in text
 
 
-def test_acceptance_08_outline_reads_writing_basis_via_wcb():
-    """大纲基于 basis：outline 生成注入 WritingContextBuilder。"""
+def test_acceptance_08_outline_reads_writing_basis_via_stage_context():
+    """大纲通过统一阶段上下文注入写作依据和命中的资料。"""
     src = inspect.getsource(outline_router.generate_outline)
-    assert "WritingContextBuilder" in src
-    assert "build_for_outline" in src
+    assert "StageContextBuilder" in src
+    assert 'stage="outline"' in src
+    assert 'stage_context["prompt_block"]' in src
 
 
 def test_acceptance_09_propose_outline_change_requires_confirmation():

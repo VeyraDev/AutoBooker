@@ -6,6 +6,7 @@ from app.services.figure_lint import lint_figures
 from app.services.review_anchor import locate_issue_anchor, snapshot_hash
 from app.services.review_apply import preview_issue_application, validate_replacement_text
 from app.services.review_scoring import REVIEW_DIMENSIONS, aggregate_review
+from app.services.review.review_workspace_service import _evidence_items_from_meta
 
 
 def test_aggregate_review_uses_fixed_dimensions_and_ignores_resolved_dismissed_stale():
@@ -104,3 +105,26 @@ def test_figure_lint_reports_missing_caption_and_source():
 
     issue_types = {issue["issue_type"] for issue in result["issues"]}
     assert "missing_caption" in issue_types
+
+
+def test_review_workspace_exposes_traceable_source_evidence():
+    items = _evidence_items_from_meta(
+        {
+            "source_refs": [
+                {
+                    "source_id": "source-1",
+                    "chunk_id": "chunk-3",
+                    "title": "人物访谈.docx",
+                    "locator": "第8页 · 第3段",
+                    "usage_origin": "chapter_generation",
+                }
+            ]
+        },
+        [],
+    )
+
+    assert items[0]["type"] == "source_evidence"
+    assert items[0]["label"] == "候选资料依据 1"
+    assert "人物访谈.docx" in items[0]["detail"]
+    assert "第8页 · 第3段" in items[0]["detail"]
+    assert "chapter_generation" in items[0]["detail"]

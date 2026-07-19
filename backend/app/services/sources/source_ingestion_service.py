@@ -33,6 +33,34 @@ def normalized_file_type(filename: str) -> str | None:
     return "txt" if file_type == "md" else file_type
 
 
+def build_role_scan_text(chunks: list[ReferenceChunk], *, max_chunks: int = 16) -> str:
+    """Sample the whole document evenly so mixed roles are not inferred from the opening only."""
+    if not chunks:
+        return ""
+    count = min(max(1, max_chunks), len(chunks))
+    if count == 1:
+        selected = [chunks[0]]
+    else:
+        indexes = {
+            round(position * (len(chunks) - 1) / (count - 1))
+            for position in range(count)
+        }
+        selected = [chunks[index] for index in sorted(indexes)]
+    blocks: list[str] = []
+    for chunk in selected:
+        locator: list[str] = []
+        if chunk.page_number:
+            locator.append(f"第{chunk.page_number}页")
+        headings = chunk.heading_path if isinstance(chunk.heading_path, list) else []
+        if headings:
+            locator.append(" > ".join(str(value) for value in headings if str(value).strip()))
+        if chunk.paragraph_index:
+            locator.append(f"第{chunk.paragraph_index}段")
+        location = " · ".join(locator) or f"分块 {chunk.chunk_index + 1}"
+        blocks.append(f"【位置：{location}】\n{chunk.content}")
+    return "\n\n".join(blocks)
+
+
 class SourceIngestionService:
     def __init__(self, db: Session):
         self.db = db
@@ -90,7 +118,7 @@ def run_source_index_task(book_id: UUID, source_id: UUID, reference_file_id: UUI
         )
         db.refresh(ref)
         if ref.parse_status == ParseStatus.done:
-            first_chunks = (
+            all_chunks = (
                 db.query(ReferenceChunk)
                 .filter(
                     ReferenceChunk.file_id == ref.id,
@@ -98,14 +126,26 @@ def run_source_index_task(book_id: UUID, source_id: UUID, reference_file_id: UUI
                     ReferenceChunk.active.is_(True),
                 )
                 .order_by(ReferenceChunk.chunk_index.asc())
-                .limit(6)
+                .limit(500)
                 .all()
             )
+            first_chunks = all_chunks[:6]
             preview = "\n".join(row.content for row in first_chunks).strip()
             if preview:
                 item.text_content = preview[:8000]
                 item.parsed_preview = preview[:4000]
             item.status = IntakeItemStatus.parsed
+            role_scan_text = build_role_scan_text(all_chunks)
+            book = db.get(Book, book_id)
+            if book and role_scan_text:
+                from app.services.sources.source_segment_service import SourceSegmentService
+
+                SourceSegmentService(db).extract_segments(
+                    book,
+                    item,
+                    force=True,
+                    text_override=role_scan_text,
+                )
         else:
             item.status = IntakeItemStatus.failed
         db.commit()

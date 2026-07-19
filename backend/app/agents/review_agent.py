@@ -137,7 +137,7 @@ class ReviewAgent:
         if (narrative_constitution or "").strip():
             user_parts.append(f"【全书叙事宪法】\n{narrative_constitution.strip()[:2000]}")
         if user_material.strip():
-            user_parts.append(f"作者写作约束（审校时参考）：\n{user_material[:3000]}")
+            user_parts.append(f"作者写作约束与资料依据（审校时参考）：\n{user_material[:9000]}")
         if approved_citations:
             user_parts.append(
                 "【已批准本书文献】\n" + "\n".join(approved_citations[:200])

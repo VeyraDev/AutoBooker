@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models.citation import Citation
+from app.models.generation_context_snapshot import GenerationContextSnapshot
 from app.models.intake import IntakeItem, IntakeItemStatus, ProjectIntake
 from app.models.reference import FileLifecycleStatus, ParseStatus, ReferenceChunk, ReferenceFile
 
@@ -123,6 +124,9 @@ class StageSourceContextService:
                         "content": chunk.content[:1800],
                         "score": round(score or 0.01, 4),
                         "directly_quotable": bool(chunk.directly_quotable),
+                        "usage_origin": "stage_retrieval",
+                        "usage_type": "reference_evidence",
+                        "reason": f"与{stage}阶段查询相关",
                         "stage": stage,
                     },
                 )
@@ -162,6 +166,9 @@ class StageSourceContextService:
                         "content": content[:1800],
                         "score": round(score or 0.01, 4),
                         "directly_quotable": False,
+                        "usage_origin": "stage_retrieval",
+                        "usage_type": "reference_evidence",
+                        "reason": f"与{stage}阶段查询相关",
                         "stage": stage,
                     },
                 )
@@ -207,6 +214,9 @@ class StageSourceContextService:
                             "score": round(score or 0.01, 4),
                             "directly_quotable": bool(citation.quotable_snippet),
                             "verification_status": citation.verification_status or citation.metadata_status,
+                            "usage_origin": "stage_retrieval",
+                            "usage_type": "approved_citation",
+                            "reason": f"与{stage}阶段主题相关的已入库文献",
                             "stage": stage,
                         },
                     )
@@ -225,6 +235,118 @@ class StageSourceContextService:
                 break
         return selected
 
+    def latest_generation_sources(
+        self,
+        book_id: UUID,
+        *,
+        stage: str,
+        chapter_index: int | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        query = self.db.query(GenerationContextSnapshot).filter(
+            GenerationContextSnapshot.book_id == book_id,
+            GenerationContextSnapshot.source_module == stage,
+        )
+        if chapter_index is not None:
+            query = query.filter(GenerationContextSnapshot.chapter_index == chapter_index)
+        row = query.order_by(GenerationContextSnapshot.created_at.desc()).first()
+        if not row:
+            return [], None
+        items: list[dict[str, Any]] = []
+        for raw in row.source_items or []:
+            if not isinstance(raw, dict):
+                continue
+            item = dict(raw)
+            item["generation_id"] = item.get("generation_id") or str(row.id)
+            item["usage_origin"] = "chapter_generation" if stage == "chapter" else f"{stage}_generation"
+            item["reason"] = item.get("reason") or "该资料曾被生成阶段实际选中"
+            items.append(item)
+        return items, str(row.id)
+
+    def retrieve_for_review(
+        self,
+        book_id: UUID,
+        *,
+        query: str,
+        chapter_index: int | None = None,
+        top_k: int = 16,
+    ) -> list[dict[str, Any]]:
+        actual: list[dict[str, Any]] = []
+        if chapter_index is not None:
+            actual, _ = self.latest_generation_sources(
+                book_id,
+                stage="chapter",
+                chapter_index=chapter_index,
+            )
+        supplemental = self.retrieve(
+            book_id,
+            stage="review",
+            query=query,
+            top_k=top_k,
+        )
+        for item in supplemental:
+            item["usage_origin"] = "review_retrieval"
+            item["reason"] = "审校阶段为核验正文补充检索"
+        return self.merge_usage_items(actual, supplemental, limit=max(top_k, len(actual)))
+
+    @staticmethod
+    def merge_usage_items(
+        primary: list[dict[str, Any]],
+        supplemental: list[dict[str, Any]],
+        *,
+        limit: int = 24,
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for raw in [*primary, *supplemental]:
+            if not isinstance(raw, dict):
+                continue
+            item = dict(raw)
+            key = (
+                str(item.get("source_id") or ""),
+                str(item.get("chunk_id") or item.get("segment_id") or ""),
+                str(item.get("citation_id") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+            if len(out) >= max(1, limit):
+                break
+        return out
+
+    @staticmethod
+    def match_source_refs(
+        text: str,
+        items: list[dict[str, Any]],
+        *,
+        top_k: int = 4,
+    ) -> list[dict[str, Any]]:
+        tokens = _query_tokens(text)
+        ranked: list[tuple[float, dict[str, Any]]] = []
+        for item in items:
+            blob = "\n".join(
+                str(value or "")
+                for value in (item.get("title"), item.get("content"), item.get("locator"))
+            )
+            score = _score(blob, tokens)
+            if score <= 0:
+                continue
+            ranked.append((score, item))
+        ranked.sort(key=lambda pair: pair[0], reverse=True)
+        return [
+            {
+                "source_id": item.get("source_id"),
+                "chunk_id": item.get("chunk_id") or item.get("segment_id"),
+                "citation_id": item.get("citation_id"),
+                "title": item.get("title"),
+                "locator": item.get("locator"),
+                "usage_origin": item.get("usage_origin"),
+                "generation_id": item.get("generation_id"),
+                "match_score": round(score, 4),
+            }
+            for score, item in ranked[: max(1, top_k)]
+        ]
+
     @staticmethod
     def format_for_prompt(items: list[dict[str, Any]], *, char_budget: int = 8000) -> str:
         if not items:
@@ -239,6 +361,9 @@ class StageSourceContextService:
                 f"- [{item.get('source_kind')}] {item.get('title') or '未命名资料'}"
                 f"｜来源ID {item.get('source_id')}｜定位 {item.get('locator') or '无'}"
             )
+            usage_origin = str(item.get("usage_origin") or "").strip()
+            if usage_origin:
+                header += f"｜使用来源 {usage_origin}"
             content = str(item.get("content") or "").strip()
             piece = header + (f"\n  {content}" if content else "")
             if used + len(piece) > char_budget:

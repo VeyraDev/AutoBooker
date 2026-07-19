@@ -20,7 +20,6 @@ from app.models.chapter_review import ChapterReview, ChapterReviewIssue, ReviewA
 from app.models.figure import Figure
 from app.models.user import User
 from app.repositories import review_repository
-from app.services.writing.writing_context_builder import WritingContextBuilder
 from app.routers.auth import get_current_user
 from app.routers.chapters import _chat_model_for_book, _get_chapter
 from app.schemas.review import (
@@ -637,15 +636,18 @@ def _create_review_report(
 ) -> ChapterReview:
     canonical = canonical_markdown(md)
     digest = snapshot_hash(canonical)
+    from app.services.sources.stage_context_builder import StageContextBuilder
     from app.services.sources.stage_source_context_service import StageSourceContextService
 
     evidence_query = f"{ch.title or ''}\n{canonical[:5000]}"
-    source_items = StageSourceContextService(db).retrieve(
+    stage_context = StageContextBuilder(db).build(
         book.id,
         stage="review",
         query=evidence_query,
+        chapter_index=ch.index,
         top_k=16,
     )
+    source_items = stage_context["source_items"]
     selected_citation_ids = {
         str(item.get("citation_id"))
         for item in source_items
@@ -675,9 +677,8 @@ def _create_review_report(
     figures = db.query(Figure).filter(Figure.book_id == book.id, Figure.chapter_index == ch.index).all()
     figure_lines = [f"- {f.figure_type.value}: {(f.caption or f.raw_annotation or '')[:120]}" for f in figures]
 
-    wcb = WritingContextBuilder(db)
-    snap = wcb.build_for_review(book.id, source_items=source_items)
-    user_material = wcb.to_prompt_block(snap)[:10000] or book.user_material or ""
+    snap = stage_context["snapshot"]
+    user_material = stage_context["prompt_block"][:10000] or book.user_material or ""
     if review_context_block:
         user_material = f"{user_material}\n\n{review_context_block}".strip()
 
@@ -771,6 +772,14 @@ def _create_review_report(
         if not validated:
             continue
         validated["issue_fingerprint"] = issue_fingerprint(validated)
+        matched_source_refs = StageSourceContextService.match_source_refs(
+            "\n".join(
+                str(validated.get(key) or "")
+                for key in ("quote", "detail", "title")
+            ),
+            source_items,
+            top_k=4,
+        )
         meta = {
             k: validated.get(k)
             for k in (
@@ -791,6 +800,10 @@ def _create_review_report(
             )
             if validated.get(k) is not None
         }
+        if matched_source_refs:
+            meta["source_refs"] = matched_source_refs
+        elif validated.get("dimension") in {"factual_support", "citation_sources"}:
+            meta["evidence_gap"] = True
         if meta:
             validated["quality_evidence"] = meta
         anchored.append(validated)

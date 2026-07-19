@@ -49,15 +49,27 @@ class ReviewStageService:
         )
         chapters = [c for c in chapters if not is_bibliography_chapter(c)]
 
+        from app.services.sources.stage_context_builder import StageContextBuilder
+
+        review_query = " ".join(
+            [book.title or ""]
+            + [f"{chapter.title or ''} {chapter.summary or ''}" for chapter in chapters[:30]]
+        )
+        stage_context = StageContextBuilder(self.db).build(
+            book.id,
+            stage="review",
+            query=review_query,
+            top_k=20,
+        )
         wcb = WritingContextBuilder(self.db)
-        snap = wcb.build_for_review(book.id)
+        snap = stage_context["snapshot"]
         context_ref = {"context_hash": wcb.context_hash(snap), "understanding_id": snap.get("understanding_id")}
 
         wq_summary = self.wq.aggregate(book.id)
         pub_summary, pub_findings_data = self.pub.run(
             book,
             chapters,
-            context_excerpt=wcb.to_prompt_block(snap)[:2000],
+            context_excerpt=stage_context["prompt_block"][:4000],
             context_snapshot=snap,
         )
         self.findings.persist_batch(
