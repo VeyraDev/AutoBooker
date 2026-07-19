@@ -12,7 +12,6 @@ from app.services.heading_formatter import (
     section_heading_level,
     strip_duplicate_section_title_line,
 )
-from app.services.chapter_markdown_sanitize import sanitize_chapter_markdown
 from app.services.markdown_to_tiptap import make_heading_block, markdown_body_to_tiptap_blocks
 from app.services.tiptap_convert import tiptap_json_to_markdown
 
@@ -108,19 +107,6 @@ def align_markdown_to_outline(
                     preamble.append(line)
             continue
 
-        normalized_line = stripped.rstrip("：:")
-        direct_match = next(
-            (
-                j
-                for j in range(max(0, current + 1), n)
-                if normalized_line == titles[j].strip().rstrip("：:")
-            ),
-            None,
-        )
-        if direct_match is not None:
-            current = direct_match
-            continue
-
         if current < 0:
             preamble.append(line)
         else:
@@ -181,10 +167,9 @@ def process_chapter_generation_result(
     chapter_index: int,
     outline_sections: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], str, int]:
-    cleaned = sanitize_chapter_markdown(raw_llm)
     try:
         return assemble_chapter_tiptap_from_markdown(
-            cleaned,
+            raw_llm,
             chapter_index=chapter_index,
             outline_sections=outline_sections,
         )
@@ -192,7 +177,7 @@ def process_chapter_generation_result(
         logger.warning("chapter markdown assemble failed, fallback plain: %s", e)
         doc = {
             "type": "doc",
-            "content": markdown_body_to_tiptap_blocks(cleaned),
+            "content": markdown_body_to_tiptap_blocks(raw_llm),
         }
         md = tiptap_json_to_markdown(doc)
         return doc, md, len(md.replace("\n", "").replace(" ", ""))

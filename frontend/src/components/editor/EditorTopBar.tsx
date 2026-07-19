@@ -4,6 +4,9 @@ import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 
 import type { ExportFormat } from "@/api/books";
+import type { LlmModelsResponse } from "@/api/config";
+
+import ModelSelector from "@/components/editor/ModelSelector";
 
 export type AutoSaveUi = "idle" | "pending" | "saved" | "error";
 
@@ -11,7 +14,11 @@ export type EditorTopBarProps = {
   title: string;
   currentWords: number;
   targetWords: number;
+  aiModel: string | null;
+  llmCatalog: LlmModelsResponse | undefined;
+  llmCatalogLoading?: boolean;
   onTitleSave: (title: string) => void;
+  onModelChange: (model: string) => void;
   autoSaveStatus: AutoSaveUi;
   savedAt: Date | null;
   onBack: () => void;
@@ -29,7 +36,11 @@ export default function EditorTopBar({
   title,
   currentWords,
   targetWords,
+  aiModel,
+  llmCatalog,
+  llmCatalogLoading,
   onTitleSave,
+  onModelChange,
   autoSaveStatus,
   savedAt,
   onBack,
@@ -159,6 +170,14 @@ export default function EditorTopBar({
           {currentWords.toLocaleString()}/{targetWords.toLocaleString()}
         </span>
       </div>
+
+      <ModelSelector
+        aiModel={aiModel}
+        catalog={llmCatalog}
+        loading={llmCatalogLoading}
+        onModelChange={onModelChange}
+        triggerClassName="input flex h-9 min-w-[8.5rem] max-w-[10.5rem] cursor-pointer items-center justify-between gap-1 py-1 pl-2 pr-2 text-xs"
+      />
 
       {onOpenReview ? (
         <button type="button" className="btn-secondary h-9 shrink-0 px-2.5 text-xs" onClick={onOpenReview}>

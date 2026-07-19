@@ -75,6 +75,8 @@ class Book(Base):
     material_conflicts = Column(JSONB, nullable=True)
     preface = Column(JSONB, nullable=True)
     bibliography = Column(JSONB, nullable=True)
+    # Export cover / CIP-like fields: title, subtitle, author, publisher, year, isbn, edition, series…
+    publication_info = Column(JSONB, nullable=True)
     status = Column(Enum(BookStatus, name="book_status"), default=BookStatus.setup, nullable=False)
     creation_origin = Column(Enum(CreationOrigin, name="creation_origin"), nullable=True)
     last_literature_query = Column(JSONB, nullable=True)
@@ -90,9 +92,3 @@ class Book(Base):
     )
     citations = relationship("Citation", back_populates="book", cascade="all, delete-orphan")
     figures = relationship("Figure", back_populates="book", cascade="all, delete-orphan")
-
-    @property
-    def pending_writing_spec(self):
-        settings = self.ai_inferred_settings if isinstance(self.ai_inferred_settings, dict) else {}
-        pending = settings.get("pending_writing_spec")
-        return dict(pending) if isinstance(pending, dict) else None

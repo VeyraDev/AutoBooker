@@ -11,25 +11,19 @@ from app.llm.client import LLMClient
 from app.llm.providers import resolve_assistant_model
 from app.models.book import Book
 from app.models.user import User
-from app.schemas.source_search import SourceSearchIn
 from app.prompts.assistant.topic_proposal import (
     TOPIC_PROPOSAL_SYSTEM,
     build_topic_proposal_user_prompt,
     format_topics_preview,
     parse_topic_proposal,
 )
-from app.services.assistant.book_settings_context import assess_outline_sources, current_book_settings
+from app.services.assistant.external_search_service import ExternalSearchService
 from app.services.assistant.project_memory_service import ProjectMemoryService
-from app.services.assistant.search_intent_service import prepare_search, refine_search_intent, refine_search_queries
-from app.services.assistant.source_retrieve_service import retrieve_source_context
-from app.services.assistant.suggest_book_settings import suggest_book_settings
-from app.services.assistant.workbook_service import inspect_workbook, read_sheet_range
 from app.services.figure_service import get_chapter_figures
+from app.services.literature_search_service import LiteratureSearchService
 from app.services.outline_text import serialize_book_outline_markdown
 from app.services.review.review_workspace_service import ReviewWorkspaceService
 from app.services.sources.source_library_service import SourceLibraryService
-from app.services.sources.source_outline_bridge import confirm_source_usage, prepare_outline_context
-from app.services.source_search.service import UnifiedSourceSearchService
 from app.services.writing.writing_basis_service import WritingBasisService
 
 
@@ -58,8 +52,9 @@ class ToolOrchestrator:
         self._sources = SourceLibraryService(db)
         self._basis = WritingBasisService(db)
         self._memories = ProjectMemoryService(db)
-        self._source_search = UnifiedSourceSearchService()
+        self._literature = LiteratureSearchService(db)
         self._review = ReviewWorkspaceService(db)
+        self._external = ExternalSearchService()
         self._llm = LLMClient()
 
     def execute(
@@ -72,7 +67,6 @@ class ToolOrchestrator:
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         last_search: dict[str, Any] | None = None
-        last_prepare: dict[str, Any] | None = None
         for call in tool_calls:
             name = str(call.get("name") or "").strip()
             args = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
@@ -94,115 +88,40 @@ class ToolOrchestrator:
                     results.append(
                         _tool_result(name, ok=True, panel_hint="sources", data={"sources": self._sources.list_sources(book)})
                     )
-                elif name in {"prepare_search", "refine_search_intent", "refine_search_queries"}:
-                    raw = str(
-                        args.get("raw_query")
-                        or args.get("query")
-                        or args.get("person_name")
-                        or ""
-                    ).strip()
-                    hint = str(args.get("search_type") or args.get("search_type_hint") or "").strip() or None
-                    model = resolve_assistant_model(user)
-                    if name == "refine_search_intent":
-                        if not raw:
-                            raise ValueError("raw_query required")
-                        intent = refine_search_intent(raw, search_type_hint=hint, model=model)
-                        data = {"intent": intent.to_dict(), "queries": []}
-                        last_prepare = data
-                        results.append(_tool_result(name, ok=True, panel_hint="sources", data=data))
-                    elif name == "refine_search_queries":
-                        intent_arg = args.get("intent") if isinstance(args.get("intent"), dict) else None
-                        if intent_arg is None and last_prepare and last_prepare.get("intent"):
-                            intent_arg = last_prepare["intent"]
-                        if intent_arg is None and raw:
-                            intent_arg = refine_search_intent(raw, search_type_hint=hint, model=model).to_dict()
-                        if not intent_arg:
-                            raise ValueError("intent or raw_query required")
-                        queries = refine_search_queries(intent_arg, model=model)
-                        data = {"intent": intent_arg, "queries": queries}
-                        last_prepare = data
-                        results.append(_tool_result(name, ok=True, panel_hint="sources", data=data))
-                    else:
-                        if not raw:
-                            raise ValueError("raw_query required")
-                        data = prepare_search(raw, search_type_hint=hint, model=model)
-                        last_prepare = data
-                        results.append(_tool_result(name, ok=True, panel_hint="sources", data=data))
                 elif name == "search_person_works":
-                    intent_arg = args.get("intent") if isinstance(args.get("intent"), dict) else None
-                    queries_arg = args.get("queries") if isinstance(args.get("queries"), list) else None
-                    if (intent_arg is None or not queries_arg) and last_prepare:
-                        intent_arg = intent_arg or last_prepare.get("intent")
-                        queries_arg = queries_arg or last_prepare.get("queries")
-                    person = str(
-                        args.get("person_name") or args.get("person") or args.get("query") or ""
-                    ).strip()
-                    if not person and isinstance(intent_arg, dict):
-                        person = str(intent_arg.get("person_name") or intent_arg.get("display_query") or "").strip()
-                    if not person and not intent_arg:
-                        raise ValueError("先调用 prepare_search，或提供 person_name / intent+queries")
-                    data = self._person_search_result(book, str(args.get("query") or person).strip(), rows=20)
+                    person = str(args.get("person_name") or args.get("person") or "").strip()
+                    if not person:
+                        raise ValueError("person_name required")
+                    data = self._external.search_person_works(
+                        person,
+                        institution=str(args.get("institution") or "").strip() or None,
+                        topic=str(args.get("topic") or "").strip() or None,
+                    )
                     last_search = data
-                    cand_n = len(data.get("candidates") or [])
                     summary = (
                         f"检索到 {len(data.get('works') or [])} 条公开作品；"
-                        f"候选身份 {cand_n} 个；"
                         f"方向线索 {len(data.get('research_directions') or [])} 条"
                     )
-                    if data.get("needs_disambiguation"):
-                        summary += "。请先确认作者身份后再继续选题。"
-                    # 检索结果不自动入库；仅返回候选供用户筛选确认
+                    paste = self._format_search_paste(data)
+                    source_item = self._sources.add_pasted_text(book, paste)
                     results.append(
                         _tool_result(
                             name,
                             ok=True,
-                            panel_hint="literature",
-                            data={
-                                **data,
-                                "summary": summary,
-                                "auto_ingested": False,
-                                "preview_text": self._format_search_paste(data),
-                            },
+                            panel_hint="sources",
+                            data={**data, "summary": summary, "source_id": str(source_item.id)},
                         )
                     )
-                elif name == "confirm_source_usage":
-                    sid = str(args.get("segment_id") or "").strip()
-                    usage = str(args.get("usage") or "").strip()
-                    if not sid or not usage:
-                        raise ValueError("segment_id and usage required")
-                    data = confirm_source_usage(self.db, book, segment_id=UUID(sid), usage=usage)
-                    self.db.flush()
-                    results.append(_tool_result(name, ok=True, panel_hint="sources", data=data))
-                elif name == "prepare_outline_context":
-                    primary_ids = args.get("primary_ids") if isinstance(args.get("primary_ids"), list) else None
-                    requirement_ids = (
-                        args.get("requirement_ids") if isinstance(args.get("requirement_ids"), list) else None
-                    )
-                    reference_ids = (
-                        args.get("reference_outline_ids")
-                        if isinstance(args.get("reference_outline_ids"), list)
-                        else None
-                    )
-                    data = prepare_outline_context(
-                        self.db,
-                        book,
-                        mode=str(args.get("mode") or "generate"),
-                        primary_segment_ids=[str(x) for x in primary_ids] if primary_ids is not None else None,
-                        requirement_segment_ids=[str(x) for x in requirement_ids]
-                        if requirement_ids is not None
-                        else None,
-                        reference_outline_ids=[str(x) for x in reference_ids] if reference_ids is not None else None,
-                        manuscript_policy=str(args.get("manuscript_policy") or "omit"),
-                        must_keep_chapter_titles=bool(args.get("must_keep_chapter_titles", True)),
-                    )
-                    self.db.flush()
-                    results.append(_tool_result(name, ok=True, panel_hint="outline", data=data))
                 elif name == "propose_book_topics":
                     search_data = last_search
                     if not search_data:
                         person = str(args.get("person_name") or args.get("person") or "").strip()
                         if person:
-                            search_data = self._person_search_result(book, person)
+                            search_data = self._external.search_person_works(
+                                person,
+                                institution=str(args.get("institution") or "").strip() or None,
+                                topic=str(args.get("topic") or "").strip() or None,
+                            )
                     if not search_data:
                         raise ValueError("需要先 search_person_works 或提供 person_name")
                     model = resolve_assistant_model(user)
@@ -270,114 +189,14 @@ class ToolOrchestrator:
                             data={"title": title, "rationale": rationale},
                         )
                     )
-                elif name in {"search_literature", "search_sources"}:
+                elif name == "search_literature":
                     query = str(args.get("query") or "").strip()
-                    queries_arg = args.get("queries") if isinstance(args.get("queries"), list) else None
-                    if not query and last_prepare and last_prepare.get("queries"):
-                        queries_arg = queries_arg or last_prepare.get("queries")
-                        query = str((queries_arg or [""])[0] or "").strip()
-                    if not query and not queries_arg:
-                        raise ValueError("先 prepare_search，或提供 query / queries")
-                    if queries_arg and not query:
-                        query = str(queries_arg[0]).strip()
+                    if not query:
+                        raise ValueError("query required")
                     ch_idx = args.get("chapter_index", chapter_index)
                     ch_idx = int(ch_idx) if ch_idx is not None else None
-                    requested = args.get("source_types") if isinstance(args.get("source_types"), list) else []
-                    allowed = {"paper", "book", "news", "government", "industry_report", "technical", "web"}
-                    source_types = [str(value) for value in requested if str(value) in allowed]
-                    if name == "search_literature" and not source_types:
-                        source_types = ["paper"]
-                    data = self._source_search.search(
-                        SourceSearchIn(
-                            query=query,
-                            rows=int(args.get("rows") or 20),
-                            scope="chapter" if ch_idx is not None else "book",
-                            chapter_index=ch_idx,
-                            requested_source_types=source_types,
-                        ),
-                        book=book,
-                    ).model_dump(mode="json")
-                    if queries_arg:
-                        data = {**data, "queries_used": [str(q) for q in queries_arg if str(q).strip()][:8]}
+                    data = self._literature.search(book, query=query, chapter_index=ch_idx)
                     results.append(_tool_result(name, ok=True, panel_hint="literature", data=data))
-                elif name == "search_references":
-                    data = self._search_references(
-                        book,
-                        user,
-                        args,
-                        chapter_index=chapter_index,
-                        last_prepare=last_prepare,
-                    )
-                    if data.get("prepare"):
-                        last_prepare = data["prepare"]
-                    last_search = data.get("result") if isinstance(data.get("result"), dict) else data
-                    results.append(_tool_result(name, ok=True, panel_hint="literature", data=data))
-                elif name == "retrieve_source_context":
-                    q = str(args.get("query") or "").strip()
-                    if not q:
-                        raise ValueError("query required")
-                    sids = args.get("source_ids") if isinstance(args.get("source_ids"), list) else None
-                    top_k = int(args.get("top_k") or 12)
-                    data = retrieve_source_context(
-                        self.db,
-                        book,
-                        query=q,
-                        source_ids=[str(x) for x in sids] if sids else None,
-                        top_k=top_k,
-                    )
-                    results.append(_tool_result(name, ok=True, panel_hint="sources", data=data))
-                elif name == "inspect_workbook":
-                    sid = str(args.get("source_id") or "").strip()
-                    if not sid:
-                        raise ValueError("source_id required")
-                    data = inspect_workbook(self.db, book, source_id=sid)
-                    results.append(_tool_result(name, ok=True, panel_hint="sources", data=data))
-                elif name == "read_sheet_range":
-                    sid = str(args.get("source_id") or "").strip()
-                    sheet = str(args.get("sheet_name") or "").strip()
-                    if not sid or not sheet:
-                        raise ValueError("source_id and sheet_name required")
-                    data = read_sheet_range(
-                        self.db,
-                        book,
-                        source_id=sid,
-                        sheet_name=sheet,
-                        cell_range=str(args.get("cell_range") or "A1:N50"),
-                    )
-                    results.append(_tool_result(name, ok=True, panel_hint="sources", data=data))
-                elif name == "suggest_book_settings":
-                    model = resolve_assistant_model(user)
-                    fields = args.get("fields_to_complete")
-                    fields_list = [str(x) for x in fields] if isinstance(fields, list) else None
-                    sids = args.get("relevant_source_ids")
-                    sid_list = [str(x) for x in sids] if isinstance(sids, list) else None
-                    data = suggest_book_settings(
-                        self.db,
-                        book,
-                        model=model,
-                        fields_to_complete=fields_list,
-                        relevant_source_ids=sid_list,
-                        mode=str(args.get("mode") or "quick_fill"),
-                    )
-                    results.append(
-                        _tool_result(
-                            name,
-                            ok=True,
-                            panel_hint="basis",
-                            data={
-                                **data,
-                                "current_book_settings": current_book_settings(book),
-                            },
-                        )
-                    )
-                elif name == "assess_outline_sources":
-                    sids = args.get("source_ids") if isinstance(args.get("source_ids"), list) else None
-                    data = assess_outline_sources(
-                        self.db,
-                        book,
-                        source_ids=[str(x) for x in sids] if sids else None,
-                    )
-                    results.append(_tool_result(name, ok=True, panel_hint="outline", data=data))
                 elif name == "run_review":
                     scope = str(args.get("scope") or "chapter").strip()
                     ch_idx = args.get("chapter_index", chapter_index)
@@ -463,103 +282,6 @@ class ToolOrchestrator:
             except Exception as exc:
                 results.append(_tool_result(name, ok=False, error=str(exc)))
         return results
-
-    def _person_search_result(self, book: Book, query: str, *, rows: int = 20) -> dict[str, Any]:
-        unified = self._source_search.search(
-            SourceSearchIn(
-                query=query,
-                rows=rows,
-                scope="book",
-                requested_source_types=["book", "paper", "web"],
-            ),
-            book=book,
-        ).model_dump(mode="json")
-        works = [
-            {
-                **item,
-                "source": item.get("provider"),
-                "abstract_preview": item.get("snippet"),
-            }
-            for item in unified.get("items") or []
-        ]
-        return {
-            **unified,
-            "person": query,
-            "works": works,
-            "candidates": [],
-            "research_directions": [],
-            "needs_disambiguation": False,
-            "source_scope": unified.get("source_hint") or "统一资料搜索",
-        }
-
-    def _search_references(
-        self,
-        book: Book,
-        user: User,
-        args: dict[str, Any],
-        *,
-        chapter_index: int | None,
-        last_prepare: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        """Business-level search: intent → queries → multi-source → return candidates (no ingest)."""
-        mode = str(args.get("mode") or "user_query").strip() or "user_query"
-        raw_query = str(args.get("raw_query") or args.get("query") or "").strip()
-        progress: list[dict[str, Any]] = [{"stage": "intent", "message": "正在识别查询意图和合适的资料来源"}]
-
-        if mode == "book_support" and not raw_query:
-            bits = [
-                book.title or "",
-                book.topic_brief or "",
-                " ".join(book.disciplines or []) if book.disciplines else (book.discipline or ""),
-                " ".join(book.topic_tags or []) if book.topic_tags else "",
-            ]
-            raw_query = " ".join(b for b in bits if b).strip()[:500]
-        if not raw_query:
-            raise ValueError("raw_query required")
-
-        del user, last_prepare
-        source_types = args.get("source_types") if isinstance(args.get("source_types"), list) else []
-        allowed = {"paper", "book", "news", "government", "industry_report", "technical", "web"}
-        requested = [str(value) for value in source_types if str(value) in allowed]
-        ch_idx = args.get("chapter_index", chapter_index)
-        ch_idx = int(ch_idx) if ch_idx is not None else None
-        result = self._source_search.search(
-            SourceSearchIn(
-                query=raw_query,
-                rows=int(args.get("rows") or 25),
-                scope="chapter" if ch_idx is not None else "book",
-                chapter_index=ch_idx,
-                requested_source_types=requested,
-            ),
-            book=book,
-        ).model_dump(mode="json")
-        plan = result.get("plan") or {}
-        intent = plan.get("intent") or {}
-        queries = list((plan.get("queries_by_source") or {}).values())
-        progress.append(
-            {
-                "stage": "queries",
-                "message": f"已生成 {len(queries)} 组查询",
-                "queries": queries[:8],
-            }
-        )
-        st = str(intent.get("kind") or "web")
-        items = result.get("items") or []
-        progress.append({"stage": "completed", "remaining": len(items), "queries_run": len(queries) or 1})
-        return {
-            "mode": mode,
-            "search_type": st,
-            "raw_query": raw_query,
-            "queries": queries,
-            "prepare": {"intent": intent, "queries": queries},
-            "progress": progress,
-            "result": result,
-            "auto_ingested": False,
-            "summary": (
-                f"执行了 {len(result.get('execution', {}).get('attempted_connectors') or [])} 个来源调用，"
-                f"共返回 {len(items)} 条候选。结果未自动入库，请用户筛选后加入资料库或文献库。"
-            ),
-        }
 
     @staticmethod
     def _format_search_paste(data: dict[str, Any]) -> str:

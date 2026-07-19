@@ -103,14 +103,6 @@ class Settings(BaseSettings):
     # 可选：提高 GitHub API 限额
     GITHUB_TOKEN: str = ""
 
-    # Unified source search
-    SOURCE_SEARCH_ENABLED: bool = True
-    SEARCH_PROVIDER: str = "tavily"
-    TAVILY_API_KEY: str = ""
-    TAVILY_BASE_URL: str = "https://api.tavily.com"
-    SOURCE_SEARCH_TIMEOUT_SEC: float = 12.0
-    SOURCE_SEARCH_ALLOW_DDG_FALLBACK: bool = True
-
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

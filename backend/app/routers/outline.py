@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.agents.document_parser import DocumentParserAgent
 from app.agents.outline_agent import OutlineAgent
 from app.database import get_db
 from app.models.book import BookStatus
@@ -53,6 +54,7 @@ def _chapter_to_outline(ch: Chapter) -> OutlineChapterOut:
         key_points=list(meta.get("key_points") or []),
         estimated_words=int(meta.get("estimated_words") or 3000),
         sections=sections,
+        column_labels=[str(x) for x in (meta.get("column_labels") or []) if str(x).strip()],
         word_count=ch.word_count or 0,
         status=ch.status,
     )
@@ -137,106 +139,35 @@ def generate_outline(
     body = body or OutlineGenerateIn()
 
     try:
-        from app.services.writing.project_seed import resolve_project_seed
-        from app.services.sources.source_outline_bridge import (
-            materials_from_outline_contract,
-            merge_primary_outline,
-            prepare_outline_context,
-            USAGE_PRIMARY_OUTLINE,
-            confirm_source_usage,
-        )
-
-        ai_settings = book.ai_inferred_settings if isinstance(book.ai_inferred_settings, dict) else {}
-        outline_route = ai_settings.get("outline_route") if isinstance(ai_settings.get("outline_route"), dict) else {}
-        route_mode = str(outline_route.get("mode") or "from_settings")
-        if outline_route.get("needs_confirmation") and not body.confirmed_source_id and not body.force:
-            book.status = previous_status
-            db.commit()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "outline_route_needs_confirmation",
-                    "message": "存在多份可能的主大纲，请先确认使用哪一份",
-                    "outline_route": outline_route,
-                    "candidate_source_ids": outline_route.get("candidate_source_ids") or [],
-                },
-            )
-
-        source_id = (body.confirmed_source_id or outline_route.get("source_id") or "").strip() or None
-        if route_mode in {"complete_existing_outline", "use_existing_outline"} and source_id:
-            try:
-                from uuid import UUID as _UUID
-
-                confirm_source_usage(
-                    db, book, segment_id=_UUID(source_id), usage=USAGE_PRIMARY_OUTLINE
-                )
-            except Exception:
-                logger.warning("confirm primary outline source failed source_id=%s", source_id)
-            prepare_outline_context(
-                db,
-                book,
-                mode="generate" if route_mode == "complete_existing_outline" else "use_existing",
-                primary_segment_ids=[source_id],
-                manuscript_policy="omit",
-                must_keep_chapter_titles=True,
-            )
-            db.flush()
-
-        project_seed = resolve_project_seed(book, db)
-        outline_topic = (body.topic_override or "").strip() or (book.topic_brief or "").strip() or project_seed[:500]
-        query = f"{outline_topic} {(book.discipline or '')}".strip()
-        from app.services.sources.stage_context_builder import StageContextBuilder
-
-        stage_context = StageContextBuilder(db).build(
-            book.id,
-            stage="outline",
-            query=query or project_seed[:500],
-            top_k=10,
-        )
-        source_items = stage_context["source_items"]
-        snippets = [
-            f"来源：{item.get('title')}｜定位：{item.get('locator')}\n{item.get('content') or ''}"
-            for item in source_items
-            if item.get("content")
-        ]
-
-        # 仅消费助手 prepare_outline_context 契约 + 已确认要求；禁止资料库全量倾倒
-        source_mats = materials_from_outline_contract(db, book)
-        primary_outline = merge_primary_outline(
-            get_primary_outline_for_book(db, book.id),
-            source_mats.get("parsed_primary_outline"),
-        )
-        writing_rules = list(get_book_level_writing_rules(db, book.id))
-        for rule in source_mats.get("source_writing_rules") or []:
-            if rule and rule not in writing_rules:
-                writing_rules.append(rule)
+        query = (body.topic_override or book.title) + " " + (book.discipline or "")
+        parser = DocumentParserAgent(db, book.id)
+        snippets = parser.retrieve(query.strip() or book.title, top_k=5)
 
         cfg = {
             "book_type": book.book_type.value,
             "style_type": book.style_type,
-            "topic": outline_topic,
+            "topic": body.topic_override or book.title,
             "target_audience": body.target_audience or book.target_audience or "大众读者",
             "target_words": book.target_words or 80000,
             "citation_style": book.citation_style.value if book.citation_style else "无需引用",
             "discipline": book.discipline,
             "topic_tags": list(book.topic_tags or []),
-            "topic_brief": (body.topic_brief or book.topic_brief or project_seed or "").strip() or None,
-            "primary_outline": primary_outline,
-            "writing_rules": writing_rules[:40],
-            "source_outline_blocks": source_mats.get("source_outline_blocks") or [],
-            "source_requirement_blocks": source_mats.get("source_requirement_blocks") or [],
-            "source_manuscript_blocks": source_mats.get("source_manuscript_blocks") or [],
-            "source_reference_outline_blocks": source_mats.get("source_reference_outline_blocks") or [],
-            "outline_contract": source_mats.get("contract"),
+            "topic_brief": (body.topic_brief or book.topic_brief or "").strip() or None,
+            "primary_outline": get_primary_outline_for_book(db, book.id),
+            "writing_rules": get_book_level_writing_rules(db, book.id),
         }
-        cfg["writing_context"] = stage_context["prompt_block"]
+        from app.services.writing.writing_context_builder import WritingContextBuilder
+
+        wcb = WritingContextBuilder(db)
+        snap = wcb.build_for_outline(book.id)
+        cfg["writing_context"] = wcb.to_prompt_block(snap)
 
         agent = OutlineAgent()
         chat_model = resolve_book_outline_model(book, user)
         outline = agent.generate(cfg, snippets, model=chat_model)
         outline = merge_outline_with_primary(
             outline,
-            primary_outline,
+            get_primary_outline_for_book(db, book.id),
         )
 
         db.query(Chapter).filter(Chapter.book_id == book.id).delete()
@@ -253,6 +184,9 @@ def generate_outline(
                 "sections": sections,
                 "estimated_words": ch.get("estimated_words", 3000),
             }
+            labels = ch.get("column_labels")
+            if isinstance(labels, list) and labels:
+                meta["column_labels"] = [str(x).strip() for x in labels if str(x).strip()][:8]
             db.add(
                 Chapter(
                     book_id=book.id,
@@ -271,13 +205,10 @@ def generate_outline(
 
         refresh_book_citation_rendering(db, book)
         sync_book_bibliography(db, book, commit=False)
-        new_title = (outline.get("title") or "").strip()
-        if new_title:
-            from app.services.assistant.suggest_book_settings import _is_placeholder_title
-
-            if book.allow_title_optimization or _is_placeholder_title(book.title):
-                if not _is_placeholder_title(new_title):
-                    book.title = new_title[:500]
+        if book.allow_title_optimization:
+            new_title = (outline.get("title") or "").strip()
+            if new_title:
+                book.title = new_title[:500]
         book.constitution_stale = True
         from app.services.preface_service import get_preface, set_preface
 
@@ -290,6 +221,14 @@ def generate_outline(
         book.status = BookStatus.outline_ready
         db.commit()
         db.refresh(book)
+
+        try:
+            from app.services.writing.format_strategy_service import FormatStrategyService
+
+            FormatStrategyService(db).generate(book, force=True)
+            db.commit()
+        except Exception:
+            logger.exception("format strategy auto-generate failed after outline book=%s", book.id)
 
         chapters = (
             db.query(Chapter).filter(Chapter.book_id == book.id).order_by(Chapter.index.asc()).all()

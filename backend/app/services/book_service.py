@@ -9,23 +9,12 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.constants.style_types import DEFAULT_TARGET_WORDS, coerce_style
-from app.models.book import Book, BookStatus, BookType, CitationStyle
+from app.models.book import Book, BookStatus, CitationStyle
 from app.models.chapter import Chapter, ChapterStatus
 from app.models.reference import ReferenceFile
 from app.models.user import User
 from app.services.heading_formatter import normalize_outline_sections
 from app.services.preface_service import DEFAULT_PREFACE, get_preface
-
-
-def _normalize_disciplines(value: object) -> list[str] | None:
-    if not isinstance(value, list):
-        return None
-    out: list[str] = []
-    for item in value[:3]:
-        text = str(item or "").strip()[:100]
-        if text and text not in out:
-            out.append(text)
-    return out or None
 
 
 def get_book_or_404(book_id: UUID, user: User, db: Session) -> Book:
@@ -49,12 +38,11 @@ def list_user_books(user: User, db: Session) -> list[Book]:
 
 def _sync_discipline_field(book: Book) -> None:
     """Keep legacy discipline column in sync with disciplines[0]."""
-    discs = _normalize_disciplines(book.disciplines)
-    book.disciplines = discs
+    discs = book.disciplines if isinstance(book.disciplines, list) else None
     if discs:
         book.discipline = str(discs[0])[:100] if discs[0] else book.discipline
     elif book.discipline and not discs:
-        book.disciplines = [str(book.discipline).strip()[:100]]
+        book.disciplines = [book.discipline]
 
 
 def allocate_default_book_title(user_id: UUID, db: Session) -> str:
@@ -90,10 +78,8 @@ def create_book(
     data["title"] = title
     data["original_title"] = title
     data.setdefault("allow_title_optimization", False)
-    discs = _normalize_disciplines(data.get("disciplines"))
-    if discs:
-        data["disciplines"] = discs
-    if discs and not data.get("discipline"):
+    discs = data.get("disciplines")
+    if discs and isinstance(discs, list) and discs and not data.get("discipline"):
         data["discipline"] = str(discs[0])[:100]
     book = Book(user_id=user.id, **data)
     _sync_discipline_field(book)
@@ -108,52 +94,21 @@ def create_book(
 
 def update_book(book: Book, payload: dict, db: Session) -> Book:
     previous_citation_style = book.citation_style
-    # Apply book_type before style_type so coerce_style uses the new type
-    if "book_type" in payload and payload["book_type"] is not None:
-        bt = payload["book_type"]
-        book.book_type = BookType(bt) if not isinstance(bt, BookType) else bt
     for key, value in payload.items():
-        if key == "book_type":
-            continue
         if key == "style_type" and value is not None:
             value = coerce_style(book.book_type.value, value).value
         elif key == "citation_style" and value is not None:
             value = CitationStyle(value)
         elif key == "status" and value is not None:
             value = BookStatus(value)
-        elif key == "disciplines":
-            value = _normalize_disciplines(value)
+        elif key == "publication_info" and value is not None:
+            from app.services.publication.publication_info import normalize_publication_info
+
+            value = normalize_publication_info(
+                value if isinstance(value, dict) else None,
+                fallback_title=book.title,
+            )
         setattr(book, key, value)
-    # If type changed without a compatible style, coerce current style
-    if "book_type" in payload and payload.get("book_type") is not None:
-        book.style_type = coerce_style(book.book_type.value, book.style_type).value
-        from app.services.writing.project_seed import mark_classification_source
-
-        mark_classification_source(book, "user")
-    elif "style_type" in payload and payload.get("style_type") is not None:
-        from app.services.writing.project_seed import mark_classification_source
-
-        mark_classification_source(book, "user")
-        settings = dict(book.ai_inferred_settings) if isinstance(book.ai_inferred_settings, dict) else {}
-        settings.pop("pending_writing_spec", None)
-        book.ai_inferred_settings = settings
-
-    # Field-level origins for startup assistant protection
-    from app.services.assistant.book_settings_context import set_setting_origin
-
-    for key in (
-        "title",
-        "book_type",
-        "style_type",
-        "target_audience",
-        "disciplines",
-        "topic_brief",
-        "target_words",
-        "topic_tags",
-        "citation_style",
-    ):
-        if key in payload and payload.get(key) is not None:
-            set_setting_origin(book, key, "user_manual")
     _sync_discipline_field(book)
     if "citation_style" in payload and book.citation_style != previous_citation_style:
         from app.services.citation_nodes import refresh_book_citation_rendering

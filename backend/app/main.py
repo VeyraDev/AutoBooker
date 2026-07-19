@@ -25,6 +25,7 @@ from app.routers import review_stage as review_stage_router
 from app.routers import review_workspace as review_workspace_router
 from app.routers import writing_basis as writing_basis_router
 from app.routers import project_assistant as project_assistant_router
+from app.routers import format_strategy as format_strategy_router
 from app.routers import sources as sources_router
 from app.routers import memories as memories_router
 
@@ -61,6 +62,7 @@ app.include_router(intake_router.router)
 app.include_router(writing_basis_router.router)
 app.include_router(project_assistant_router.router)
 app.include_router(sources_router.router)
+app.include_router(format_strategy_router.router)
 app.include_router(review_stage_router.router)
 app.include_router(review_workspace_router.router)
 app.include_router(memories_router.router)

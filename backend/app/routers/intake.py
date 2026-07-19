@@ -56,10 +56,7 @@ def complete_project_start(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """项目启动完成：落地 WritingBasis → Book/WritingRequirement，确认 Intake。
-
-    不自动推断话题标签/主题要点；由用户在助手页点击「智能补齐设定」触发。
-    """
+    """项目启动助手阶段完成：确认 intake，同步主题说明，进入大纲页。"""
     from app.models.intake import IntakeStatus, ProjectIntake
 
     book = book_service.get_book_or_404(book_id, user, db)
@@ -76,46 +73,9 @@ def complete_project_start(
         book.topic_brief = goal[:20_000]
     if goal and not (book.user_material or "").strip():
         book.user_material = goal[:50_000]
-
-    basis_svc = WritingBasisService(db)
-    basis = basis_svc.get_draft_or_create(book)
-    if goal:
-        patch: dict = {}
-        if not (basis.direction or "").strip():
-            patch["direction"] = goal[:2000]
-        if not (basis.book_promise or "").strip():
-            patch["book_promise"] = goal[:4000]
-        if patch:
-            basis_svc.patch(basis, patch)
-    try:
-        basis_svc.finalize_confirm(book, basis, intake=intake)
-    except ValueError:
-        intake.status = IntakeStatus.confirmed
-        from app.services.writing.basis_requirement_sync import sync_requirements_from_basis
-
-        sync_requirements_from_basis(db, book, basis)
-
+    intake.status = IntakeStatus.confirmed
     db.commit()
     return {"intake_id": str(intake.id), "status": intake.status.value}
-
-
-@router.post("/{book_id}/setup/infer", response_model=dict)
-def infer_setup_settings(
-    book_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """用户主动触发：根据创作意图推断并写入类型/体裁/字数/标签/主题要点等。"""
-    from app.llm.providers import resolve_book_writing_model
-    from app.schemas.book import BookOut
-    from app.services.writing.project_seed import infer_and_apply_book_settings
-
-    book = book_service.get_book_or_404(book_id, user, db)
-    model = resolve_book_writing_model(book, user)
-    seed = infer_and_apply_book_settings(book, model, db)
-    db.commit()
-    db.refresh(book)
-    return {"book": BookOut.model_validate(book).model_dump(mode="json"), "project_seed_preview": seed[:300]}
 
 
 @router.post("/{book_id}/project-start/bootstrap")

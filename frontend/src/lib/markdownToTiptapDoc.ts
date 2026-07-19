@@ -3,8 +3,9 @@ import { marked } from "marked";
 
 import { chapterEditorSchemaExtensions } from "@/lib/chapterEditorExtensions";
 import { mathMarkdownToHtml } from "@/lib/mathMarkdown";
+import { textHasMathDelimiters } from "@/lib/migrateMathInTiptapDoc";
 import { normalizeGfmMarkdown } from "@/lib/normalizeGfmMarkdown";
-import { shouldParseAsMarkdown } from "@/lib/plainTextMarkdownToTiptap";
+import { plainTextMarkdownToTiptapDoc, shouldParseAsMarkdown } from "@/lib/plainTextMarkdownToTiptap";
 import { repairFragmentedInlineMath } from "@/lib/repairInlineMath";
 
 marked.setOptions({ gfm: true });
@@ -23,6 +24,9 @@ export function isRichMarkdown(text: string): boolean {
 
 export function markdownToTiptapDoc(markdown: string): Record<string, unknown> {
   const normalized = repairFragmentedInlineMath(normalizeGfmMarkdown(markdown));
+  if (textHasMathDelimiters(normalized) || shouldParseAsMarkdown(normalized)) {
+    return plainTextMarkdownToTiptapDoc(normalized);
+  }
   const withMath = mathMarkdownToHtml(normalized);
   const html = marked.parse(withMath, { async: false }) as string;
   return generateJSON(html, chapterEditorSchemaExtensions) as Record<string, unknown>;

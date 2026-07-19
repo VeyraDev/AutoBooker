@@ -52,16 +52,18 @@ export interface Book {
     text?: string;
     tiptap_json?: Record<string, unknown>;
   } | null;
-  constitution_stale?: boolean;
-  pending_writing_spec?: {
-    field?: string;
-    requested_value?: string;
-    requested_label?: string;
-    current_value?: string;
-    current_label?: string;
-    reason?: string;
-    updated_at?: string;
+  publication_info?: {
+    title?: string;
+    subtitle?: string;
+    author?: string;
+    publisher?: string;
+    publish_year?: string;
+    isbn?: string;
+    edition?: string;
+    series?: string;
+    cip_text?: string;
   } | null;
+  constitution_stale?: boolean;
   created_at: string;
   updated_at: string | null;
 }
@@ -81,7 +83,6 @@ export interface BookCreatePayload {
 
 export interface BookUpdatePayload {
   title?: string;
-  book_type?: BookType;
   discipline?: string | null;
   disciplines?: string[] | null;
   target_audience?: string | null;
@@ -92,6 +93,17 @@ export interface BookUpdatePayload {
   topic_tags?: string[] | null;
   topic_brief?: string | null;
   allow_title_optimization?: boolean;
+  publication_info?: {
+    title?: string;
+    subtitle?: string;
+    author?: string;
+    publisher?: string;
+    publish_year?: string;
+    isbn?: string;
+    edition?: string;
+    series?: string;
+    cip_text?: string;
+  } | null;
 }
 
 export interface SetupRecommendResult {
@@ -100,11 +112,5 @@ export interface SetupRecommendResult {
   recommended_tags: string[];
   target_audience: string;
   disciplines: string[];
-  discipline_candidates?: Array<{
-    name: string;
-    reason?: string;
-    ambiguity_note?: string;
-  }>;
-  discipline_confirmation_note?: string;
   topic_brief: string;
 }

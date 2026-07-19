@@ -25,10 +25,14 @@ def _zeelin_base_url() -> str:
     return ((settings.ZEELIN_BASE_URL or "").strip() or "https://getways-jumu.zeelin.cn/v1").rstrip("/")
 
 
-def _pick_size(model: str, *, sub_kind: str = "figure") -> str:
-    raw = (settings.ZEELIN_IMAGE_SIZE or "").strip()
+def _pick_size(model: str, *, sub_kind: str = "figure", size: str | None = None) -> str:
+    raw = (size or settings.ZEELIN_IMAGE_SIZE or "").strip()
     if raw and raw.lower() not in {"auto", "adaptive"}:
         return raw
+
+    if sub_kind == "cover":
+        # 竖版封面（书籍成品比例）
+        return "864x1536"
 
     profile = canvas_profile_for_subtype(sub_kind)
     if profile.key == "landscape":
@@ -38,11 +42,17 @@ def _pick_size(model: str, *, sub_kind: str = "figure") -> str:
     return "1024x1024"
 
 
-def _image_generation_body(model: str, prompt: str, *, sub_kind: str = "figure") -> dict[str, Any]:
+def _image_generation_body(
+    model: str,
+    prompt: str,
+    *,
+    sub_kind: str = "figure",
+    size: str | None = None,
+) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": model,
         "prompt": prompt[:12000],
-        "size": _pick_size(model, sub_kind=sub_kind),
+        "size": _pick_size(model, sub_kind=sub_kind, size=size),
         "n": 1,
     }
     quality = (settings.OPENAI_IMAGE_QUALITY or "").strip()
@@ -140,23 +150,89 @@ def _poll_image_task(
 
 
 def _write_image_result(client: httpx.Client, payload: dict[str, Any], output_path: Path) -> None:
+    output_path.write_bytes(_image_bytes_from_payload(client, payload))
+
+
+def _image_bytes_from_payload(client: httpx.Client, payload: dict[str, Any]) -> bytes:
     item = _first_image_item(payload)
     b64 = item.get("b64_json") or item.get("b64") or item.get("base64")
     if isinstance(b64, str) and b64:
-        output_path.write_bytes(base64.b64decode(b64.split(",", 1)[-1]))
-        return
+        return base64.b64decode(b64.split(",", 1)[-1])
 
     url = item.get("url") or item.get("image_url") or item.get("image") or payload.get("url")
     if isinstance(url, str) and url.startswith("data:image"):
-        output_path.write_bytes(base64.b64decode(url.split(",", 1)[-1]))
-        return
+        return base64.b64decode(url.split(",", 1)[-1])
     if isinstance(url, str) and url:
         img_resp = client.get(url, timeout=120.0)
         img_resp.raise_for_status()
-        output_path.write_bytes(img_resp.content)
-        return
+        return img_resp.content
 
     raise RuntimeError(f"智灵图像结果缺少 b64_json 或 url: {payload}")
+
+
+def generate_image_bytes_zeelin(
+    prompt: str,
+    *,
+    sub_kind: str = "figure",
+    size: str | None = None,
+) -> bytes:
+    """调用智灵网关 /images/generations（默认 gpt-image-2），返回图片字节。"""
+    if not settings.ZEELIN_API_KEY.strip():
+        raise RuntimeError("ZEELIN_API_KEY 未配置，无法调用智灵网关图像生成")
+
+    model = (settings.ZEELIN_IMAGE_MODEL or "gpt-image-2").strip()
+    url = f"{_zeelin_base_url()}/images/generations"
+    headers = {
+        "Authorization": f"Bearer {settings.ZEELIN_API_KEY.strip()}",
+        "Content-Type": "application/json",
+    }
+    body = _image_generation_body(model, prompt, sub_kind=sub_kind, size=size)
+
+    retries = max(1, settings.OPENAI_IMAGE_MAX_RETRIES)
+    timeout = httpx.Timeout(
+        connect=60.0,
+        read=max(30.0, float(settings.OPENAI_IMAGE_TIMEOUT_SEC)),
+        write=60.0,
+        pool=30.0,
+    )
+    last_err: Exception | None = None
+    with httpx.Client(timeout=timeout) as client:
+        for attempt in range(retries):
+            try:
+                logger.info(
+                    "zeelin images.generate attempt=%s model=%s size=%s kind=%s",
+                    attempt + 1,
+                    model,
+                    body.get("size"),
+                    sub_kind,
+                )
+                resp = client.post(url, headers=headers, json=body)
+                if resp.status_code >= 400:
+                    raise _response_error(resp)
+                payload = resp.json()
+                if not isinstance(payload, dict):
+                    raise RuntimeError(f"Zeelin image result is not an object: {payload}")
+                task_id = _image_task_id(payload)
+                if task_id:
+                    logger.info("zeelin images.generate task pending task_id=%s", task_id)
+                    payload = _poll_image_task(
+                        client,
+                        model=model,
+                        headers=headers,
+                        task_id=task_id,
+                        deadline_monotonic=time.monotonic()
+                        + max(30.0, float(settings.OPENAI_IMAGE_TIMEOUT_SEC)),
+                    )
+                return _image_bytes_from_payload(client, payload)
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError, httpx.HTTPStatusError) as e:
+                last_err = e
+                logger.warning("zeelin images.generate attempt %s failed: %s", attempt + 1, e)
+                if attempt < retries - 1:
+                    time.sleep(settings.LLM_RETRY_BASE_SECONDS * (2**attempt))
+            except Exception:
+                raise
+
+    raise RuntimeError(f"智灵图像生成超时或无法连接。原始错误: {last_err}") from last_err
 
 
 def generate_figure_image_zeelin(
@@ -175,59 +251,7 @@ def generate_figure_image_zeelin(
         layout_script=layout_script,
         prompt_mode=prompt_mode,
     )
-    if not settings.ZEELIN_API_KEY.strip():
-        raise RuntimeError("ZEELIN_API_KEY 未配置，无法调用智灵网关图像生成")
-
-    model = (settings.ZEELIN_IMAGE_MODEL or "gpt-image-2").strip()
-    url = f"{_zeelin_base_url()}/images/generations"
-    headers = {
-        "Authorization": f"Bearer {settings.ZEELIN_API_KEY.strip()}",
-        "Content-Type": "application/json",
-    }
-    body = _image_generation_body(model, prompt, sub_kind=sub_kind)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    retries = max(1, settings.OPENAI_IMAGE_MAX_RETRIES)
-    timeout = httpx.Timeout(
-        connect=60.0,
-        read=max(30.0, float(settings.OPENAI_IMAGE_TIMEOUT_SEC)),
-        write=60.0,
-        pool=30.0,
-    )
-    last_err: Exception | None = None
-    with httpx.Client(timeout=timeout) as client:
-        for attempt in range(retries):
-            try:
-                logger.info(
-                    "zeelin images.generate attempt=%s model=%s size=%s",
-                    attempt + 1,
-                    model,
-                    body.get("size"),
-                )
-                resp = client.post(url, headers=headers, json=body)
-                if resp.status_code >= 400:
-                    raise _response_error(resp)
-                payload = resp.json()
-                if not isinstance(payload, dict):
-                    raise RuntimeError(f"Zeelin image result is not an object: {payload}")
-                task_id = _image_task_id(payload)
-                if task_id:
-                    logger.info("zeelin images.generate task pending task_id=%s", task_id)
-                    payload = _poll_image_task(
-                        client,
-                        model=model,
-                        headers=headers,
-                        task_id=task_id,
-                        deadline_monotonic=time.monotonic() + max(30.0, float(settings.OPENAI_IMAGE_TIMEOUT_SEC)),
-                    )
-                _write_image_result(client, payload, output_path)
-                return prompt, output_path
-            except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError, httpx.HTTPStatusError) as e:
-                last_err = e
-                logger.warning("zeelin images.generate attempt %s failed: %s", attempt + 1, e)
-                if attempt < retries - 1:
-                    time.sleep(settings.LLM_RETRY_BASE_SECONDS * (2**attempt))
-            except Exception:
-                raise
-
-    raise RuntimeError(f"智灵图像生成超时或无法连接。原始错误: {last_err}") from last_err
+    raw = generate_image_bytes_zeelin(prompt, sub_kind=sub_kind)
+    output_path.write_bytes(raw)
+    return prompt, output_path

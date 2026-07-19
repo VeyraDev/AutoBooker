@@ -46,6 +46,7 @@ class CustomReviewService:
         return self.run_from_task(book, task, user=user)
 
     def run_from_task(self, book: Book, task: ReviewTask, *, user=None) -> dict:
+        snap = self.wcb.build_for_review(book.id)
         prompt = (task.custom_prompt or "").strip()
         if not prompt:
             raise ValueError("custom_prompt required")
@@ -69,22 +70,7 @@ class CustomReviewService:
             chapters = [c for c in chapters if c.index in idx_set]
         chapters = [c for c in chapters if not is_bibliography_chapter(c)]
 
-        from app.services.sources.stage_context_builder import StageContextBuilder
-
-        review_query = " ".join(
-            [book.title or "", prompt]
-            + [f"{chapter.title or ''} {chapter.summary or ''}" for chapter in chapters[:20]]
-        )
-        stage_context = StageContextBuilder(self.db).build(
-            book.id,
-            stage="review",
-            query=review_query,
-            chapter_index=chapters[0].index if len(chapters) == 1 else None,
-            top_k=20,
-        )
-        snap = stage_context["snapshot"]
-
-        context_block = stage_context["prompt_block"][:7000]
+        context_block = self.wcb.to_prompt_block(snap)[:4000]
         task_block = f"专项审校问题：{prompt}\n\n请只关注与上述问题相关的 findings，优先 goal_alignment 与 argument_quality 维度。"
         model = _chat_model_for_book(book, user, self.db) if user else "gpt-4o-mini"
         agent = ReviewAgent(model=model)
@@ -100,10 +86,8 @@ class CustomReviewService:
                 body=md,
                 book_title=book.title or "",
                 book_type=book.book_type.value if book.book_type else "non_fiction",
-                review_profile=book.style_type or (book.book_type.value if book.book_type else "default"),
                 citation_style=citation_style,
-                review_instruction=task_block,
-                user_material=context_block,
+                user_material=f"{context_block}\n\n{task_block}",
                 narrative_constitution=(book.narrative_constitution or ""),
             )
             for issue in result.get("issues") or []:

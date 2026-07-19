@@ -57,10 +57,7 @@ def basis_refs_from_context(context_snapshot: dict[str, Any] | None) -> list[str
 
 
 def retrieve_relevant_rules(finding: dict[str, Any], context_snapshot: dict[str, Any] | None) -> list[str]:
-    """Structured basis refs with rule kind labels.
-
-    「公开出版规则：…」仅在 finding.basis_rule_ids 命中真实 seed 时才允许出现。
-    """
+    """Structured basis refs with rule kind labels."""
     refs: list[str] = []
     for rid in finding.get("basis_rule_ids") or []:
         for rule in load_public_rules():
@@ -75,7 +72,10 @@ def retrieve_relevant_rules(finding: dict[str, Any], context_snapshot: dict[str,
         if any(k in detail for k in c["text"][:40].split() if len(k) > 1) or c["text"][:20] in detail:
             prefix = "用户要求" if c["kind"] == "UserCriterion" else c["kind"]
             refs.append(f"{prefix}：{c['text'][:200]}")
-    # 不再用 generic fallback 伪造「出版规范」依据
+    if finding.get("category") == "format_strategy":
+        refs.append("全书体例与栏目策略")
+    if not refs:
+        refs = basis_refs_from_context(context_snapshot)[:3]
     return refs[:8]
 
 
@@ -85,4 +85,6 @@ def match_basis_refs(finding: dict[str, Any], context_snapshot: dict[str, Any] |
         detail = str(finding.get("detail") or finding.get("title") or "")
         matched = [r for r in refs if any(k in detail for k in ("避免", "保留", "用户要求"))]
         return matched or refs[:2]
+    if finding.get("category") == "format_strategy":
+        return refs[:1] + ["全书体例与栏目策略"]
     return refs

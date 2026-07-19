@@ -1,5 +1,4 @@
 export interface LiteraturePaper {
-  id?: string;
   title: string;
   year?: number | null;
   authors: string[];
@@ -19,51 +18,6 @@ export interface LiteraturePaper {
   issue?: string | null;
   pages?: string | null;
   quotable_snippet?: string | null;
-  snippet?: string;
-  published_at?: string | null;
-  source_type?: SourceType;
-  provider?: string;
-  domain?: string;
-  relevance?: number;
-  credibility_hint?: "high" | "medium" | "unknown";
-  citeability?: boolean;
-  metadata_missing?: string[];
-  isbn?: string;
-  degraded?: boolean;
-}
-
-export type SourceType =
-  | "paper"
-  | "book"
-  | "news"
-  | "government"
-  | "industry_report"
-  | "technical"
-  | "web";
-
-export interface SourceCapability {
-  id: SourceType;
-  label: string;
-  available: boolean;
-  connectors: string[];
-  unavailable_reason?: string | null;
-}
-
-export interface SourceFacet {
-  id: SourceType;
-  label: string;
-  count: number;
-}
-
-export interface SourceSearchExecution {
-  requested_source_types: SourceType[];
-  attempted_connectors: string[];
-  successful_connectors: string[];
-  failed_connectors: Record<string, string>;
-  unavailable_source_types: SourceType[];
-  degraded: boolean;
-  duration_ms: number;
-  result_counts: Partial<Record<SourceType, number>>;
 }
 
 export interface LiteratureSearchResult {
@@ -76,20 +30,6 @@ export interface LiteratureSearchResult {
   items: LiteraturePaper[];
   profile?: string;
   source_hint?: string;
-  books?: LiteraturePaper[];
-  news?: LiteraturePaper[];
-  government?: LiteraturePaper[];
-  industry_reports?: LiteraturePaper[];
-  technical?: LiteraturePaper[];
-  web?: LiteraturePaper[];
-  facets?: SourceFacet[];
-  execution?: SourceSearchExecution;
-  plan?: {
-    scope?: "manual" | "book" | "chapter";
-    chapter_index?: number | null;
-    intent?: { kind?: string; display_query?: string; rationale?: string };
-    requested_source_types?: SourceType[];
-  };
 }
 
 export interface LiteratureRefineResult {
@@ -111,7 +51,6 @@ export interface LiteratureQuoteBlock {
 }
 
 export function literaturePaperKey(p: LiteraturePaper): string {
-  if (p.id) return p.id;
   if (p.external_id && p.source) return `${p.source}:${p.external_id}`.toLowerCase();
   if (p.doi?.trim()) return `doi:${p.doi.toLowerCase()}`;
   return (p.title || "").toLowerCase();
@@ -164,38 +103,6 @@ export interface CitationRecord {
   metadata_status?: "complete" | "needs_completion";
   external_source?: string | null;
   list_index?: number | null;
-  verification_status?: string | null;
-  verification_result?: Record<string, unknown> | null;
-  last_verified_at?: string | null;
   formatted?: string | null;
   created_at: string;
-}
-
-export interface CitationVerificationJob {
-  id: string;
-  book_id: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled" | string;
-  requested_citation_ids?: string[] | null;
-  total_count: number;
-  processed_count: number;
-  succeeded_count: number;
-  failed_count: number;
-  progress_pct: number;
-  result_json?: Record<string, unknown> | null;
-  error_message?: string | null;
-  created_at: string;
-  finished_at?: string | null;
-}
-
-export interface CitationVerificationDueJobRequest {
-  stale_after_days?: number;
-  limit?: number;
-  include_unverified?: boolean;
-  retry_unreachable_only?: boolean;
-}
-
-export interface CitationVerificationDueJobResult {
-  selected_count: number;
-  skipped_reason?: "active_job_exists" | "no_due_citations" | string | null;
-  job?: CitationVerificationJob | null;
 }

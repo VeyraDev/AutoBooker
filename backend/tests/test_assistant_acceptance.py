@@ -36,9 +36,6 @@ def test_acceptance_01_bootstrap_and_sources_api_exist():
     assert "/books/{book_id}/sources" in source_paths
     assert "/books/{book_id}/sources/upload" in source_paths
     assert "/books/{book_id}/sources/{source_id}" in source_paths
-    assert "/books/{book_id}/sources/search-plan" in source_paths
-    assert "/books/{book_id}/sources/search" in source_paths
-    assert "/books/{book_id}/sources/search-results/add" in source_paths
 
 
 def test_acceptance_02_source_segment_extract():
@@ -48,7 +45,7 @@ def test_acceptance_02_source_segment_extract():
 
 
 def test_acceptance_03_external_search_tool_routing():
-    """外部检索选题：统一资料搜索 mock + 工具路由。"""
+    """外部检索选题：ExternalSearchService mock + tool 路由。"""
     db = MagicMock()
     orch = ToolOrchestrator(db)
     book = SimpleNamespace(id=uuid4(), title="测试书")
@@ -60,23 +57,7 @@ def test_acceptance_03_external_search_tool_routing():
         "source_scope": "public",
         "warnings": [],
     }
-    unified_payload = {
-        "items": search_payload["works"],
-        "papers": search_payload["works"],
-        "books": [],
-        "news": [],
-        "government": [],
-        "industry_reports": [],
-        "technical": [],
-        "web": [],
-        "warnings": [],
-        "source_hint": "统一资料搜索",
-    }
-    with patch.object(
-        orch._source_search,
-        "search",
-        return_value=SimpleNamespace(model_dump=lambda **kwargs: unified_payload),
-    ):
+    with patch.object(orch._external, "search_person_works", return_value=search_payload):
         with patch.object(orch._sources, "add_pasted_text") as add_paste:
             add_paste.return_value = SimpleNamespace(id=uuid4())
             results = orch.execute(
@@ -85,7 +66,7 @@ def test_acceptance_03_external_search_tool_routing():
                 [{"name": "search_person_works", "arguments": {"person_name": "张三"}}],
             )
     assert results[0]["ok"] is True
-    assert results[0]["panel_hint"] == "literature"
+    assert results[0]["panel_hint"] == "sources"
     assert results[0]["data"]["person"] == "张三"
 
 
@@ -125,12 +106,11 @@ def test_acceptance_07_book_editor_no_legacy_intake_gate():
     assert "ProjectAssistantPage" in text
 
 
-def test_acceptance_08_outline_reads_writing_basis_via_stage_context():
-    """大纲通过统一阶段上下文注入写作依据和命中的资料。"""
+def test_acceptance_08_outline_reads_writing_basis_via_wcb():
+    """大纲基于 basis：outline 生成注入 WritingContextBuilder。"""
     src = inspect.getsource(outline_router.generate_outline)
-    assert "StageContextBuilder" in src
-    assert 'stage="outline"' in src
-    assert 'stage_context["prompt_block"]' in src
+    assert "WritingContextBuilder" in src
+    assert "build_for_outline" in src
 
 
 def test_acceptance_09_propose_outline_change_requires_confirmation():
@@ -179,23 +159,7 @@ def test_acceptance_11_pending_confirmations_from_propose_topics():
         '{"topics":[{"title":"主题A","rationale":"理由","audience":"读者","feasibility":"高","risks":[]}],'
         '"recommended_index":0,"source_disclaimer":"公开检索"}'
     )
-    unified_payload = {
-        "items": search_payload["works"],
-        "papers": search_payload["works"],
-        "books": [],
-        "news": [],
-        "government": [],
-        "industry_reports": [],
-        "technical": [],
-        "web": [],
-        "warnings": [],
-        "source_hint": "统一资料搜索",
-    }
-    with patch.object(
-        orch._source_search,
-        "search",
-        return_value=SimpleNamespace(model_dump=lambda **kwargs: unified_payload),
-    ):
+    with patch.object(orch._external, "search_person_works", return_value=search_payload):
         with patch.object(orch._llm, "chat_completion", return_value=proposal_json):
             results = orch.execute(
                 book,

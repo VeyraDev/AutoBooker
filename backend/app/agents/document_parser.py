@@ -293,11 +293,6 @@ class DocumentParserAgent:
                         if str(ref.id) in (item.get("file_ids") or [])
                     ]
                     artifacts["status"] = "pending_confirmation" if artifacts["pending_issues"] else "effective"
-                    ref.lifecycle_status = (
-                        FileLifecycleStatus.pending_confirmation
-                        if artifacts["pending_issues"]
-                        else FileLifecycleStatus.effective
-                    )
                     ref.parse_artifacts = artifacts
                     book.material_conflicts = conflicts if conflicts else book.material_conflicts
                     self.db.commit()
@@ -335,13 +330,11 @@ class DocumentParserAgent:
 
     def retrieve(self, query: str, top_k: int = 5) -> list[str]:
         any_chunk = self.db.execute(
-            select(ReferenceChunk.id).join(ReferenceFile, ReferenceChunk.file_id == ReferenceFile.id)
+            select(ReferenceChunk.id)
             .where(
                 ReferenceChunk.book_id == self.book_id,
                 ReferenceChunk.active.is_(True),
                 ReferenceChunk.chunk_kind == "reference_material",
-                ReferenceFile.parse_status == ParseStatus.done,
-                ReferenceFile.lifecycle_status == FileLifecycleStatus.effective,
             )
             .limit(1)
         ).first()
@@ -353,13 +346,11 @@ class DocumentParserAgent:
             logger.warning("embedding unavailable for RAG retrieve; skipping snippets: %s", e)
             return []
         stmt = (
-            select(ReferenceChunk).join(ReferenceFile, ReferenceChunk.file_id == ReferenceFile.id)
+            select(ReferenceChunk)
             .where(
                 ReferenceChunk.book_id == self.book_id,
                 ReferenceChunk.active.is_(True),
                 ReferenceChunk.chunk_kind == "reference_material",
-                ReferenceFile.parse_status == ParseStatus.done,
-                ReferenceFile.lifecycle_status == FileLifecycleStatus.effective,
             )
             .order_by(ReferenceChunk.embedding.cosine_distance(qvec))
             .limit(top_k)
@@ -370,13 +361,11 @@ class DocumentParserAgent:
     def retrieve_with_meta(self, query: str, top_k: int = 5) -> tuple[list[str], list[tuple[str, str]]]:
         """Returns (snippets, [(content, filename), ...])."""
         any_chunk = self.db.execute(
-            select(ReferenceChunk.id).join(ReferenceFile, ReferenceChunk.file_id == ReferenceFile.id)
+            select(ReferenceChunk.id)
             .where(
                 ReferenceChunk.book_id == self.book_id,
                 ReferenceChunk.active.is_(True),
                 ReferenceChunk.chunk_kind == "reference_material",
-                ReferenceFile.parse_status == ParseStatus.done,
-                ReferenceFile.lifecycle_status == FileLifecycleStatus.effective,
             )
             .limit(1)
         ).first()
@@ -394,8 +383,6 @@ class DocumentParserAgent:
                 ReferenceChunk.book_id == self.book_id,
                 ReferenceChunk.active.is_(True),
                 ReferenceChunk.chunk_kind == "reference_material",
-                ReferenceFile.parse_status == ParseStatus.done,
-                ReferenceFile.lifecycle_status == FileLifecycleStatus.effective,
             )
             .order_by(ReferenceChunk.embedding.cosine_distance(qvec))
             .limit(top_k)

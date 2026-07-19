@@ -9,16 +9,12 @@ import {
   sendTurn,
   type AssistantTrace,
   type ConfirmationPreview,
-  type ExtractedRequirement,
-  type OutlineRoute,
-  type SettingOrigin,
   type SourceItem,
   type ToolResult,
   type TurnListItem,
   type TurnResponse,
   type WritingBasis,
 } from "@/features/assistant/api/assistantApi";
-import { normalizeSearchPayload } from "@/features/assistant/components/LiteratureSearchCard";
 import { useStreamingReveal } from "@/lib/useStreamingReveal";
 
 export type PendingTurn = {
@@ -27,7 +23,6 @@ export type PendingTurn = {
   assistantMessage: string;
   turnId?: string;
   traces?: AssistantTrace[];
-  searchResult?: Record<string, unknown> | null;
 };
 
 type Options = {
@@ -67,65 +62,11 @@ export function useAssistantConversation(bookId: string, options?: Options) {
     enabled: Boolean(bookId),
   });
 
-  const [lastQuickFillOpId, setLastQuickFillOpId] = useState<string | null>(null);
-  const [lastSettingOrigins, setLastSettingOrigins] = useState<Record<string, SettingOrigin>>({});
-  const [lastConfirmedRequirements, setLastConfirmedRequirements] = useState<ExtractedRequirement[]>([]);
-  const [lastOutlineRoute, setLastOutlineRoute] = useState<OutlineRoute | null>(null);
-  const [externalSearch, setExternalSearch] = useState<Record<string, unknown> | null>(null);
-
-  // Rehydrate literature panel from persisted turn search (survives refresh / HMR)
-  useEffect(() => {
-    const rows = turnsQuery.data ?? [];
-    const hit = rows.find((t) => t.search_result);
-    if (!hit?.search_result) return;
-    const normalized = normalizeSearchPayload(hit.search_result);
-    if (normalized) setExternalSearch(normalized);
-  }, [turnsQuery.data]);
-
   const applyTurnSuccess = useCallback(
     async (data: TurnResponse) => {
       if (data.turn_id && data.traces?.length) {
         setLastTurnTraces((prev) => ({ ...prev, [data.turn_id]: data.traces ?? [] }));
       }
-      if (data.quick_fill_operation_id) {
-        setLastQuickFillOpId(data.quick_fill_operation_id);
-      }
-      if (data.setting_origins) {
-        setLastSettingOrigins(data.setting_origins);
-      }
-      if (data.confirmed_requirements) {
-        setLastConfirmedRequirements(data.confirmed_requirements);
-      }
-      if (data.outline_route) {
-        setLastOutlineRoute(data.outline_route);
-      }
-      const fromSearch = data.search_result?.result;
-      const fromTool =
-        data.tool_results?.find(
-          (r) =>
-            (r.name === "search_person_works" || r.name === "search_references" || r.name === "search_literature") &&
-            r.ok,
-        )?.data;
-      const nested =
-        fromTool && typeof fromTool === "object" && "result" in fromTool
-          ? (fromTool as { result?: unknown }).result
-          : null;
-      const next =
-        (fromSearch && typeof fromSearch === "object" ? (fromSearch as Record<string, unknown>) : null) ??
-        (nested && typeof nested === "object" ? (nested as Record<string, unknown>) : null) ??
-        (fromTool && typeof fromTool === "object" ? (fromTool as Record<string, unknown>) : null);
-      let searchPayload: Record<string, unknown> | null = null;
-      if (data.search_result && typeof data.search_result === "object") {
-        searchPayload = normalizeSearchPayload(data.search_result as Record<string, unknown>);
-      } else if (next) {
-        const meta =
-          fromTool && typeof fromTool === "object" ? (fromTool as Record<string, unknown>) : {};
-        searchPayload = normalizeSearchPayload({
-          ...meta,
-          result: next,
-        });
-      }
-      if (searchPayload) setExternalSearch(searchPayload);
       setPendingTurn((prev) =>
         prev
           ? {
@@ -134,14 +75,12 @@ export function useAssistantConversation(bookId: string, options?: Options) {
               assistantMessage: data.assistant_message,
               turnId: data.turn_id,
               traces: data.traces,
-              searchResult: searchPayload ?? prev.searchResult ?? null,
             }
           : null,
       );
       if (data.writing_basis) {
         qc.setQueryData(["writingBasis", bookId], data.writing_basis);
       }
-      void qc.invalidateQueries({ queryKey: ["book", bookId] });
     },
     [bookId, qc],
   );
@@ -174,20 +113,13 @@ export function useAssistantConversation(bookId: string, options?: Options) {
       qc.invalidateQueries({ queryKey: ["assistantTurns", bookId] }),
       qc.invalidateQueries({ queryKey: ["sources", bookId] }),
       qc.invalidateQueries({ queryKey: ["memories", bookId] }),
-      qc.invalidateQueries({ queryKey: ["writingBasis", bookId] }),
-      qc.invalidateQueries({ queryKey: ["book", bookId] }),
     ]);
   }, [bookId, qc]);
 
   const sendMutation = useMutation({
-    mutationFn: (payload: { message: string; mode?: "normal" | "quick_fill" }) =>
-      sendTurn(bookId, payload.message, null, payload.mode ?? "normal"),
-    onMutate: (payload) => {
-      setPendingTurn({
-        userMessage: payload.mode === "quick_fill" ? "（快速补齐）" : payload.message,
-        phase: "thinking",
-        assistantMessage: "",
-      });
+    mutationFn: (message: string) => sendTurn(bookId, message),
+    onMutate: (message) => {
+      setPendingTurn({ userMessage: message, phase: "thinking", assistantMessage: "" });
     },
     onSuccess: async (data) => {
       await applyTurnSuccess(data);
@@ -202,15 +134,10 @@ export function useAssistantConversation(bookId: string, options?: Options) {
     async (message: string) => {
       const text = message.trim();
       if (!text || sendMutation.isPending || pendingTurn) return;
-      return sendMutation.mutateAsync({ message: text, mode: "normal" });
+      return sendMutation.mutateAsync(text);
     },
     [pendingTurn, sendMutation],
   );
-
-  const quickFill = useCallback(async () => {
-    if (sendMutation.isPending || pendingTurn) return;
-    return sendMutation.mutateAsync({ message: "", mode: "quick_fill" });
-  }, [pendingTurn, sendMutation]);
 
   const stream = useStreamingReveal(pendingTurn?.assistantMessage ?? "", pendingTurn?.phase === "streaming");
 
@@ -259,7 +186,6 @@ export function useAssistantConversation(bookId: string, options?: Options) {
     prependSource,
     removeSource,
     sendMessage,
-    quickFill,
     sending: sendMutation.isPending || pendingTurn?.phase === "thinking",
     streaming: pendingTurn?.phase === "streaming",
     streamingText: stream.visible,
@@ -271,11 +197,7 @@ export function useAssistantConversation(bookId: string, options?: Options) {
     pendingConfirmations: (lastResponse?.pending_confirmations ?? []) as ConfirmationPreview[],
     topicProposal: lastResponse?.tool_results?.find((r) => r.name === "propose_book_topics" && r.ok)?.data
       ?.proposal as Record<string, unknown> | undefined,
-    externalSearch,
+    externalSearch: lastResponse?.tool_results?.find((r) => r.name === "search_person_works" && r.ok)?.data,
     turnTracesById: lastTurnTraces,
-    lastQuickFillOpId,
-    lastSettingOrigins,
-    lastConfirmedRequirements,
-    lastOutlineRoute,
   };
 }

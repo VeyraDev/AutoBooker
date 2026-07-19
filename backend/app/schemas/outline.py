@@ -18,6 +18,7 @@ class OutlineChapterOut(BaseModel):
     key_points: list[str] = []
     estimated_words: int = Field(default=3000, ge=100)
     sections: list[OutlineSectionOut] = []
+    column_labels: list[str] = []
     word_count: int = 0
     status: ChapterStatus
 
@@ -47,6 +48,3 @@ class OutlineGenerateIn(BaseModel):
     topic_override: str | None = Field(default=None, max_length=500)
     target_audience: str | None = Field(default=None, max_length=500)
     topic_brief: str | None = Field(default=None, max_length=12000)
-    # When outline_route.needs_confirmation, client must pass chosen segment/source id
-    confirmed_source_id: str | None = Field(default=None, max_length=64)
-    force: bool = False

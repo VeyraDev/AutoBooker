@@ -91,8 +91,53 @@ def _blocks_from_tiptap(
     return blocks
 
 
-def build_book_export_ast(book: Book, chapters: list[Chapter], db: Session) -> BookExportAst:
-    title = book.title or "未命名"
+def _chapter_summary_line(ch: Chapter, blocks: list[AstBlock]) -> str:
+    raw = (getattr(ch, "summary", None) or "").strip()
+    if raw:
+        return raw.replace("\n", " ").strip()[:80]
+    for block in blocks:
+        if block.role == "body" and (block.text or "").strip():
+            return (block.text or "").replace("\n", " ").strip()[:80]
+    return ""
+
+
+def _estimate_pages_from_blocks(blocks: list[AstBlock], *, base: int = 1) -> int:
+    """Rough page estimate (~400 Chinese chars / page) for TOC page numbers."""
+    chars = 0
+    for block in blocks:
+        chars += len(block.text or "")
+        node = block.attrs.get("tiptap_node")
+        if isinstance(node, dict):
+            chars += len(_inline_to_markdown(node.get("content")) or "")
+    return max(base, (chars + 399) // 400)
+
+
+def _section_titles_for_toc(blocks: list[AstBlock]) -> list[str]:
+    """Collect chapter-internal section titles（二级目录）。"""
+    titles: list[str] = []
+    for block in blocks:
+        if block.role != "section_title":
+            continue
+        title = (block.text or "").strip()
+        if title:
+            titles.append(title)
+    return titles
+
+
+def build_book_export_ast(
+    book: Book,
+    chapters: list[Chapter],
+    db: Session,
+    *,
+    publication_info: dict | None = None,
+) -> BookExportAst:
+    from app.services.publication.publication_info import normalize_publication_info
+
+    pub = normalize_publication_info(
+        publication_info if publication_info is not None else getattr(book, "publication_info", None),
+        fallback_title=book.title or "未命名",
+    )
+    title = pub.get("title") or book.title or "未命名"
     ast = BookExportAst(title=title)
 
     book_pk = getattr(book, "id", None)
@@ -111,21 +156,9 @@ def build_book_export_ast(book: Book, chapters: list[Chapter], db: Session) -> B
     pf = get_preface(book)
     has_preface = bool(pf.get("enabled") and isinstance(pf.get("tiptap_json"), dict))
 
-    sections.append(CoverSection(title=title))
+    sections.append(CoverSection(title=title, publication=pub))
 
-    if has_preface:
-        toc_entries.append(TocEntry(title="前言", section_type="preface"))
-
-    content_chapters = [ch for ch in chapters if not is_bibliography_chapter(ch)]
-    for ch in content_chapters:
-        ch_title = export_chapter_title(ch)
-        toc_entries.append(
-            TocEntry(title=ch_title, section_type="chapter", chapter_index=ch.index)
-        )
-
-    sections.append(TocSection(entries=list(toc_entries)))
-    ast.toc_entries = list(toc_entries)
-
+    preface_blocks: list[AstBlock] = []
     if has_preface:
         preface_blocks = _blocks_from_tiptap(
             pf["tiptap_json"],
@@ -134,8 +167,9 @@ def build_book_export_ast(book: Book, chapters: list[Chapter], db: Session) -> B
             figure_by_id={},
             db=db,
         )
-        sections.append(PrefaceSection(blocks=preface_blocks))
 
+    content_chapters = [ch for ch in chapters if not is_bibliography_chapter(ch)]
+    chapter_payloads: list[tuple[Chapter, str, list[AstBlock]]] = []
     for ch in content_chapters:
         ch_title = export_chapter_title(ch)
         meta = ch.content if isinstance(ch.content, dict) else {}
@@ -151,19 +185,14 @@ def build_book_export_ast(book: Book, chapters: list[Chapter], db: Session) -> B
             )
         elif meta.get("text"):
             chapter_blocks.append(AstBlock(role="body", text=str(meta.get("text"))[:50000]))
-        sections.append(
-            ChapterSection(
-                chapter_index=ch.index,
-                title=ch_title,
-                blocks=chapter_blocks,
-            )
-        )
+        chapter_payloads.append((ch, ch_title, chapter_blocks))
 
     raw_bibliography = getattr(book, "bibliography", None)
     bibliography = raw_bibliography if isinstance(raw_bibliography, dict) else {}
     bibliography_text = str(bibliography.get("text") or "").strip()
+    bib_blocks: list[AstBlock] = []
+    bib_title = str(bibliography.get("title") or "参考文献")
     if bibliography_text:
-        bib_title = str(bibliography.get("title") or "参考文献")
         bib_blocks = _blocks_from_tiptap(
             bibliography.get("tiptap_json") if isinstance(bibliography.get("tiptap_json"), dict) else None,
             book_id=book_id,
@@ -175,6 +204,70 @@ def build_book_export_ast(book: Book, chapters: list[Chapter], db: Session) -> B
             for line in bibliography_text.split("\n\n"):
                 if line.strip():
                     bib_blocks.append(AstBlock(role="body", text=line.strip()))
+
+    # 先收集目录条目，再按正式书籍顺序（封面/版权 → 目录 → 前言 → 正文）估算页码
+    if has_preface:
+        toc_entries.append(TocEntry(title="前言", section_type="preface", level=1))
+    for ch, ch_title, chapter_blocks in chapter_payloads:
+        toc_entries.append(
+            TocEntry(
+                title=ch_title,
+                section_type="chapter",
+                chapter_index=ch.index,
+                level=1,
+            )
+        )
+        for sec_title in _section_titles_for_toc(chapter_blocks):
+            toc_entries.append(
+                TocEntry(
+                    title=sec_title,
+                    section_type="chapter",
+                    chapter_index=ch.index,
+                    level=2,
+                )
+            )
+    if bib_blocks:
+        toc_entries.append(TocEntry(title=bib_title, section_type="bibliography", level=1))
+
+    # 页码规范：阿拉伯数字从正文第一章第 1 页起；前言等前置不计阿拉伯页码
+    page_cursor = 1
+    entry_i = 0
+    if has_preface:
+        toc_entries[entry_i].page = None  # 前言列入目录，但不占正文页码
+        entry_i += 1
+    for _ch, _title, chapter_blocks in chapter_payloads:
+        # 章过渡 1 页；每节另起一页计入目录估页
+        toc_entries[entry_i].page = page_cursor
+        entry_i += 1
+        page_cursor += 1  # chapter flyleaf
+        sec_count = len(_section_titles_for_toc(chapter_blocks))
+        for _ in range(sec_count):
+            toc_entries[entry_i].page = page_cursor
+            entry_i += 1
+            page_cursor += 1  # 每节另起一页
+        # 正文估页（扣除已为各节各计的 1 页中一部分重叠，仍用整章字数作下限）
+        body_pages = _estimate_pages_from_blocks(chapter_blocks)
+        page_cursor += max(0, body_pages - sec_count)
+    if bib_blocks:
+        toc_entries[entry_i].page = page_cursor
+
+    sections.append(TocSection(entries=list(toc_entries)))
+    ast.toc_entries = list(toc_entries)
+
+    if has_preface:
+        sections.append(PrefaceSection(blocks=preface_blocks))
+
+    for ch, ch_title, chapter_blocks in chapter_payloads:
+        sections.append(
+            ChapterSection(
+                chapter_index=ch.index,
+                title=ch_title,
+                summary=_chapter_summary_line(ch, chapter_blocks),
+                blocks=chapter_blocks,
+            )
+        )
+
+    if bib_blocks:
         sections.append(BibliographySection(title=bib_title, blocks=bib_blocks))
 
     ast.sections = sections

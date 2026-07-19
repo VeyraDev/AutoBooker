@@ -43,15 +43,10 @@ def build_allowed_citations_block(
     book: Book,
     *,
     chapter_context: str = "",
-    citation_ids: list[str] | None = None,
-    max_items: int = 12,
 ) -> list[str]:
     """全书已批准引用，格式化为写作清单。"""
     style = book.citation_style.value if book.citation_style else "apa"
     rows = list_citations_sorted(db, book.id)
-    selected_ids = {str(value) for value in (citation_ids or []) if str(value).strip()}
-    if selected_ids:
-        rows = [row for row in rows if str(row.id) in selected_ids]
     if not rows:
         return []
 
@@ -69,7 +64,7 @@ def build_allowed_citations_block(
         blocks.append((score, block))
 
     blocks.sort(key=lambda x: x[0], reverse=True)
-    return [b for _, b in blocks[:max_items]]
+    return [b for _, b in blocks]
 
 
 def merge_grounding_for_writer(
@@ -79,14 +74,13 @@ def merge_grounding_for_writer(
     *,
     chapter_context: str = "",
     char_budget: int = _GROUNDING_CHAR_BUDGET,
-    citation_ids: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """
     返回 (citation_blocks, rag_snippets_trimmed)。
     citation_blocks 单独注入 user 消息；rag 在预算内截断。
     """
     citation_blocks = build_allowed_citations_block(
-        db, book, chapter_context=chapter_context, citation_ids=citation_ids
+        db, book, chapter_context=chapter_context
     )
     cite_chars = sum(len(b) for b in citation_blocks)
     remaining = max(500, char_budget - cite_chars)

@@ -9,15 +9,7 @@ SETUP_RECOMMEND_USER_TEMPLATE = """根据以下信息输出书稿设定推荐 JS
 {{
   "recommended_tags": ["6到10个简短具体的三级话题标签，与书名直接相关，可含中英文标准表达"],
   "target_audience": "具体的目标读者描述（2-4句，避免只说「普通读者」「专业人士」）",
-  "disciplines": ["1到3个最需要锁定的学科领域"],
-  "discipline_candidates": [
-    {{
-      "name": "学科领域名称",
-      "reason": "为什么该领域会影响本书术语、证据和论证判断",
-      "ambiguity_note": "如存在跨学科歧义，说明需要用户确认的边界；没有则留空"
-    }}
-  ],
-  "discipline_confirmation_note": "一句话提醒用户：学科领域用于约束同名术语解释、避免自造理论/名词/抽象类比",
+  "disciplines": ["1到4个相关学科领域"],
   "topic_brief": "主题说明要点或初稿（150-400字，条理清晰，纯文本一行，换行用\\n）"
 }}
 
@@ -25,9 +17,6 @@ SETUP_RECOMMEND_USER_TEMPLATE = """根据以下信息输出书稿设定推荐 JS
 - 标签彼此有区分度，避免过于宽泛（如单独「科技」「研究」）
 - 不要输出与书名无关的热门词
 - 标签是候选，不是完整句子
-- 话题标签可以多个任选；学科领域必须更克制，通常 1 个，跨学科时最多 3 个
-- 学科领域要优先锁定能改变术语解释、证据标准和论证方式的领域，不要把普通话题词当学科
-- 如果同一名词在不同学科含义不同，必须在 discipline_candidates.ambiguity_note 中提示用户确认
 
 书名：{title}
 一级分类：{book_type_label}

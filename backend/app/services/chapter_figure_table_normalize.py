@@ -260,7 +260,6 @@ def normalize_chapter_figures_tables(
     db: Session,
     *,
     book: Book | None = None,
-    persist: bool = True,
 ) -> dict[str, Any]:
     """规范化本章 TipTap：图表重编号、补引用与居中题注。返回 tiptap_json / text / overview。"""
     if not isinstance(tiptap_json, dict) or tiptap_json.get("type") != "doc":
@@ -290,29 +289,15 @@ def normalize_chapter_figures_tables(
             fig_seq += 1
             num = f"{chapter_index}-{fig_seq}"
             attrs = dict(node.get("attrs") or {})
-            raw_for_match = str(attrs.get("rawAnnotation") or attrs.get("caption") or "").strip()
-            if persist:
-                fig_row, attrs = resolve_figure_for_block(
-                    book_id,
-                    chapter_index,
-                    attrs,
-                    db=db,
-                    figures_by_id=figures_by_id,
-                    existing=chapter_figures,
-                    used=used_figure_ids,
-                )
-            else:
-                fid_for_lookup = str(attrs.get("figureId") or "").strip()
-                fig_row = figures_by_id.get(fid_for_lookup) if fid_for_lookup else None
-                if fig_row is None and raw_for_match:
-                    fig_row = next(
-                        (
-                            candidate
-                            for candidate in chapter_figures
-                            if (candidate.raw_annotation or "").strip() == raw_for_match
-                        ),
-                        None,
-                    )
+            fig_row, attrs = resolve_figure_for_block(
+                book_id,
+                chapter_index,
+                attrs,
+                db=db,
+                figures_by_id=figures_by_id,
+                existing=chapter_figures,
+                used=used_figure_ids,
+            )
             fig_id = str(attrs.get("figureId") or "")
             db_raw = str((fig_row.raw_annotation if fig_row else "") or "").strip()
             db_caption = str((fig_row.caption if fig_row else "") or "").strip()
@@ -363,10 +348,9 @@ def normalize_chapter_figures_tables(
             cap_line = f"图{num}：{cap_title}"
             out.append(_make_para(cap_line, center=True))
 
-            if fig_row is not None and persist:
-                fig_row.figure_number = num
-                fig_row.caption = cap_title
-                fig_row.sort_order = fig_seq * 1000
+            fig_row.figure_number = num
+            fig_row.caption = cap_title
+            fig_row.sort_order = fig_seq * 1000
 
             overview.append(
                 {
@@ -463,20 +447,19 @@ def normalize_chapter_figures_tables(
         out.append(copy.deepcopy(node))
 
     doc = {"type": "doc", "content": out}
-    if persist:
-        db.commit()
-        ensure_figure_blocks_persisted(book_id, chapter_index, doc, db)
-        renumber_chapter_figures_from_tiptap(book_id, chapter_index, doc, db)
-        for item in overview:
-            if item.get("kind") != "figure":
-                continue
-            num = str(item.get("number") or "")
-            for block in _iter_figure_blocks(doc):
-                attrs = block.get("attrs") or {}
-                if str(attrs.get("figureNumber") or "") == num:
-                    item["figure_id"] = str(attrs.get("figureId") or "") or None
-                    item["status"] = str(attrs.get("status") or item.get("status") or "")
-                    break
+    db.commit()
+    ensure_figure_blocks_persisted(book_id, chapter_index, doc, db)
+    renumber_chapter_figures_from_tiptap(book_id, chapter_index, doc, db)
+    for item in overview:
+        if item.get("kind") != "figure":
+            continue
+        num = str(item.get("number") or "")
+        for block in _iter_figure_blocks(doc):
+            attrs = block.get("attrs") or {}
+            if str(attrs.get("figureNumber") or "") == num:
+                item["figure_id"] = str(attrs.get("figureId") or "") or None
+                item["status"] = str(attrs.get("status") or item.get("status") or "")
+                break
     text = tiptap_json_to_markdown(doc).strip()
     return {"tiptap_json": doc, "text": text, "overview": overview}
 

@@ -64,8 +64,23 @@ def render_export_ast_to_markdown(ast: BookExportAst) -> str:
             if section.page_break_after:
                 if lines:
                     _append_page_break(lines)
-            lines.append(f"# {section.title}")
+            pub = section.publication if isinstance(getattr(section, "publication", None), dict) else {}
+            title = (pub.get("title") or section.title or ast.title).strip()
+            lines.append(f"# {title}")
             lines.append("")
+            if pub.get("subtitle"):
+                lines.append(f"**{pub['subtitle']}**")
+                lines.append("")
+            if pub.get("author"):
+                lines.append(f"著者：{pub['author']}")
+            if pub.get("publisher"):
+                lines.append(f"出版社：{pub['publisher']}")
+            if pub.get("publish_year"):
+                lines.append(f"出版年：{pub['publish_year']}")
+            if pub.get("isbn"):
+                lines.append(f"ISBN：{pub['isbn']}")
+            if any(pub.get(k) for k in ("author", "publisher", "publish_year", "isbn", "subtitle")):
+                lines.append("")
             if section.page_break_after:
                 _append_page_break(lines)
         elif section.type == "toc":
@@ -74,7 +89,9 @@ def render_export_ast_to_markdown(ast: BookExportAst) -> str:
             lines.append("## 目录")
             lines.append("")
             for entry in section.entries:
-                lines.append(f"- {entry.title}")
+                indent = "  " if getattr(entry, "level", 1) > 1 else ""
+                page = f" …… {entry.page}" if entry.page is not None else ""
+                lines.append(f"{indent}- {entry.title}{page}")
             lines.append("")
             if section.page_break_after:
                 _append_page_break(lines)

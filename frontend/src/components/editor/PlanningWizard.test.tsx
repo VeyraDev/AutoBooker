@@ -30,12 +30,7 @@ vi.mock("@/components/editor/SetupView", async () => {
 });
 
 vi.mock("@/components/editor/OutlineReviewPanel", () => ({
-  default: ({ leftAside }: { leftAside?: React.ReactNode }) => (
-    <div>
-      <div>大纲预览</div>
-      {leftAside}
-    </div>
-  ),
+  default: () => <div>大纲预览</div>,
 }));
 
 const initialBook: Book = {
@@ -116,47 +111,5 @@ describe("PlanningWizard outline generation", () => {
         topic_brief: "保存后的主题说明",
       });
     });
-  });
-
-  it("returns to startup assistant via onBackToBookSettings", async () => {
-    const onBackToBookSettings = vi.fn();
-    render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-          <PlanningWizard
-            book={{ ...initialBook, status: "outline_ready" }}
-            bookId={initialBook.id}
-            outline={{
-              book_id: initialBook.id,
-              chapters: [
-                {
-                  id: "c1",
-                  chapter_index: 1,
-                  title: "第一章",
-                  summary: "",
-                  target_words: 5000,
-                  status: "pending",
-                },
-              ],
-            } as never}
-            outlineRequestPending={false}
-            outlineGeneratingUi={false}
-            onPatchBook={() => undefined}
-            onGenerateOutline={vi.fn()}
-            onStartWriting={vi.fn()}
-            onOutlinePatched={() => undefined}
-            onReorder={() => undefined}
-            onDeleteChapter={() => undefined}
-            dragDisabled
-            onBackToBookSettings={onBackToBookSettings}
-          />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "← 返回书稿设定" }));
-    expect(onBackToBookSettings).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText("书稿设定表单")).toBeNull();
   });
 });

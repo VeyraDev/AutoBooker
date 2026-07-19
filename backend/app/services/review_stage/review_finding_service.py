@@ -60,10 +60,6 @@ class ReviewFindingService:
                 "validation_passed",
                 "filter_reason",
                 "why_it_matters",
-                "verification_status",
-                "action_options",
-                "fix_capability",
-                "prefer_evidence_binding",
                 "chapter_index",
             ):
                 if validated.get(key) is not None:

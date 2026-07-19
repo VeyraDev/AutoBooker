@@ -36,3 +36,13 @@ Thumbs.db
 # Script / analysis outputs
 backend/scripts/*_out.txt
 backend/scripts/*_out/
+outputs/
+
+# Local debug / export samples (do not publish)
+backend/tmp/
+backend/_test_*
+backend/_user_*
+backend/_verify_*
+backend/_toc_*
+backend/app/services/*.zip
+

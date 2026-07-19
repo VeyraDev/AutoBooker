@@ -1,9 +1,12 @@
 import { ChevronLeft, ChevronDown } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
 import OutlineReviewPanel from "@/components/editor/OutlineReviewPanel";
 import SetupView, { type SetupViewActions } from "@/components/editor/SetupView";
+import FormatStrategyPanel, { useFormatStrategyConfirmed } from "@/features/outline/FormatStrategyPanel";
+import { confirmFormatStrategy } from "@/features/outline/formatStrategyApi";
 import { setChapterGenMode, type ChapterGenMode } from "@/lib/chapterGenMode";
 import type { Book } from "@/types/book";
 import type { OutlineBookResponse } from "@/types/outline";
@@ -26,8 +29,6 @@ type Props = {
   onReorder: (items: { chapter_id: string; new_index: number }[]) => void | Promise<void>;
   onDeleteChapter: (chapterIndex: number) => void | Promise<void>;
   dragDisabled: boolean;
-  /** 优先跳转启动助手设定页；未提供时回退到本向导 Step1（旧 SetupView） */
-  onBackToBookSettings?: () => void;
 };
 
 function StepIndicator({ step }: { step: 1 | 2 | 3 }) {
@@ -68,35 +69,22 @@ export default function PlanningWizard({
   onReorder,
   onDeleteChapter,
   dragDisabled,
-  onBackToBookSettings,
 }: Props) {
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(() => {
-    if (
-      book.status === "outline_ready" ||
-      book.status === "outline_generating" ||
-      (outline?.chapters.length ?? 0) > 0
-    ) {
-      return 2;
-    }
-    return 1;
-  });
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   /** 从 Step2「返回书稿设定」回到 Step1 时，右下角 FAB 仅为「保存设定」 */
   const [step1SaveOnlyFab, setStep1SaveOnlyFab] = useState(false);
   const [startMenuOpen, setStartMenuOpen] = useState(false);
   const [preparingOutline, setPreparingOutline] = useState(false);
+  const [confirmingOutline, setConfirmingOutline] = useState(false);
   const setupActionsRef = useRef<SetupViewActions | null>(null);
+  const qc = useQueryClient();
+  const formatStrategyConfirmed = useFormatStrategyConfirmed(bookId);
 
   useEffect(() => {
     if (outline && outline.chapters.length > 0) {
       setWizardStep((s) => (s === 1 ? 2 : s));
     }
   }, [outline?.chapters.length]);
-
-  useEffect(() => {
-    if (book.status === "outline_generating" || book.status === "outline_ready") {
-      setWizardStep((s) => (s === 1 ? 2 : s));
-    }
-  }, [book.status]);
 
   async function handleFabGenerate() {
     setPreparingOutline(true);
@@ -253,16 +241,19 @@ export default function PlanningWizard({
                   type="button"
                   className="btn-secondary mt-4 w-full text-sm"
                   onClick={() => {
-                    if (onBackToBookSettings) {
-                      onBackToBookSettings();
-                      return;
-                    }
                     setStep1SaveOnlyFab(true);
                     setWizardStep(1);
                   }}
                 >
                   ← 返回书稿设定
                 </button>
+                {outline ? (
+                  <FormatStrategyPanel
+                    bookId={bookId}
+                    chapters={outline.chapters}
+                    onConfirmed={() => void onOutlinePatched()}
+                  />
+                ) : null}
               </>
             }
           />
@@ -272,10 +263,30 @@ export default function PlanningWizard({
           <div className="mt-10 flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 pb-12 pt-8 sm:pb-16">
             <button
               type="button"
-              className="btn-primary text-sm"
-              onClick={() => setWizardStep(3)}
+              className="btn-primary text-sm disabled:opacity-50"
+              disabled={confirmingOutline}
+              onClick={() => {
+                void (async () => {
+                  if (!formatStrategyConfirmed) {
+                    setConfirmingOutline(true);
+                    try {
+                      await confirmFormatStrategy(bookId);
+                      await qc.invalidateQueries({ queryKey: ["format-strategy", bookId] });
+                      await onOutlinePatched();
+                      toast.success("栏目策略已确认");
+                    } catch {
+                      toast.error("请先确认栏目策略，或点击「重新生成」");
+                      setConfirmingOutline(false);
+                      return;
+                    } finally {
+                      setConfirmingOutline(false);
+                    }
+                  }
+                  setWizardStep(3);
+                })();
+              }}
             >
-              确认大纲
+              {confirmingOutline ? "确认中…" : formatStrategyConfirmed ? "确认大纲" : "确认大纲与栏目"}
             </button>
           </div>
         )}

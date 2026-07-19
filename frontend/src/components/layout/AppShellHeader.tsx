@@ -5,12 +5,14 @@ import { NavLink, useNavigate } from "react-router-dom";
 
 import FeedbackDialog from "@/components/common/FeedbackDialog";
 import NewBookDialog from "@/components/common/NewBookDialog";
+import UserModelMenu from "@/components/layout/UserModelMenu";
 import { listNotifications, markNotificationRead } from "@/api/notifications";
 import { useAuthStore } from "@/stores/authStore";
 
 const navItems: Array<{ to: string; label: string; badge?: string }> = [
   { to: "/app/home", label: "主页" },
   { to: "/app/books", label: "我的书稿" },
+  { to: "/app/library", label: "共享书架" },
 ];
 
 export default function AppShellHeader() {
@@ -197,6 +199,7 @@ export default function AppShellHeader() {
                   className="absolute right-0 top-[calc(100%+8px)] z-50 w-80 rounded-xl border border-slate-200 bg-white py-3 shadow-xl"
                 >
                   <p className="border-b border-slate-100 px-3 pb-2 text-xs text-slate-500">{user?.email ?? "用户"}</p>
+                  <UserModelMenu open={userMenuOpen} onClose={() => setUserMenuOpen(false)} />
                   <p className="px-3 pb-2 pt-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">主题</p>
                   <div className="flex gap-2 px-3 pb-3">
                     <button

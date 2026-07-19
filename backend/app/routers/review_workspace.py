@@ -14,29 +14,16 @@ from app.routers.chapters import _chat_model_for_book
 from app.schemas.review_workspace import (
     FindingHistoryItemOut,
     ReviewTaskOut,
-    ReviewRuleCandidateOut,
-    ReviewRuleDecisionIn,
-    ReviewRuleDecisionOut,
-    ReviewRuleRestoreIn,
     ReviewWorkspaceCustomIn,
     ReviewWorkspaceRunIn,
     ReviewWorkspaceRunOut,
     ReviewWorkspaceSummaryOut,
-    WorkspaceFindingBatchPreviewIn,
-    WorkspaceFindingBatchPreviewOut,
     WorkspaceFindingApplyIn,
     WorkspaceFindingApplyOut,
     WorkspaceFindingOut,
     WorkspaceFindingPatchIn,
 )
 from app.services import book_service
-from app.services.review.review_rule_evolution import (
-    decide_rule_candidate,
-    get_rule_candidates_for_book,
-    list_confirmed_review_rules,
-    list_review_rule_versions,
-    restore_review_rule_version,
-)
 from app.services.review.review_workspace_service import ReviewWorkspaceService
 
 router = APIRouter(prefix="/books", tags=["review-workspace"])
@@ -85,116 +72,6 @@ def review_workspace_findings(
         product_dimension=product_dimension,
     )
     return rows
-
-
-@router.get("/{book_id}/review-workspace/rule-candidates", response_model=list[ReviewRuleCandidateOut])
-def review_workspace_rule_candidates(
-    book_id: UUID,
-    include_decided: bool = Query(False),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    book_service.get_book_or_404(book_id, user, db)
-    return get_rule_candidates_for_book(db, book_id, include_decided=include_decided)
-
-
-@router.get("/{book_id}/review-workspace/rules", response_model=list[ReviewRuleDecisionOut])
-def review_workspace_confirmed_rules(
-    book_id: UUID,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    book_service.get_book_or_404(book_id, user, db)
-    return list_confirmed_review_rules(db, book_id)
-
-
-@router.get("/{book_id}/review-workspace/rules/history", response_model=list[ReviewRuleDecisionOut])
-def review_workspace_rule_history(
-    book_id: UUID,
-    candidate_id: str | None = Query(None),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    book_service.get_book_or_404(book_id, user, db)
-    return list_review_rule_versions(db, book_id, candidate_id=candidate_id)
-
-
-@router.post("/{book_id}/review-workspace/rules/{rule_id}/restore", response_model=ReviewRuleDecisionOut)
-def review_workspace_restore_rule_version(
-    book_id: UUID,
-    rule_id: UUID,
-    body: ReviewRuleRestoreIn,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    book_service.get_book_or_404(book_id, user, db)
-    try:
-        row = restore_review_rule_version(
-            db,
-            book_id=book_id,
-            user_id=user.id,
-            rule_id=rule_id,
-            decision_note=body.decision_note,
-        )
-    except ValueError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
-    db.commit()
-    db.refresh(row)
-    return {
-        "id": str(row.id),
-        "candidate_id": row.candidate_id,
-        "version": row.version,
-        "status": row.status,
-        "recommendation": row.recommendation,
-        "product_dimension": row.product_dimension,
-        "issue_type": row.issue_type,
-        "fix_capability": row.fix_capability,
-        "detector": row.detector,
-        "rule_text": row.rule_text,
-        "decision_note": row.decision_note or "",
-        "source_stats": row.source_stats_json or {},
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-    }
-
-
-@router.post("/{book_id}/review-workspace/rule-candidates/decision", response_model=ReviewRuleDecisionOut)
-def review_workspace_decide_rule_candidate(
-    book_id: UUID,
-    body: ReviewRuleDecisionIn,
-    candidate_id: str = Query(...),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    book_service.get_book_or_404(book_id, user, db)
-    try:
-        row = decide_rule_candidate(
-            db,
-            book_id=book_id,
-            user_id=user.id,
-            candidate_id=candidate_id,
-            decision=body.decision,
-            decision_note=body.decision_note,
-            rule_text=body.rule_text,
-        )
-    except ValueError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
-    db.commit()
-    db.refresh(row)
-    return {
-        "id": str(row.id),
-        "candidate_id": row.candidate_id,
-        "version": row.version,
-        "status": row.status,
-        "recommendation": row.recommendation,
-        "product_dimension": row.product_dimension,
-        "issue_type": row.issue_type,
-        "fix_capability": row.fix_capability,
-        "detector": row.detector,
-        "rule_text": row.rule_text,
-        "decision_note": row.decision_note or "",
-        "source_stats": row.source_stats_json or {},
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-    }
 
 
 @router.get(
@@ -310,30 +187,8 @@ def review_workspace_apply_finding(
             chat_model=_chat_model_for_book(book, user, db),
             replacement_text=body.replacement_text,
             action_type=body.action_type,
-            action_option_id=body.action_option_id,
         )
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
     db.commit()
     return WorkspaceFindingApplyOut(**result)
-
-
-@router.post(
-    "/{book_id}/review-workspace/findings/batch-preview",
-    response_model=WorkspaceFindingBatchPreviewOut,
-)
-def review_workspace_batch_preview_findings(
-    book_id: UUID,
-    body: WorkspaceFindingBatchPreviewIn,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    book = book_service.get_book_or_404(book_id, user, db)
-    result = ReviewWorkspaceService(db).batch_preview_findings(
-        book,
-        body.finding_ids,
-        chat_model=_chat_model_for_book(book, user, db),
-        limit=body.limit,
-    )
-    db.commit()
-    return WorkspaceFindingBatchPreviewOut(**result)

@@ -15,12 +15,18 @@ class TocEntry:
     title: str
     section_type: SectionType
     chapter_index: int | None = None
+    """1 = 章/前言等一级；2 = 章内小节（对标出版目录一二级标题）。"""
+    level: int = 1
+    """目录页码（预估或域更新后由 Word 刷新）。"""
+    page: int | None = None
 
 
 @dataclass
 class CoverSection:
     type: Literal["cover"] = "cover"
     title: str = ""
+    """封面/版权页元数据：副标题、作者、出版社、ISBN 等。"""
+    publication: dict[str, Any] = field(default_factory=dict)
     page_break_after: bool = True
 
 
@@ -46,6 +52,7 @@ class ChapterSection:
     type: Literal["chapter"] = "chapter"
     chapter_index: int = 0
     title: str = ""
+    summary: str = ""
     blocks: list[AstBlock] = field(default_factory=list)
     page_break_before: bool = True
 
@@ -79,9 +86,12 @@ class BookExportAst:
             elif section.type == "chapter":
                 blocks.append(
                     AstBlock(
-                        role="chapter_title",
+                        role="chapter_flyleaf",
                         text=section.title,
-                        attrs={"chapter_index": section.chapter_index},
+                        attrs={
+                            "chapter_index": section.chapter_index,
+                            "summary": getattr(section, "summary", "") or "",
+                        },
                     )
                 )
                 blocks.extend(section.blocks)

@@ -8,12 +8,6 @@ from app.llm.client import LLMClient
 from app.models.book import Book
 from app.services.review_anchor import apply_text_edit, build_text_diff, canonical_markdown, locate_issue_anchor, snapshot_hash
 
-FULL_CHAPTER_APPLY_TYPES = {
-    "full_chapter_replace",
-    "figure_table_normalize",
-    "first_line_indent",
-}
-
 _INSTRUCTION_PREFIX = re.compile(
     r"^(?:改为|建议改为|可以改为|可修改为|替换为|修改为|建议修改为|修改为：|改为：|替换为：|建议：|请)\s*",
     re.IGNORECASE,
@@ -102,54 +96,6 @@ def preview_issue_application(
     }
 
 
-def preview_full_chapter_application(
-    *,
-    current_markdown: str,
-    issue_snapshot_hash: str,
-    result_markdown: str,
-    apply_type: str = "full_chapter_replace",
-    result_tiptap_json: dict | None = None,
-) -> dict:
-    """Create a review application preview for deterministic whole-chapter fixes."""
-    current_md = canonical_markdown(current_markdown)
-    after = canonical_markdown(result_markdown)
-    action = (apply_type or "full_chapter_replace").strip().lower()
-    if action not in FULL_CHAPTER_APPLY_TYPES:
-        raise ValueError("不支持的整章预览类型")
-    if not after:
-        raise ValueError("整章预览结果为空")
-    if after == current_md:
-        raise ValueError("未检测到可应用的格式修改")
-    current_hash = snapshot_hash(current_md)
-    diff = build_text_diff(current_md, after)
-    diff.update(
-        {
-            "full_chapter": True,
-            "full_after": after,
-        }
-    )
-    if isinstance(result_tiptap_json, dict):
-        diff["full_after_tiptap"] = result_tiptap_json
-    return {
-        "before_hash": current_hash,
-        "after_hash": snapshot_hash(after),
-        "result_markdown": after,
-        "result_text": diff.get("after") or "",
-        "preview_kind": "replace",
-        "diff": diff,
-        "locator_strategy": action,
-        "locator_confidence": 1.0,
-        "preview_required": True,
-        "stale": current_hash != issue_snapshot_hash,
-        "paragraph_id": None,
-        "paragraph_index": None,
-        "char_start": diff.get("char_start"),
-        "char_end": diff.get("char_end"),
-        "anchor_hash": None,
-        "quote": diff.get("before") or "",
-    }
-
-
 def apply_review_issue_text(
     *,
     book: Book,
@@ -159,7 +105,6 @@ def apply_review_issue_text(
     suggestion: str,
     detail: str = "",
     context: str = "",
-    forbid_vague_ratio_rewrite: bool = False,
 ) -> tuple[str, str]:
     """
     返回 (result_text, preview_kind)。
@@ -169,9 +114,6 @@ def apply_review_issue_text(
     q = (quote or "").strip()
     sug = (suggestion or "").strip()
     ctx = (context or "").strip()[:12000]
-
-    if act == "choose":
-        raise ValueError("请先选择处理方式后再应用")
 
     if act == "delete":
         validate_replacement_text(act, "")
@@ -188,15 +130,7 @@ def apply_review_issue_text(
         if sug and not _looks_like_instruction(sug):
             validate_replacement_text(act, sug)
             return sug, "insert"
-        text = _llm_edit(
-            book,
-            chat_model,
-            q,
-            sug or detail,
-            ctx,
-            mode="insert",
-            forbid_vague_ratio_rewrite=forbid_vague_ratio_rewrite,
-        )
+        text = _llm_edit(book, chat_model, q, sug or detail, ctx, mode="insert")
         validate_replacement_text(act, text)
         return text, "insert"
 
@@ -204,17 +138,7 @@ def apply_review_issue_text(
     instr = sug or detail
     if not q:
         raise ValueError("revise 类型需要可定位的原文片段 quote")
-    if forbid_vague_ratio_rewrite and not sug:
-        raise ValueError("数据类问题缺少处理说明，拒绝空泛自动改写")
-    text = _llm_edit(
-        book,
-        chat_model,
-        q,
-        instr,
-        ctx,
-        mode="revise",
-        forbid_vague_ratio_rewrite=forbid_vague_ratio_rewrite,
-    )
+    text = _llm_edit(book, chat_model, q, instr, ctx, mode="revise")
     validate_replacement_text("replace", text)
     return text, "replace"
 
@@ -235,20 +159,12 @@ def _llm_edit(
     context: str,
     *,
     mode: str,
-    forbid_vague_ratio_rewrite: bool = False,
 ) -> str:
     client = LLMClient()
-    ban = ""
-    if forbid_vague_ratio_rewrite:
-        ban = (
-            "\n严禁把具体数字改成「相当比例」「同样不低」「不少」「很大一部分」等空泛套话；"
-            "要么保留数字并加来源限定，要么用仍含信息的定性描述替换。"
-        )
     if mode == "insert":
         system = (
             "你是专业中文编辑。根据审校说明，在【锚点原文】附近写出一小段应插入正文的文字。"
             "只输出要插入的完整句子或短段，不要解释、不要「改为：」前缀。"
-            + ban
         )
         user = (
             f"插入说明：{instruction}\n\n"
@@ -259,7 +175,6 @@ def _llm_edit(
         system = (
             "你是专业中文编辑。根据审校说明改写【待改原文】。"
             "只输出改写后的完整正文片段，可直接替换原文，不要解释或「改为：」前缀。"
-            + ban
         )
         user = (
             f"修改说明：{instruction}\n\n"

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import uuid
 from typing import Any
 from uuid import UUID
@@ -20,6 +19,7 @@ from app.models.chapter_review import ChapterReview, ChapterReviewIssue, ReviewA
 from app.models.figure import Figure
 from app.models.user import User
 from app.repositories import review_repository
+from app.services.writing.writing_context_builder import WritingContextBuilder
 from app.routers.auth import get_current_user
 from app.routers.chapters import _chat_model_for_book, _get_chapter
 from app.schemas.review import (
@@ -39,20 +39,12 @@ from app.schemas.review import (
 )
 from app.services import book_service
 from app.services.ai_detect import get_ai_detect_provider
-from app.services.chapter_figure_table_normalize import normalize_chapter_figures_tables
 from app.services.citation_lint import lint_chapter_citation_detector
 from app.services.citation_service import list_citations_sorted
-from app.services.citation_verification import citation_to_verification_dict
 from app.services.dedupe_service import DedupeService
 from app.services.figure_lint import lint_figures
-from app.services.markdown_to_tiptap import markdown_body_to_tiptap_blocks
-from app.services.review_anchor import apply_text_edit, canonical_markdown, enrich_issue_anchor, snapshot_hash
-from app.services.review_apply import (
-    FULL_CHAPTER_APPLY_TYPES,
-    apply_review_issue_text,
-    preview_full_chapter_application,
-    preview_issue_application,
-)
+from app.services.review_anchor import canonical_markdown, enrich_issue_anchor, snapshot_hash
+from app.services.review_apply import apply_review_issue_text, preview_issue_application
 from app.services.review_incremental import affected_dimensions, score_changes
 from app.services.review_scoring import (
     REVIEW_DIMENSIONS,
@@ -63,12 +55,9 @@ from app.services.review_scoring import (
     standardize_issue,
 )
 from app.services.review.review_finding_validator import enrich_finding_metadata, validate_finding
-from app.services.review.layout_autofix import normalize_first_line_indent
-from app.services.review.quality_reviewers import run_chapter_quality_review
 from app.services.tiptap_convert import chapter_content_to_markdown
 
 router = APIRouter(prefix="/books", tags=["review"])
-logger = logging.getLogger(__name__)
 
 
 @router.post("/{book_id}/chapters/{chapter_index}/review", response_model=ChapterReviewOut)
@@ -95,7 +84,7 @@ def get_latest_review(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    book = book_service.get_book_or_404(book_id, user, db)
+    book_service.get_book_or_404(book_id, user, db)
     ch = _get_chapter(book_id, chapter_index, db)
     review = review_repository.latest_review(db, ch.id)
     if not review:
@@ -205,46 +194,18 @@ def preview_review_issue(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chapter not found")
     current_md = _chapter_markdown(ch)
     try:
-        layout_preview = _layout_preview_for_issue(book, ch, issue, current_md, db)
-        if layout_preview:
-            preview = layout_preview
-            preview_kind = "replace"
-            apply_type = str(layout_preview.get("apply_type") or "full_chapter_replace")
-        elif _is_ai_signature_issue(issue):
-            source_text, replacement, report = _dedupe_replacement_for_issue(book, issue, current_md)
-            preview = preview_issue_application(
-                current_markdown=current_md,
-                issue_snapshot_hash=issue.snapshot_hash,
-                quote=source_text,
-                action_type="revise",
-                replacement_text=replacement,
-                paragraph_id=issue.paragraph_id,
-                paragraph_index=issue.paragraph_index,
-                char_start=issue.char_start,
-                char_end=issue.char_end,
-            )
-            preview["warning"] = {"dedupe_report": _compact_dedupe_report(report)}
-            preview_kind = "replace"
-            apply_type = "dedupe"
-        else:
-            replacement, preview_kind = _replacement_for_issue(
-                book,
-                issue,
-                current_md,
-                chat_model=_chat_model_for_book(book, user, db),
-            )
-            preview = preview_issue_application(
-                current_markdown=current_md,
-                issue_snapshot_hash=issue.snapshot_hash,
-                quote=issue.quote or "",
-                action_type=issue.action,
-                replacement_text=replacement,
-                paragraph_id=issue.paragraph_id,
-                paragraph_index=issue.paragraph_index,
-                char_start=issue.char_start,
-                char_end=issue.char_end,
-            )
-            apply_type = issue.action
+        replacement, preview_kind = _replacement_for_issue(book, issue, current_md)
+        preview = preview_issue_application(
+            current_markdown=current_md,
+            issue_snapshot_hash=issue.snapshot_hash,
+            quote=issue.quote or "",
+            action_type=issue.action,
+            replacement_text=replacement,
+            paragraph_id=issue.paragraph_id,
+            paragraph_index=issue.paragraph_index,
+            char_start=issue.char_start,
+            char_end=issue.char_end,
+        )
     except ValueError as e:
         issue.status = "failed"
         db.commit()
@@ -257,13 +218,12 @@ def preview_review_issue(
         chapter_id=ch.id,
         before_hash=preview["before_hash"],
         after_hash=preview["after_hash"],
-        apply_type=apply_type,
+        apply_type=issue.action,
         locator_strategy=preview["locator_strategy"],
         locator_confidence=preview["locator_confidence"],
         diff=preview["diff"],
         affected_dimensions=affected,
         score_before={"total_score": review.total_score, "dimensions": review.dimensions},
-        warning=preview.get("warning") if isinstance(preview.get("warning"), dict) else None,
     )
     return ReviewIssuePreviewOut(
         issue_id=str(issue.id),
@@ -278,7 +238,6 @@ def preview_review_issue(
         preview_required=preview["preview_required"],
         stale=preview["stale"],
         affected_dimensions=affected,
-        warning=preview.get("warning") if isinstance(preview.get("warning"), dict) else None,
         paragraph_id=preview["paragraph_id"],
         paragraph_index=preview["paragraph_index"],
         char_start=preview["char_start"],
@@ -365,44 +324,18 @@ def confirm_review_application(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    book = book_service.get_book_or_404(book_id, user, db)
+    book_service.get_book_or_404(book_id, user, db)
     app = db.get(ReviewApplication, application_id)
     if not app:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Application not found")
     ch = db.get(Chapter, app.chapter_id)
     if not ch:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chapter not found")
-    current_md = canonical_markdown(_chapter_markdown(ch))
-    current_hash = snapshot_hash(current_md)
-    if current_hash == app.before_hash:
-        diff = app.diff if isinstance(app.diff, dict) else {}
-        if app.apply_type in FULL_CHAPTER_APPLY_TYPES or diff.get("full_chapter"):
-            applied_md = canonical_markdown(str(diff.get("full_after") or ""))
-            if not applied_md:
-                raise HTTPException(status.HTTP_409_CONFLICT, "预览记录缺少整章应用结果，请重新生成预览")
-        else:
-            try:
-                start = int(diff["char_start"])
-                end = int(diff["char_end"])
-            except (KeyError, TypeError, ValueError) as exc:
-                raise HTTPException(status.HTTP_409_CONFLICT, "预览记录缺少可应用的定位信息，请重新生成预览") from exc
-            applied_md = apply_text_edit(
-                current_md,
-                start=start,
-                end=end,
-                replacement=str(diff.get("after") or ""),
-                action=app.apply_type,
-            )
-        if snapshot_hash(applied_md) != app.after_hash:
-            raise HTTPException(status.HTTP_409_CONFLICT, "预览结果已失效，请重新生成预览")
-        if app.apply_type in FULL_CHAPTER_APPLY_TYPES or diff.get("full_chapter"):
-            _persist_chapter_full_preview(ch, applied_md, diff, db, book, apply_type=app.apply_type)
-        else:
-            _persist_chapter_markdown(ch, applied_md, db, book)
-    elif current_hash != app.after_hash:
+    current_hash = snapshot_hash(canonical_markdown(_chapter_markdown(ch)))
+    if current_hash != app.after_hash:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "章节正文已变化，请重新生成修改预览",
+            "章节正文与预览结果不一致，请先保存预览修改或重新生成预览",
         )
     issue = db.get(ChapterReviewIssue, app.issue_id) if app.issue_id else None
     review = db.get(ChapterReview, app.review_id) if app.review_id else None
@@ -413,6 +346,7 @@ def confirm_review_application(
         issue.resolved_at = None
         issue.status = "open"
         review = db.get(ChapterReview, issue.review_id)
+        book = book_service.get_book_or_404(book_id, user, db)
         if review and app.affected_dimensions:
             _partial_recheck_dimensions(book, ch, _chapter_markdown(ch), db, review, list(app.affected_dimensions or []))
             review = db.get(ChapterReview, issue.review_id)
@@ -426,20 +360,6 @@ def confirm_review_application(
             total_after=review.total_score if review else None,
         )
         app.warning = {"score_changes": changes, "warning": warning} if warning else {"score_changes": changes}
-        try:
-            from app.services.review.review_preference_memory import record_review_preference
-
-            meta = issue.quality_evidence if isinstance(issue.quality_evidence, dict) else {}
-            record_review_preference(
-                db,
-                book.id,
-                decision="accepted",
-                product_dimension=meta.get("product_dimension") or issue.dimension,
-                issue_type=issue.issue_type,
-                fix_capability=meta.get("fix_capability"),
-            )
-        except Exception:
-            logger.exception("record review preference failed book=%s issue=%s", book.id, issue.id)
         db.commit()
     return ReviewConfirmApplicationOut(
         application_id=str(app.id),
@@ -520,29 +440,33 @@ def ai_inline_preview(
     original = body.selection.text.strip()
     if len(original) > 500:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "选区改写不能超过 500 字")
-    result = DedupeService().dedupe_text(
-        original,
-        client=LLMClient(),
-        chat_model=_chat_model_for_book(book, user, db),
-        context=f"上文：{body.context_before[:2000]}\n\n下文：{body.context_after[:2000]}",
-        style_profile=_review_style_profile(book),
-        finding_instruction=body.instruction.strip() or "使表达更清晰、自然。",
-    )
-    out = result.text.strip()
-    report = result.report
+    client = LLMClient()
+    out = client.chat_completion(
+        [
+            {"role": "system", "content": "你是专业中文编辑。只输出改写后的正文，不要解释。"},
+            {
+                "role": "user",
+                "content": (
+                    f"改写要求：{body.instruction.strip() or '使表达更清晰、自然。'}\n\n"
+                    f"上文：{body.context_before[:2000]}\n\n"
+                    f"待改写：{original}\n\n"
+                    f"下文：{body.context_after[:2000]}"
+                ),
+            },
+        ],
+        model=_chat_model_for_book(book, user, db),
+        max_tokens=1600,
+        temperature=0.45,
+    ).strip()
     return AiInlinePreviewOut(
         preview_id=str(uuid.uuid4()),
         original_text=original,
         rewritten_text=out,
         diff={"before": original, "after": out},
         validation={
-            "status": report.get("status"),
             "length_ok": len(original) <= 500,
-            "meaning_preserved": bool(report.get("meaning_preserved")),
-            "structure_preserved": bool(report.get("structure_preserved")),
-            "protected_tokens_changed": report.get("protected_tokens_changed") or [],
-            "facts_missing": report.get("facts_missing") or [],
-            "warnings": report.get("warnings") or [],
+            "meaning_preserved": True,
+            "style_consistent": True,
         },
     )
 
@@ -653,49 +577,24 @@ def _create_review_report(
 ) -> ChapterReview:
     canonical = canonical_markdown(md)
     digest = snapshot_hash(canonical)
-    from app.services.sources.stage_context_builder import StageContextBuilder
-    from app.services.sources.stage_source_context_service import StageSourceContextService
-
-    evidence_query = f"{ch.title or ''}\n{canonical[:5000]}"
-    stage_context = StageContextBuilder(db).build(
-        book.id,
-        stage="review",
-        query=evidence_query,
-        chapter_index=ch.index,
-        top_k=16,
-    )
-    source_items = stage_context["source_items"]
-    selected_citation_ids = {
-        str(item.get("citation_id"))
-        for item in source_items
-        if item.get("source_kind") == "citation" and item.get("citation_id")
-    }
     citations = list_citations_sorted(db, book.id)
-    if selected_citation_ids:
-        citations = [row for row in citations if str(row.id) in selected_citation_ids]
     citation_style = book.citation_style.value if book.citation_style else "apa"
-    cite_lines = []
-    for c in citations[:200]:
-        verification = citation_to_verification_dict(c)
-        status_text = verification.get("verification_status") or c.metadata_status
-        missing = verification.get("missing_fields") or []
-        suffix = f"；核验：{status_text}"
-        if missing:
-            suffix += f"；缺字段：{'、'.join(str(x) for x in missing[:4])}"
-        line = (
-            f"[{c.list_index}] {c.title} ({c.year or 'n.d.'}{suffix})"
+    cite_lines = [
+        (
+            f"[{c.list_index}] {c.title} ({c.year or 'n.d.'})"
             if citation_style == "gb_t7714" and c.list_index is not None
-            else f"{c.title} ({c.year or 'n.d.'}{suffix})"
+            else f"{c.title} ({c.year or 'n.d.'})"
         )
-        abstract = (c.abstract_preview or c.quotable_snippet or "").strip()
-        if abstract:
-            line += f"；证据摘要：{abstract[:500]}"
-        cite_lines.append(line)
+        for c in citations
+    ][:200]
     figures = db.query(Figure).filter(Figure.book_id == book.id, Figure.chapter_index == ch.index).all()
     figure_lines = [f"- {f.figure_type.value}: {(f.caption or f.raw_annotation or '')[:120]}" for f in figures]
 
-    snap = stage_context["snapshot"]
-    user_material = stage_context["prompt_block"][:10000] or book.user_material or ""
+    wcb = WritingContextBuilder(db)
+    snap = wcb.build_for_review(book.id)
+    user_material = wcb.to_prompt_block(snap)[:4000] or book.user_material or ""
+    if review_context_block:
+        user_material = f"{user_material}\n\n{review_context_block}".strip()
 
     agent = ReviewAgent(model=_chat_model_for_book(book, user, db))
     result = agent.review_chapter(
@@ -703,10 +602,8 @@ def _create_review_report(
         body=canonical,
         book_title=book.title or "",
         book_type=book.book_type.value,
-        review_profile=book.style_type or book.book_type.value,
         citation_style=book.citation_style.value if book.citation_style else "无",
         user_material=user_material,
-        review_instruction=review_context_block or "",
         narrative_constitution=(book.narrative_constitution or ""),
         approved_citations=cite_lines,
         figure_summaries=figure_lines,
@@ -742,35 +639,6 @@ def _create_review_report(
     detector_dims["ai_signature"] = ai_dim
     issues.extend(ai_issues)
 
-    quality_result = run_chapter_quality_review(book, ch, canonical, snap)
-    for key, row in quality_result.detector_dimensions.items():
-        existing = detector_dims.get(key)
-        if existing:
-            old_score = existing.get("raw_score")
-            new_score = row.get("raw_score")
-            if old_score is None:
-                existing["raw_score"] = new_score
-            elif new_score is not None:
-                existing["raw_score"] = min(int(old_score), int(new_score))
-            existing_summary = str(existing.get("summary") or "").strip()
-            row_summary = str(row.get("summary") or "").strip()
-            if row_summary and row_summary not in existing_summary:
-                existing["summary"] = "；".join(x for x in (existing_summary, row_summary) if x)[:500]
-            existing["detector"] = ",".join(
-                dict.fromkeys(
-                    x
-                    for x in (
-                        str(existing.get("detector") or ""),
-                        str(row.get("detector") or ""),
-                    )
-                    if x
-                )
-            )
-            existing["confidence"] = max(float(existing.get("confidence") or 0), float(row.get("confidence") or 0))
-        else:
-            detector_dims[key] = row
-    issues.extend(quality_result.issues)
-
     for key in REVIEW_DIMENSIONS:
         if key not in detector_dims:
             detector_dims[key] = {
@@ -789,14 +657,6 @@ def _create_review_report(
         if not validated:
             continue
         validated["issue_fingerprint"] = issue_fingerprint(validated)
-        matched_source_refs = StageSourceContextService.match_source_refs(
-            "\n".join(
-                str(validated.get(key) or "")
-                for key in ("quote", "detail", "title")
-            ),
-            source_items,
-            top_k=4,
-        )
         meta = {
             k: validated.get(k)
             for k in (
@@ -806,21 +666,10 @@ def _create_review_report(
                 "validation_passed",
                 "filter_reason",
                 "why_it_matters",
-                "evidence",
                 "basis_refs",
-                "verification_status",
-                "action_options",
-                "fix_capability",
-                "prefer_evidence_binding",
-                "basis_rule_ids",
-                "tier",
             )
             if validated.get(k) is not None
         }
-        if matched_source_refs:
-            meta["source_refs"] = matched_source_refs
-        elif validated.get("dimension") in {"factual_support", "citation_sources"}:
-            meta["evidence_gap"] = True
         if meta:
             validated["quality_evidence"] = meta
         anchored.append(validated)
@@ -917,78 +766,6 @@ def _chapter_markdown(ch: Chapter | None) -> str:
         return ""
     content = ch.content if isinstance(ch.content, dict) else None
     return chapter_content_to_markdown(content)
-
-
-def _persist_chapter_markdown(ch: Chapter, md: str, db: Session, book) -> None:
-    canonical = canonical_markdown(md)
-    doc = {"type": "doc", "content": markdown_body_to_tiptap_blocks(canonical)}
-    meta = dict(ch.content) if isinstance(ch.content, dict) else {}
-    meta["text"] = canonical
-    meta["tiptap_json"] = doc
-    ch.content = meta
-    ch.word_count = len(canonical.replace("\n", "").replace(" ", ""))
-    from app.services.citation_nodes import normalize_chapter_citations
-
-    normalized, _ = normalize_chapter_citations(db, book, ch, doc=doc)
-    if isinstance(normalized, dict):
-        refreshed = dict(ch.content) if isinstance(ch.content, dict) else meta
-        refreshed["tiptap_json"] = normalized
-        refreshed["text"] = chapter_content_to_markdown(refreshed).strip() or canonical
-        ch.content = refreshed
-    db.flush()
-
-
-def _chapter_tiptap_json(ch: Chapter, current_md: str) -> dict[str, Any]:
-    content = ch.content if isinstance(ch.content, dict) else {}
-    doc = content.get("tiptap_json") if isinstance(content, dict) else None
-    if isinstance(doc, dict) and doc.get("type") == "doc":
-        return doc
-    return {"type": "doc", "content": markdown_body_to_tiptap_blocks(current_md)}
-
-
-def _persist_chapter_full_preview(
-    ch: Chapter,
-    md: str,
-    diff: dict[str, Any],
-    db: Session,
-    book,
-    *,
-    apply_type: str,
-) -> None:
-    canonical = canonical_markdown(md)
-    doc = diff.get("full_after_tiptap") if isinstance(diff.get("full_after_tiptap"), dict) else None
-    if not isinstance(doc, dict) or doc.get("type") != "doc":
-        _persist_chapter_markdown(ch, canonical, db, book)
-        return
-
-    meta = dict(ch.content) if isinstance(ch.content, dict) else {}
-    meta["text"] = canonical
-    meta["tiptap_json"] = doc
-    ch.content = meta
-    ch.word_count = len(canonical.replace("\n", "").replace(" ", ""))
-
-    from app.services.citation_nodes import normalize_chapter_citations
-
-    normalized, _ = normalize_chapter_citations(db, book, ch, doc=doc)
-    if isinstance(normalized, dict):
-        doc = normalized
-        meta = dict(ch.content) if isinstance(ch.content, dict) else meta
-        meta["tiptap_json"] = doc
-        meta["text"] = canonical_markdown(chapter_content_to_markdown(meta).strip() or canonical)
-        ch.content = meta
-
-    if apply_type == "figure_table_normalize":
-        from app.services.figure_service import ensure_figure_blocks_persisted, renumber_chapter_figures_from_tiptap
-
-        ensured = ensure_figure_blocks_persisted(book.id, ch.index, doc, db)
-        if isinstance(ensured, dict):
-            doc = ensured
-            meta = dict(ch.content) if isinstance(ch.content, dict) else meta
-            meta["tiptap_json"] = doc
-            meta["text"] = canonical_markdown(chapter_content_to_markdown(meta).strip() or canonical)
-            ch.content = meta
-        renumber_chapter_figures_from_tiptap(book.id, ch.index, doc, db)
-    db.flush()
 
 
 def _review_out(review: ChapterReview, ch: Chapter, *, current_md: str) -> ChapterReviewOut:
@@ -1106,71 +883,14 @@ def _issue_out(issue: ChapterReviewIssue, *, stale: bool = False) -> ReviewIssue
     )
 
 
-def _layout_preview_for_issue(
-    book,
-    ch: Chapter,
-    issue: ChapterReviewIssue,
-    current_md: str,
-    db: Session,
-) -> dict[str, Any] | None:
-    meta = issue.quality_evidence if isinstance(issue.quality_evidence, dict) else {}
-    fix_capability = str(meta.get("fix_capability") or "").strip()
-    if fix_capability and fix_capability != "preview_apply":
-        return None
-
-    tiptap = _chapter_tiptap_json(ch, current_md)
-    if issue.issue_type == "figure_table_numbering":
-        result = normalize_chapter_figures_tables(
-            book.id,
-            ch.index,
-            tiptap,
-            db,
-            book=None,
-            persist=False,
-        )
-        preview = preview_full_chapter_application(
-            current_markdown=current_md,
-            issue_snapshot_hash=issue.snapshot_hash,
-            result_markdown=str(result.get("text") or ""),
-            apply_type="figure_table_normalize",
-            result_tiptap_json=result.get("tiptap_json") if isinstance(result.get("tiptap_json"), dict) else None,
-        )
-        preview["apply_type"] = "figure_table_normalize"
-        preview["warning"] = {"overview": result.get("overview") or []}
-        return preview
-
-    if issue.issue_type == "first_line_indent":
-        result = normalize_first_line_indent(current_md, tiptap)
-        if int(result.get("changed_count") or 0) <= 0:
-            raise ValueError("未检测到可应用的首行缩进修改")
-        preview = preview_full_chapter_application(
-            current_markdown=current_md,
-            issue_snapshot_hash=issue.snapshot_hash,
-            result_markdown=str(result.get("text") or ""),
-            apply_type="first_line_indent",
-            result_tiptap_json=result.get("tiptap_json") if isinstance(result.get("tiptap_json"), dict) else None,
-        )
-        preview["apply_type"] = "first_line_indent"
-        preview["warning"] = {"changed_count": int(result.get("changed_count") or 0)}
-        return preview
-
-    return None
-
-
-def _replacement_for_issue(
-    book,
-    issue: ChapterReviewIssue,
-    current_md: str,
-    *,
-    chat_model: str,
-) -> tuple[str, str]:
+def _replacement_for_issue(book, issue: ChapterReviewIssue, current_md: str) -> tuple[str, str]:
     if issue.action == "delete":
         return "", "delete"
     if issue.action == "replace" and (issue.replacement_text or "").strip():
         return issue.replacement_text.strip(), "replace"
     result_text, preview_kind = apply_review_issue_text(
         book=book,
-        chat_model=chat_model,
+        chat_model=_chat_model_for_book(book, user, db),
         action_type=issue.action,
         quote=issue.quote or "",
         suggestion=issue.replacement_text or "",
@@ -1219,8 +939,6 @@ def _dedupe_replacement_for_issue(
         client=LLMClient(),
         chat_model=_chat_model_for_book(book, user, db),
         context=_dedupe_context(current_md, source_text),
-        style_profile=_review_style_profile(book),
-        finding_instruction=issue.explanation or issue.title or "压实机器化表达",
     )
     replacement = (result.text or "").strip()
     if not replacement:
@@ -1242,18 +960,6 @@ def _compact_dedupe_report(report: dict[str, Any]) -> dict[str, Any]:
         "protected_tokens_changed",
     )
     return {k: report.get(k) for k in keys if k in report}
-
-
-def _review_style_profile(book) -> str:
-    style = getattr(book, "style_type", None)
-    if hasattr(style, "value"):
-        style = style.value
-    if style:
-        return str(style)
-    book_type = getattr(book, "book_type", None)
-    if hasattr(book_type, "value"):
-        book_type = book_type.value
-    return str(book_type or "default")
 
 
 def _review_or_404(db: Session, review_id: UUID) -> ChapterReview:

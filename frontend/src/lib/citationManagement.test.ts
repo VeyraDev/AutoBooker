@@ -8,7 +8,7 @@ import {
 describe("citation management presentation", () => {
   it("exposes only literature search and citation management", () => {
     expect(CITATION_MANAGEMENT_VIEWS).toEqual([
-      ["search", "资料搜索"],
+      ["search", "文献搜索"],
       ["manage", "引用管理"],
     ]);
   });

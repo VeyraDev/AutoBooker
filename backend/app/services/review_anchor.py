@@ -34,7 +34,7 @@ class LocatedAnchor:
 def canonical_markdown(md: str) -> str:
     text = (md or "").replace("\r\n", "\n").replace("\r", "\n")
     lines = [line.rstrip() for line in text.split("\n")]
-    text = "\n".join(lines).strip("\n\r ")
+    text = "\n".join(lines).strip()
     text = re.sub(r"\n{4,}", "\n\n\n", text)
     return text
 

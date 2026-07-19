@@ -41,7 +41,6 @@ import type { EditorAiPreviewPayload } from "@/types/aiPreview";
 import { isChapterBodyEffectivelyEmpty } from "@/lib/chapterBodyEmpty";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import { prepareSourceMarkdown } from "@/lib/resolveChapterEditorContent";
-import { sanitizeChapterMarkdown } from "@/lib/sanitizeChapterMarkdown";
 import { tiptapDocToMarkdown } from "@/lib/tiptapDocToMarkdown";
 import { isRichMarkdown, markdownToTiptapDoc } from "@/lib/markdownToTiptapDoc";
 import { hasUnlinkedFigureBlocks, syncFigureBlocksWithServer } from "@/lib/syncFigureBlocksWithServer";
@@ -57,7 +56,6 @@ export type ChapterEditorHandle = {
   /** 应用服务端已组装的章节内容（优先 tiptap_json） */
   applyServerContent: (content: Record<string, unknown> | null | undefined) => void;
   scrollToSectionAnchor: (anchorId: string) => boolean;
-  scrollToReviewAnchor: (payload: EditorAiPreviewPayload) => boolean;
   getSerialized: () => { json: Record<string, unknown>; text: string } | null;
   insertReferenceQuote: (body: string, filename: string) => void;
   insertCitationMarks: (marks: string[]) => void;
@@ -335,36 +333,6 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
     });
     requestAnimationFrame(() => {
       editor.view.dom.querySelector(".ai-inline-widget")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    });
-    return true;
-  }
-
-  function scrollToReviewAnchor(payload: EditorAiPreviewPayload): boolean {
-    if (!editor) return false;
-    let range: AnchorRange | null = null;
-    if (!payload.quote.trim()) {
-      const byPid = paragraphRangeById(payload.paragraph_id);
-      const byIndex = byPid ?? paragraphRangeByIndex(payload.paragraph_index);
-      if (byIndex) {
-        range = { from: byIndex.from + 1, to: byIndex.to - 1, confidence: 0.72, strategy: "paragraph_scroll" };
-      }
-    }
-    range = range ?? resolveIssueAnchor(payload);
-    if (!range) return false;
-    const docSize = editor.state.doc.content.size;
-    const from = Math.max(1, Math.min(range.from, docSize));
-    const to = Math.max(from, Math.min(range.to, docSize));
-    editor.commands.clearAiInlinePreview();
-    editor.chain().focus().setTextSelection({ from, to }).run();
-    requestAnimationFrame(() => {
-      try {
-        const domAtPos = editor.view.domAtPos(from);
-        const node = domAtPos.node;
-        const el = node.nodeType === 1 ? (node as Element) : node.parentElement;
-        el?.scrollIntoView({ behavior: "smooth", block: "center" });
-      } catch {
-        editor.view.dom.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
     });
     return true;
   }
@@ -673,7 +641,6 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
         editor.chain().focus().setTextSelection(anchorPos + 1).run();
         return true;
       },
-      scrollToReviewAnchor: (payload: EditorAiPreviewPayload) => scrollToReviewAnchor(payload),
       getSerialized: () => {
         if (!editor) return null;
         return {
@@ -898,10 +865,6 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
   );
 
   const showStreamPreview = readOnly && streamingMarkdown !== null;
-  const renderedStreamingMarkdown = useMemo(
-    () => (streamingMarkdown === null ? "" : sanitizeChapterMarkdown(streamingMarkdown)),
-    [streamingMarkdown],
-  );
 
   const figureContextValue = useMemo(
     () => ({
@@ -1198,7 +1161,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
       ) : (
         <div className="chapter-md-preview book-md-body prose prose-slate max-w-none px-1 py-2 prose-headings:font-semibold">
           <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-            {renderedStreamingMarkdown}
+            {streamingMarkdown}
           </ReactMarkdown>
         </div>
       )}

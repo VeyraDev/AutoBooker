@@ -14,7 +14,6 @@ from app.models.review_task import ReviewTask
 from app.services.citation_service import is_bibliography_chapter
 from app.services.review.review_agent_service import ReviewAgentService
 from app.services.review.review_finding_validator import severity_to_tier
-from app.services.review.review_preference_memory import record_review_preference
 from app.services.review.review_rule_library import match_basis_refs
 from app.services.review_stage.review_finding_service import ReviewFindingService
 from app.services.writing.writing_context_builder import WritingContextBuilder
@@ -36,146 +35,9 @@ def _issue_meta(issue: ChapterReviewIssue) -> dict:
     return ev
 
 
-def _compact_dedupe_report(report: dict) -> dict:
-    keys = (
-        "status",
-        "before_ai_risk",
-        "after_ai_risk",
-        "risk_delta",
-        "similarity_score",
-        "meaning_preserved",
-        "structure_preserved",
-        "warnings",
-        "facts_missing",
-        "protected_tokens_changed",
-        "llm_safety",
-    )
-    return {key: report.get(key) for key in keys if key in report}
-
-
-def _batch_preview_skip_reason(issue: ChapterReviewIssue) -> str | None:
-    if _chapter_issue_status(issue) != "open":
-        return "not_open"
-    meta = _issue_meta(issue)
-    if meta.get("fix_capability") != "preview_apply":
-        return "not_preview_apply"
-    if not (
-        issue.char_start is not None
-        or issue.paragraph_id
-        or issue.paragraph_index is not None
-        or (issue.quote or "").strip()
-    ):
-        return "not_locatable"
-    return None
-
-
 def _book_meta(row: BookReviewFinding) -> dict:
     ref = row.source_ref_json if isinstance(row.source_ref_json, dict) else {}
     return ref
-
-
-def _evidence_items_from_meta(meta: dict, basis_refs: list[str]) -> list[dict]:
-    items: list[dict] = []
-    title_benchmark = meta.get("title_benchmark") if isinstance(meta, dict) else None
-    if isinstance(title_benchmark, dict):
-        sample_count = _safe_int(title_benchmark.get("sample_count"))
-        soft_min = _safe_int(title_benchmark.get("soft_min"))
-        soft_max = _safe_int(title_benchmark.get("soft_max"))
-        median_len = _safe_int(title_benchmark.get("median_len"))
-        source = str(title_benchmark.get("source") or "fallback")
-        examples = [str(x) for x in (title_benchmark.get("examples") or []) if str(x).strip()][:5]
-        if sample_count > 0 and soft_min > 0 and soft_max > 0:
-            detail = (
-                f"参考 {source} 中 {sample_count} 个可识别标题，常见区间约 "
-                f"{soft_min}-{soft_max} 个中文字符"
-                + (f"，中位数约 {median_len}。" if median_len > 0 else "。")
-            )
-        else:
-            detail = "当前采用书类兜底标题长度规则，建议人工结合定位判断。"
-        items.append(
-            {
-                "type": "title_benchmark",
-                "label": "标题样本基准",
-                "detail": detail,
-                "source": source,
-                "examples": examples,
-            }
-        )
-    evidence = meta.get("evidence") if isinstance(meta, dict) else None
-    if isinstance(evidence, list):
-        for idx, item in enumerate(evidence[:5], start=1):
-            text = str(item).strip()
-            if not text:
-                continue
-            items.append(
-                {
-                    "type": "review_evidence",
-                    "label": f"审校证据 {idx}",
-                    "detail": text[:500],
-                    "source": "review_output",
-                    "examples": [],
-                }
-            )
-    source_refs = meta.get("source_refs") if isinstance(meta, dict) else None
-    if isinstance(source_refs, list):
-        for idx, item in enumerate(source_refs[:5], start=1):
-            if not isinstance(item, dict):
-                continue
-            title = str(item.get("title") or "资料来源").strip()
-            locator = str(item.get("locator") or "未提供定位").strip()
-            origin = str(item.get("usage_origin") or "stage_retrieval").strip()
-            source_id = str(item.get("source_id") or item.get("citation_id") or "").strip()
-            detail = f"{title}；定位：{locator}；使用来源：{origin}"
-            if source_id:
-                detail += f"；来源ID：{source_id}"
-            items.append(
-                {
-                    "type": "source_evidence",
-                    "label": f"候选资料依据 {idx}",
-                    "detail": detail[:500],
-                    "source": origin,
-                    "examples": [],
-                }
-            )
-    if isinstance(meta, dict) and meta.get("evidence_gap"):
-        items.append(
-            {
-                "type": "evidence_gap",
-                "label": "资料缺口",
-                "detail": "未在本章实际使用资料或审校补充资料中找到可直接支持该表述的依据。",
-                "source": "stage_context",
-                "examples": [],
-            }
-        )
-    verification_status = str(meta.get("verification_status") or "").strip() if isinstance(meta, dict) else ""
-    if verification_status:
-        items.append(
-            {
-                "type": "verification_status",
-                "label": "核验状态",
-                "detail": verification_status,
-                "source": "verification",
-                "examples": [],
-            }
-        )
-    if not items and basis_refs:
-        items.append(
-            {
-                "type": "basis_refs",
-                "label": "规则依据",
-                "detail": "已匹配到结构化依据来源，见上方依据列表。",
-                "source": "basis_refs",
-                "examples": basis_refs[:5],
-            }
-        )
-    return items
-
-
-def _safe_int(value) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 class ReviewWorkspaceService:
@@ -226,21 +88,13 @@ class ReviewWorkspaceService:
             "source": "chapter",
             "chapter_index": ch.index if ch else None,
             "chapter_title": ch.title if ch else None,
-            "tier": severity_to_tier(
-                issue.severity,
-                verification_status=(meta.get("verification_status") if isinstance(meta, dict) else None),
-            ),
+            "tier": severity_to_tier(issue.severity),
             "status": _chapter_issue_status(issue),
             "title": issue.title or "",
             "detail": issue.explanation or "",
             "quote": issue.quote or None,
-            "suggestion": issue.replacement_text or None,
+            "suggestion": issue.replacement_text or issue.explanation or None,
             "basis_refs": basis,
-            "evidence_items": _evidence_items_from_meta(meta, basis),
-            "paragraph_id": issue.paragraph_id,
-            "paragraph_index": issue.paragraph_index,
-            "char_start": issue.char_start,
-            "char_end": getattr(issue, "char_end", None),
             "category": issue.issue_type,
             "track": None,
             "detector": issue.detector,
@@ -252,11 +106,7 @@ class ReviewWorkspaceService:
             "task_id": meta.get("task_id"),
             "validation_passed": meta.get("validation_passed", True),
             "filter_reason": meta.get("filter_reason"),
-            "why_it_matters": meta.get("why_it_matters") or None,
-            "verification_status": meta.get("verification_status"),
-            "action_options": meta.get("action_options") or [],
-            "fix_capability": meta.get("fix_capability"),
-            "prefer_evidence_binding": bool(meta.get("prefer_evidence_binding")),
+            "why_it_matters": meta.get("why_it_matters") or issue.explanation,
         }
 
     def _book_finding_to_dto(self, row: BookReviewFinding, snap: dict) -> dict:
@@ -272,21 +122,13 @@ class ReviewWorkspaceService:
             "source": "book",
             "chapter_index": ref.get("chapter_index"),
             "chapter_title": None,
-            "tier": severity_to_tier(
-                row.severity,
-                verification_status=ref.get("verification_status"),
-            ),
+            "tier": severity_to_tier(row.severity),
             "status": _book_finding_status(row),
             "title": row.title or "",
             "detail": row.detail or "",
             "quote": ref.get("quote"),
-            "suggestion": row.suggestion or None,
+            "suggestion": row.suggestion or row.detail or None,
             "basis_refs": basis,
-            "evidence_items": _evidence_items_from_meta(ref, basis),
-            "paragraph_id": ref.get("paragraph_id"),
-            "paragraph_index": ref.get("paragraph_index"),
-            "char_start": ref.get("char_start"),
-            "char_end": ref.get("char_end"),
             "category": row.category,
             "track": row.track.value if hasattr(row.track, "value") else str(row.track),
             "detector": None,
@@ -298,11 +140,7 @@ class ReviewWorkspaceService:
             "task_id": ref.get("task_id"),
             "validation_passed": ref.get("validation_passed", True),
             "filter_reason": ref.get("filter_reason"),
-            "why_it_matters": ref.get("why_it_matters") or None,
-            "verification_status": ref.get("verification_status"),
-            "action_options": ref.get("action_options") or [],
-            "fix_capability": ref.get("fix_capability"),
-            "prefer_evidence_binding": bool(ref.get("prefer_evidence_binding")),
+            "why_it_matters": ref.get("why_it_matters") or row.detail,
         }
 
     def list_findings(
@@ -364,7 +202,6 @@ class ReviewWorkspaceService:
         must_fix = sum(1 for f in findings if f["tier"] == "must_fix")
         suggest = sum(1 for f in findings if f["tier"] == "suggest")
         observe = sum(1 for f in findings if f["tier"] == "observe")
-        needs_verification = sum(1 for f in findings if f["tier"] == "needs_verification")
         by_chapter: dict[str, int] = {}
         for f in findings:
             if f["tier"] != "must_fix":
@@ -385,7 +222,6 @@ class ReviewWorkspaceService:
             "must_fix_count": must_fix,
             "suggest_count": suggest,
             "observe_count": observe,
-            "needs_verification_count": needs_verification,
             "open_count": len(findings),
             "run_status": run_status,
             "by_chapter": by_chapter,
@@ -442,17 +278,6 @@ class ReviewWorkspaceService:
             row = ReviewFindingService(self.db).update_status(finding_id, book_id, mapped)
             if not row:
                 return None
-            if status in {"dismissed", "resolved"}:
-                ref = _book_meta(row)
-                track_value = row.track.value if hasattr(row.track, "value") else row.track
-                record_review_preference(
-                    self.db,
-                    book_id,
-                    decision="dismissed" if status == "dismissed" else "accepted",
-                    product_dimension=ref.get("product_dimension") or track_value,
-                    issue_type=row.category,
-                    fix_capability=ref.get("fix_capability"),
-                )
             snap = self._context_snapshot(book_id)
             return self._book_finding_to_dto(row, snap)
 
@@ -472,16 +297,6 @@ class ReviewWorkspaceService:
                 from datetime import datetime, timezone
 
                 issue.resolved_at = datetime.now(timezone.utc)
-            if status in {"dismissed", "resolved"}:
-                meta = _issue_meta(issue)
-                record_review_preference(
-                    self.db,
-                    book_id,
-                    decision="dismissed" if status == "dismissed" else "accepted",
-                    product_dimension=meta.get("product_dimension") or issue.dimension,
-                    issue_type=issue.issue_type,
-                    fix_capability=meta.get("fix_capability"),
-                )
         self.db.flush()
         snap = self._context_snapshot(book_id)
         chapters = self._chapter_map(book_id)
@@ -544,136 +359,6 @@ class ReviewWorkspaceService:
             for a in apps
         ]
 
-    def _preview_figure_table_fix(
-        self,
-        book: Book,
-        ch: Chapter,
-        review,
-        issue: ChapterReviewIssue,
-        current_md: str,
-    ) -> dict:
-        from app.repositories import review_repository
-        from app.services.chapter_figure_table_normalize import normalize_chapter_figures_tables
-        from app.services.review_apply import preview_full_chapter_application
-        from app.services.review_incremental import affected_dimensions
-
-        content = ch.content if isinstance(ch.content, dict) else {}
-        tiptap = content.get("tiptap_json") if isinstance(content, dict) else None
-        if not isinstance(tiptap, dict):
-            raise ValueError("章节无 TipTap 内容可排序，请先保存章节正文后重试")
-
-        result = normalize_chapter_figures_tables(
-            book.id,
-            ch.index,
-            tiptap,
-            self.db,
-            book=book,
-            persist=False,
-        )
-        preview = preview_full_chapter_application(
-            current_markdown=current_md,
-            issue_snapshot_hash=issue.snapshot_hash,
-            result_markdown=str(result.get("text") or ""),
-            apply_type="figure_table_normalize",
-            result_tiptap_json=result.get("tiptap_json") if isinstance(result.get("tiptap_json"), dict) else None,
-        )
-        diff = preview["diff"]
-        affected = affected_dimensions(issue.issue_type, issue.dimension)
-        app = review_repository.create_application(
-            self.db,
-            issue=issue,
-            review=review,
-            chapter_id=ch.id,
-            before_hash=preview["before_hash"],
-            after_hash=preview["after_hash"],
-            apply_type="figure_table_normalize",
-            locator_strategy=preview["locator_strategy"],
-            locator_confidence=preview["locator_confidence"],
-            diff=diff,
-            affected_dimensions=affected,
-            score_before={"total_score": review.total_score, "dimensions": review.dimensions},
-            warning={"overview": result.get("overview") or []},
-        )
-        self.db.flush()
-        return {
-            "issue_id": str(issue.id),
-            "application_id": str(app.id),
-            "quote": preview["quote"] or issue.quote or "",
-            "result_text": str(diff.get("after") or ""),
-            "result_markdown": preview["result_markdown"],
-            "preview_kind": "replace",
-            "preview_required": True,
-            "stale": preview["stale"],
-            "locator_strategy": preview["locator_strategy"],
-            "locator_confidence": preview["locator_confidence"],
-            "char_start": diff.get("char_start"),
-            "char_end": diff.get("char_end"),
-            "paragraph_index": issue.paragraph_index,
-            "paragraph_id": issue.paragraph_id,
-        }
-
-    def _preview_first_line_indent_fix(
-        self,
-        book: Book,
-        ch: Chapter,
-        review,
-        issue: ChapterReviewIssue,
-        current_md: str,
-    ) -> dict:
-        from app.repositories import review_repository
-        from app.services.markdown_to_tiptap import markdown_body_to_tiptap_blocks
-        from app.services.review.layout_autofix import normalize_first_line_indent
-        from app.services.review_apply import preview_full_chapter_application
-        from app.services.review_incremental import affected_dimensions
-
-        content = ch.content if isinstance(ch.content, dict) else {}
-        tiptap = content.get("tiptap_json") if isinstance(content, dict) else None
-        if not isinstance(tiptap, dict) or tiptap.get("type") != "doc":
-            tiptap = {"type": "doc", "content": markdown_body_to_tiptap_blocks(current_md)}
-        result = normalize_first_line_indent(current_md, tiptap)
-        if int(result.get("changed_count") or 0) <= 0:
-            raise ValueError("未检测到可应用的首行缩进修改")
-        preview = preview_full_chapter_application(
-            current_markdown=current_md,
-            issue_snapshot_hash=issue.snapshot_hash,
-            result_markdown=str(result.get("text") or ""),
-            apply_type="first_line_indent",
-            result_tiptap_json=result.get("tiptap_json") if isinstance(result.get("tiptap_json"), dict) else None,
-        )
-        affected = affected_dimensions(issue.issue_type, issue.dimension)
-        app = review_repository.create_application(
-            self.db,
-            issue=issue,
-            review=review,
-            chapter_id=ch.id,
-            before_hash=preview["before_hash"],
-            after_hash=preview["after_hash"],
-            apply_type="first_line_indent",
-            locator_strategy=preview["locator_strategy"],
-            locator_confidence=preview["locator_confidence"],
-            diff=preview["diff"],
-            affected_dimensions=affected,
-            score_before={"total_score": review.total_score, "dimensions": review.dimensions},
-            warning={"changed_count": int(result.get("changed_count") or 0)},
-        )
-        self.db.flush()
-        return {
-            "issue_id": str(issue.id),
-            "application_id": str(app.id),
-            "quote": preview["quote"] or issue.quote or "",
-            "result_text": preview["result_text"],
-            "result_markdown": preview["result_markdown"],
-            "preview_kind": "replace",
-            "preview_required": True,
-            "stale": preview["stale"],
-            "locator_strategy": preview["locator_strategy"],
-            "locator_confidence": preview["locator_confidence"],
-            "char_start": preview["char_start"],
-            "char_end": preview["char_end"],
-            "paragraph_index": issue.paragraph_index,
-            "paragraph_id": issue.paragraph_id,
-        }
-
     def apply_finding(
         self,
         book: Book,
@@ -682,18 +367,13 @@ class ReviewWorkspaceService:
         chat_model: str,
         replacement_text: str | None = None,
         action_type: str | None = None,
-        action_option_id: str | None = None,
     ) -> dict:
+        from datetime import datetime, timezone
+
         from app.models.chapter_review import ChapterReview
         from app.repositories import review_repository
-        from app.services.review.data_evidence_policy import (
-            DATA_ACTION_OPTIONS,
-            is_data_evidence_issue,
-        )
-        from app.llm.client import LLMClient
-        from app.services.dedupe_service import DedupeService
         from app.services.review_apply import apply_review_issue_text, preview_issue_application
-        from app.services.review_incremental import affected_dimensions
+        from app.services.review_scoring import affected_dimensions
         from app.services.tiptap_convert import chapter_content_to_markdown
 
         issue = self.db.get(ChapterReviewIssue, finding_id)
@@ -708,42 +388,8 @@ class ReviewWorkspaceService:
 
         content = ch.content if isinstance(ch.content, dict) else None
         current_md = chapter_content_to_markdown(content)
-        meta = issue.quality_evidence if isinstance(issue.quality_evidence, dict) else {}
-        fix_capability = str(meta.get("fix_capability") or "").strip()
-        if fix_capability in {"manual_only", "observe_only"}:
-            raise ValueError("该问题不支持自动生成修改预览，请人工处理或仅作观察")
-        if fix_capability == "choice_then_apply" and not (action_option_id or (replacement_text or "").strip()):
-            raise ValueError("该问题需要先选择处理方式，再生成修改预览")
-        if issue.issue_type == "figure_table_numbering":
-            return self._preview_figure_table_fix(book, ch, review, issue, current_md)
-        if issue.issue_type == "first_line_indent":
-            return self._preview_first_line_indent_fix(book, ch, review, issue, current_md)
-        finding_probe = {
-            "issue_type": issue.issue_type,
-            "dimension": issue.dimension,
-            "title": issue.title,
-            "detail": issue.explanation,
-            "quote": issue.quote,
-            "product_dimension": meta.get("product_dimension"),
-        }
-
-        option_instruction = None
         act = (action_type or issue.action or "replace").strip().lower()
-        if action_option_id:
-            options = meta.get("action_options") or DATA_ACTION_OPTIONS
-            chosen = next((o for o in options if str(o.get("id")) == action_option_id), None)
-            if not chosen:
-                chosen = next((o for o in DATA_ACTION_OPTIONS if o["id"] == action_option_id), None)
-            if not chosen:
-                raise ValueError(f"未知处理方式：{action_option_id}")
-            if action_option_id == "add_source":
-                raise ValueError("请先在文献搜索中绑定来源，或手动插入（来源：机构，年份）标注后再应用")
-            act = str(chosen.get("action_type") or "revise")
-            option_instruction = str(chosen.get("instruction") or chosen.get("description") or "")
-
         preview_kind = "replace"
-        warning = None
-        is_ai_expression = issue.dimension == "ai_signature" or str(issue.detector or "").startswith("ai_detect")
         if replacement_text is not None and replacement_text.strip():
             replacement = replacement_text.strip()
         elif act == "delete":
@@ -751,36 +397,15 @@ class ReviewWorkspaceService:
             preview_kind = "delete"
         elif act == "replace" and (issue.replacement_text or "").strip():
             replacement = issue.replacement_text.strip()
-        elif is_data_evidence_issue(finding_probe) and not option_instruction and act in {"revise", "choose", ""}:
-            raise ValueError(
-                "数据/事实类问题请先选择处理方式：补充来源、保留为估算、或删除精确比例；"
-                "系统不会自动改成空泛比例表述。"
-            )
-        elif is_ai_expression:
-            style_profile = book.style_type or (book.book_type.value if hasattr(book.book_type, "value") else book.book_type)
-            dedupe = DedupeService().dedupe_text(
-                issue.quote or "",
-                client=LLMClient(),
-                chat_model=chat_model,
-                context=current_md[:5000],
-                style_profile=str(style_profile or "default"),
-                finding_instruction=issue.explanation or issue.title or "压实机器化表达",
-            )
-            if dedupe.report.get("status") == "failed" or not dedupe.text.strip() or dedupe.text.strip() == (issue.quote or "").strip():
-                raise ValueError("局部改写未通过事实与保护元素校验，请人工处理")
-            replacement = dedupe.text.strip()
-            act = "revise"
-            warning = {"dedupe_report": _compact_dedupe_report(dedupe.report)}
         else:
             replacement, preview_kind = apply_review_issue_text(
                 book=book,
                 chat_model=chat_model,
-                action_type=act if act != "choose" else "revise",
+                action_type=act,
                 quote=issue.quote or "",
-                suggestion=option_instruction or issue.replacement_text or "",
+                suggestion=issue.replacement_text or "",
                 detail=issue.explanation or "",
                 context=current_md[:12000],
-                forbid_vague_ratio_rewrite=is_data_evidence_issue(finding_probe),
             )
 
         preview = preview_issue_application(
@@ -808,8 +433,9 @@ class ReviewWorkspaceService:
             diff=preview["diff"],
             affected_dimensions=affected,
             score_before={"total_score": review.total_score, "dimensions": review.dimensions},
-            warning=warning,
         )
+        issue.applied_at = datetime.now(timezone.utc)
+        issue.status = "open"
         self.db.flush()
         return {
             "issue_id": str(issue.id),
@@ -826,52 +452,4 @@ class ReviewWorkspaceService:
             "char_end": preview["char_end"],
             "paragraph_index": preview["paragraph_index"],
             "paragraph_id": preview["paragraph_id"],
-        }
-
-    def batch_preview_findings(
-        self,
-        book: Book,
-        finding_ids: list[UUID],
-        *,
-        chat_model: str,
-        limit: int = 10,
-    ) -> dict:
-        requested = list(dict.fromkeys(finding_ids))
-        capped = max(1, min(int(limit or 10), 20))
-        items: list[dict] = []
-        skipped: list[dict] = []
-
-        for idx, finding_id in enumerate(requested):
-            if idx >= capped:
-                skipped.append({"finding_id": finding_id, "reason": "over_limit", "title": None})
-                continue
-            issue = self.db.get(ChapterReviewIssue, finding_id)
-            if not issue:
-                skipped.append({"finding_id": finding_id, "reason": "not_found", "title": None})
-                continue
-            ch = self.db.get(Chapter, issue.chapter_id)
-            if not ch or ch.book_id != book.id:
-                skipped.append({"finding_id": finding_id, "reason": "not_found", "title": issue.title})
-                continue
-            reason = _batch_preview_skip_reason(issue)
-            if reason:
-                skipped.append({"finding_id": finding_id, "reason": reason, "title": issue.title})
-                continue
-            try:
-                items.append(
-                    self.apply_finding(
-                        book,
-                        finding_id,
-                        chat_model=chat_model,
-                    )
-                )
-            except ValueError as exc:
-                skipped.append({"finding_id": finding_id, "reason": str(exc), "title": issue.title})
-
-        return {
-            "requested_count": len(requested),
-            "previewed_count": len(items),
-            "skipped_count": len(skipped),
-            "items": items,
-            "skipped": skipped,
         }

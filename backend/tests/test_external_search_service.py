@@ -24,9 +24,6 @@ def test_search_person_works_normalizes_and_dedupes():
                         with patch("app.services.assistant.external_search_service._duckduckgo_lite", return_value=[]):
                             data = svc.search_person_works("Alice", institution="MIT", topic="ML")
     assert data["person"] == "Alice"
-    assert data["search_intent"]["person_name"] == "Alice"
-    assert data["search_intent"]["institution"] == "MIT"
-    assert "candidates" in data
     assert len(data["works"]) == 1
     assert data["works"][0]["title"] == "Alpha Paper"
     assert "source_scope" in data

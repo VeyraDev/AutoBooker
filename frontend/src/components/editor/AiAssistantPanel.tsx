@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 
 import { callAssistant } from "@/api/assistant";
+import type { LlmModelsResponse } from "@/api/config";
 import AssistantFeaturePanel, { type FeatureSelection } from "@/components/editor/AssistantFeaturePanel";
+import ModelSelector from "@/components/editor/ModelSelector";
 import type { EditorAiPreviewPayload } from "@/types/aiPreview";
 
 const TEXT_INTENTS = new Set([
@@ -19,6 +21,10 @@ const TEXT_INTENTS = new Set([
 type Props = {
   bookId: string;
   chapterIndex: number | null;
+  aiModel: string | null;
+  llmCatalog?: LlmModelsResponse;
+  llmCatalogLoading?: boolean;
+  onModelChange: (model: string) => void;
   selectionText: string;
   assistantSeed: string;
   onConsumeAssistantSeed: () => void;
@@ -43,6 +49,10 @@ type Props = {
 export default function AiAssistantPanel({
   bookId,
   chapterIndex,
+  aiModel,
+  llmCatalog,
+  llmCatalogLoading,
+  onModelChange,
   selectionText,
   assistantSeed,
   onConsumeAssistantSeed,
@@ -156,6 +166,17 @@ export default function AiAssistantPanel({
 
   return (
     <div className="ai-assistant-panel flex min-h-0 flex-1 flex-col gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">助手模型</p>
+        <ModelSelector
+          aiModel={aiModel}
+          catalog={llmCatalog}
+          loading={llmCatalogLoading}
+          onModelChange={onModelChange}
+          triggerClassName="input flex h-8 max-w-[11rem] cursor-pointer items-center justify-between gap-1 py-1 pl-2 pr-2 text-xs"
+        />
+      </div>
+
       {displaySelection ? (
         <div className="rounded-lg border border-slate-200 bg-slate-100/90 px-3 py-2.5">
           <div className="flex items-start justify-between gap-2">

@@ -3,19 +3,15 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.agents.document_parser import DocumentParserAgent
 from app.llm.client import LLMClient
 from app.models.book import Book, CreationOrigin
 from app.models.intake import IntakeItem, IntakeItemStatus, IntakeItemType, IntakeStatus, ProjectIntake
-from app.models.generation_context_snapshot import GenerationContextSnapshot
-from app.models.reference import FileLifecycleStatus, ParseStatus, ReferenceChunk, ReferenceFile
 from app.services.intake.intake_services import IntakeItemService
 from app.services.sources.source_segment_service import SourceSegmentService
 from app.utils.json_llm import parse_llm_json
@@ -26,16 +22,7 @@ def _file_type(filename: str) -> str:
     return ext or "bin"
 
 
-def _source_status(item: IntakeItem, reference_file: ReferenceFile | None = None) -> str:
-    if reference_file is not None:
-        if reference_file.parse_status == ParseStatus.failed or reference_file.lifecycle_status == FileLifecycleStatus.failed:
-            return "failed"
-        if reference_file.parse_status in {ParseStatus.pending, ParseStatus.processing}:
-            return "reading"
-        if reference_file.lifecycle_status == FileLifecycleStatus.pending_confirmation:
-            return "needs_confirm"
-        if reference_file.parse_status == ParseStatus.done and reference_file.lifecycle_status == FileLifecycleStatus.effective:
-            return "indexed"
+def _source_status(item: IntakeItem) -> str:
     if item.status == IntakeItemStatus.failed:
         return "failed"
     if item.status == IntakeItemStatus.pending:
@@ -58,8 +45,6 @@ def _source_title(item: IntakeItem) -> str:
 
 
 def _source_type(item: IntakeItem) -> str:
-    if getattr(item, "source_type", None):
-        return item.source_type
     if item.item_type == IntakeItemType.upload:
         return "upload"
     if item.item_type == IntakeItemType.pasted_text:
@@ -77,40 +62,6 @@ class SourceLibraryService:
         if not book.creation_origin:
             book.creation_origin = origin
         return self._intake_items.get_or_create_intake(book, origin)
-
-    def ensure_missing_upload_indexes(self, book: Book) -> list[tuple[IntakeItem, ReferenceFile]]:
-        """Lazily migrate uploads created before the canonical index link existed."""
-        intake = (
-            self.db.query(ProjectIntake)
-            .filter(
-                ProjectIntake.book_id == book.id,
-                ProjectIntake.status != IntakeStatus.superseded,
-            )
-            .order_by(ProjectIntake.created_at.desc())
-            .first()
-        )
-        if not intake:
-            return []
-        items = (
-            self.db.query(IntakeItem)
-            .filter(
-                IntakeItem.intake_id == intake.id,
-                IntakeItem.item_type == IntakeItemType.upload,
-                IntakeItem.asset_id.isnot(None),
-                IntakeItem.reference_file_id.is_(None),
-                IntakeItem.status != IntakeItemStatus.disabled,
-            )
-            .all()
-        )
-        from app.services.sources.source_ingestion_service import SourceIngestionService
-
-        ingestion = SourceIngestionService(self.db)
-        queued: list[tuple[IntakeItem, ReferenceFile]] = []
-        for item in items:
-            ref = ingestion.ensure_full_text_index(book, item)
-            if ref:
-                queued.append((item, ref))
-        return queued
 
     def list_sources(self, book: Book) -> list[dict]:
         intake = (
@@ -135,72 +86,18 @@ class SourceLibraryService:
         for seg in seg_svc.list_for_book(book.id):
             segments_by_source.setdefault(seg.source_id, []).append(seg)
 
-        reference_ids = [
-            value
-            for item in items
-            if (value := getattr(item, "reference_file_id", None)) is not None
-        ]
-        references = (
-            self.db.query(ReferenceFile).filter(ReferenceFile.id.in_(reference_ids)).all()
-            if reference_ids
-            else []
-        )
-        references_by_id = {row.id: row for row in references}
-        chunk_counts = {
-            file_id: int(count)
-            for file_id, count in (
-                self.db.query(ReferenceChunk.file_id, func.count(ReferenceChunk.id))
-                .filter(
-                    ReferenceChunk.file_id.in_(reference_ids),
-                    ReferenceChunk.active.is_(True),
-                    ReferenceChunk.chunk_kind == "reference_material",
-                )
-                .group_by(ReferenceChunk.file_id)
-                .all()
-                if reference_ids
-                else []
-            )
-        }
-        used_stages_by_source: dict[str, set[str]] = {}
-        snapshots = (
-            self.db.query(GenerationContextSnapshot)
-            .filter(GenerationContextSnapshot.book_id == book.id)
-            .order_by(GenerationContextSnapshot.created_at.desc())
-            .limit(200)
-            .all()
-        )
-        for snapshot in snapshots:
-            for source in snapshot.source_items or []:
-                if not isinstance(source, dict):
-                    continue
-                source_id = str(source.get("source_id") or "").strip()
-                if source_id:
-                    used_stages_by_source.setdefault(source_id, set()).add(snapshot.source_module)
-
         out: list[dict] = []
         for item in items:
             summary = (item.parsed_preview or item.text_content or "")[:500] or None
             segs = segments_by_source.get(item.id, [])
-            reference_file_id = getattr(item, "reference_file_id", None)
-            reference_file = references_by_id.get(reference_file_id)
             out.append(
                 {
                     "id": item.id,
                     "title": _source_title(item),
                     "type": _source_type(item),
-                    "status": _source_status(item, reference_file),
+                    "status": _source_status(item),
                     "summary": summary,
                     "detected_roles": list(item.detected_roles or []),
-                    "source_url": item.source_url,
-                    "source_type": item.source_type,
-                    "provider": item.provider,
-                    "retrieved_at": item.retrieved_at,
-                    "source_metadata": dict(item.source_metadata or {}),
-                    "reference_file_id": reference_file_id,
-                    "index_status": reference_file.parse_status.value if reference_file else None,
-                    "lifecycle_status": reference_file.lifecycle_status.value if reference_file else None,
-                    "chunk_count": chunk_counts.get(reference_file_id, 0),
-                    "used_stages": sorted(used_stages_by_source.get(str(item.id), set())),
                     "segments": seg_svc.segments_to_dict(segs),
                 }
             )
@@ -213,56 +110,6 @@ class SourceLibraryService:
         self.db.flush()
         if len(text.strip()) >= 200:
             SourceSegmentService(self.db).extract_segments(book, item)
-        return item
-
-    def add_search_result(self, book: Book, result: dict) -> IntakeItem:
-        """Save search metadata and snippet only; never persist fetched page content."""
-        url = str(result.get("url") or "").strip()
-        intake = self._ensure_intake(book)
-        if url:
-            existing = (
-                self.db.query(IntakeItem)
-                .filter(
-                    IntakeItem.intake_id == intake.id,
-                    IntakeItem.source_url == url,
-                    IntakeItem.status != IntakeItemStatus.disabled,
-                )
-                .first()
-            )
-            if existing:
-                return existing
-
-        snippet = str(result.get("snippet") or "").strip()[:4000]
-        title = str(result.get("title") or "未命名资料").strip()[:500]
-        item = self._intake_items.add_text_item(intake, snippet, IntakeItemType.pasted_text)
-        item.filename = title
-        item.parsed_preview = snippet
-        item.detected_roles = ["reference"]
-        item.source_url = url or None
-        item.source_type = str(result.get("source_type") or "web")[:64]
-        item.provider = str(result.get("provider") or "unknown")[:64]
-        item.retrieved_at = datetime.now(timezone.utc)
-        item.source_metadata = {
-            key: result.get(key)
-            for key in (
-                "authors",
-                "publisher",
-                "published_at",
-                "year",
-                "domain",
-                "doi",
-                "isbn",
-                "external_id",
-                "journal",
-                "document_type",
-                "credibility_hint",
-                "citeability",
-                "metadata_missing",
-                "degraded",
-            )
-            if result.get(key) not in (None, "", [])
-        }
-        self.db.flush()
         return item
 
     def add_upload(
@@ -282,9 +129,6 @@ class SourceLibraryService:
             owner_user_id=owner_user_id,
             mime_type=mime_type,
         )
-        from app.services.sources.source_ingestion_service import SourceIngestionService
-
-        SourceIngestionService(self.db).ensure_full_text_index(book, item)
         ft = _file_type(filename)
         if ft in {"pdf", "docx"} and item.asset_id:
             self._extract_preview(book, item, ft)
@@ -330,12 +174,6 @@ class SourceLibraryService:
         if item.status == IntakeItemStatus.disabled:
             return
         item.status = IntakeItemStatus.disabled
-        reference_file_id = getattr(item, "reference_file_id", None)
-        if reference_file_id:
-            ref = self.db.get(ReferenceFile, reference_file_id)
-            if ref and ref.book_id == book.id:
-                ref.lifecycle_status = FileLifecycleStatus.disabled
-                self.db.query(ReferenceChunk).filter(ReferenceChunk.file_id == ref.id).update({"active": False})
         self.db.flush()
 
     def read_source(self, book: Book, source_id: UUID) -> IntakeItem:
@@ -346,17 +184,6 @@ class SourceLibraryService:
             ft = _file_type(item.filename or "upload.bin")
             if ft in {"pdf", "docx", "txt", "md"}:
                 self._extract_preview(book, item, ft if ft != "md" else "txt")
-            if not getattr(item, "reference_file_id", None):
-                from app.services.sources.source_ingestion_service import SourceIngestionService
-
-                SourceIngestionService(self.db).ensure_full_text_index(book, item)
-        reference_file_id = getattr(item, "reference_file_id", None)
-        if reference_file_id:
-            ref = self.db.get(ReferenceFile, reference_file_id)
-            if ref and ref.book_id == book.id and ref.parse_status == ParseStatus.failed:
-                ref.parse_status = ParseStatus.pending
-                ref.lifecycle_status = FileLifecycleStatus.processing
-                ref.error_message = None
         if not (item.parsed_preview or "").strip() and (item.text_content or "").strip():
             item.parsed_preview = item.text_content[:4000]
         preview = (item.parsed_preview or item.text_content or "").strip()

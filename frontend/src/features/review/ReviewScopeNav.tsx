@@ -6,7 +6,6 @@ import { PRODUCT_DIMENSION_LABEL } from "@/features/review/reviewWorkspaceApi";
 
 const TIER_FILTERS = [
   { id: "must_fix", label: "必须处理" },
-  { id: "needs_verification", label: "待核验" },
   { id: "suggest", label: "建议处理" },
   { id: "observe", label: "可选观察" },
   { id: "resolved", label: "已处理" },
@@ -26,7 +25,6 @@ type Props = {
   mustFixCount: number;
   suggestCount: number;
   observeCount: number;
-  needsVerificationCount?: number;
   runStatus: string | null;
   latestTask: ReviewTask | null;
   running: boolean;
@@ -52,7 +50,6 @@ export default function ReviewScopeNav({
   mustFixCount,
   suggestCount,
   observeCount,
-  needsVerificationCount = 0,
   runStatus,
   latestTask,
   running,
@@ -80,7 +77,6 @@ export default function ReviewScopeNav({
 
       <div className="space-y-2 border-b border-slate-200 p-3 text-xs">
         <div className="flex justify-between"><span className="text-slate-500">必改</span><span className="font-semibold text-red-700">{mustFixCount}</span></div>
-        <div className="flex justify-between"><span className="text-slate-500">待核验</span><span className="font-medium text-sky-800">{needsVerificationCount}</span></div>
         <div className="flex justify-between"><span className="text-slate-500">建议</span><span className="font-medium text-amber-800">{suggestCount}</span></div>
         <div className="flex justify-between"><span className="text-slate-500">观察</span><span className="font-medium text-slate-600">{observeCount}</span></div>
         {runStatus ? <p className="rounded bg-white px-2 py-1 text-[10px] text-slate-600">最近运行：{runStatus}</p> : null}

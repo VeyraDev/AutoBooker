@@ -185,55 +185,6 @@ def test_normalize_sort_uses_llm_titles_for_table_and_figure(monkeypatch):
     assert "请根据下面的布局脚本" not in result["overview"][1]["title"]
 
 
-def test_normalize_sort_preview_mode_does_not_commit_or_persist(monkeypatch):
-    class CountingDb(_Db):
-        def __init__(self):
-            self.commits = 0
-
-        def commit(self):
-            self.commits += 1
-
-    def fail_persist(*_args, **_kwargs):
-        raise AssertionError("preview mode must not persist figure changes")
-
-    monkeypatch.setattr(normalizer, "get_chapter_figures", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(normalizer, "ensure_figure_blocks_persisted", fail_persist)
-    monkeypatch.setattr(normalizer, "renumber_chapter_figures_from_tiptap", fail_persist)
-    monkeypatch.setattr(normalizer, "suggest_table_caption", lambda *_args, **_kwargs: "table title")
-    monkeypatch.setattr(normalizer, "suggest_figure_caption", lambda *_args, **_kwargs: "figure title")
-
-    doc = {
-        "type": "doc",
-        "content": [
-            _paragraph("before table"),
-            _table(),
-            _paragraph("before figure"),
-            {
-                "type": "figureBlock",
-                "attrs": {
-                    "figureType": "flowchart",
-                    "rawAnnotation": "figure flow",
-                },
-            },
-        ],
-    }
-    db = CountingDb()
-
-    result = normalizer.normalize_chapter_figures_tables(
-        uuid4(),
-        1,
-        doc,
-        db,
-        book=SimpleNamespace(title="test book"),
-        persist=False,
-    )
-
-    assert db.commits == 0
-    assert result["overview"][0]["number"] == "1-1"
-    assert result["overview"][1]["number"] == "1-1"
-    assert "1-1" in result["text"]
-
-
 def test_table_caption_fallback_never_uses_first_row(monkeypatch):
     class BrokenClient:
         def chat_completion(self, *_args, **_kwargs):

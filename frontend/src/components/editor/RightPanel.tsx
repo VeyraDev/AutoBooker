@@ -1,14 +1,19 @@
-import { ClipboardList, GraduationCap, ImageIcon, MessageSquareText, PenLine, X } from "lucide-react";
+import { ClipboardList, GraduationCap, ImageIcon, MessageSquareText, PenLine, ShieldCheck, Brain, X } from "lucide-react";
 
+import type { LlmModelsResponse } from "@/api/config";
 import AiAssistantPanel from "@/components/editor/AiAssistantPanel";
 import type { EditorAiPreviewPayload } from "@/types/aiPreview";
 import FigureQuickPanel from "@/components/editor/FigureQuickPanel";
 import LiteraturePanel from "@/components/editor/LiteraturePanel";
+import ReviewPanel from "@/components/editor/ReviewPanel";
+import MemoryPanel from "@/features/memory/MemoryPanel";
+import type { PanelToolSeed } from "@/features/assistant/toolDispatch";
+import type { LiteratureSearchResult } from "@/types/literature";
 import type { AutoSaveUi } from "@/components/editor/EditorTopBar";
 import type { CitationStyle } from "@/types/book";
 import type { OutlineChapter } from "@/types/outline";
 
-export type RightPanelTab = "detail" | "refs" | "literature" | "ai";
+export type RightPanelTab = "detail" | "refs" | "literature" | "ai" | "review" | "memory";
 
 type Props = {
   bookId: string;
@@ -16,6 +21,10 @@ type Props = {
   activeChapter: OutlineChapter | null;
   autoSaveStatus: AutoSaveUi;
   savedAt: Date | null;
+  aiModel: string | null;
+  llmCatalog?: LlmModelsResponse;
+  llmCatalogLoading?: boolean;
+  onModelChange: (model: string) => void;
   /** 由 BubbleMenu「…」联动打开时切换到 AI 并预填选区 */
   activeTab: RightPanelTab;
   onTabChange: (t: RightPanelTab) => void;
@@ -31,7 +40,9 @@ type Props = {
   chapterIndex?: number | null;
   editorSelectionText?: string;
   chapterContext?: string;
+  onApplyReviewFix?: (quote: string, suggestion: string) => void;
   onAiPreviewReady?: (payload: EditorAiPreviewPayload) => boolean | void;
+  onChapterMarkdownReplace?: (markdown: string) => void;
   quotedFigureId?: string | null;
   quotedFigureAnnotation?: string;
   onClearFigureQuote?: () => void;
@@ -56,6 +67,8 @@ type Props = {
     text: string;
     overview?: import("@/api/figures").FigureTableOverviewItem[];
   }) => void;
+  panelToolSeed?: PanelToolSeed;
+  memoryRefreshKey?: number;
 };
 
 export default function RightPanel({
@@ -64,6 +77,10 @@ export default function RightPanel({
   activeChapter,
   autoSaveStatus,
   savedAt,
+  aiModel,
+  llmCatalog,
+  llmCatalogLoading,
+  onModelChange,
   activeTab,
   onTabChange,
   assistantSeed,
@@ -76,7 +93,9 @@ export default function RightPanel({
   chapterIndex = null,
   editorSelectionText = "",
   chapterContext = "",
+  onApplyReviewFix,
   onAiPreviewReady,
+  onChapterMarkdownReplace,
   quotedFigureId = null,
   quotedFigureAnnotation = "",
   onClearFigureQuote,
@@ -87,6 +106,8 @@ export default function RightPanel({
   figureTableOverview = [],
   getChapterTiptapJson,
   onApplyChapterContent,
+  panelToolSeed = {},
+  memoryRefreshKey = 0,
 }: Props) {
   void _onInsertReference;
   function tabBtn(id: RightPanelTab, icon: React.ReactNode, label: string) {
@@ -110,8 +131,10 @@ export default function RightPanel({
       <div className="right-panel-tab-bar">
         {tabBtn("detail", <ClipboardList className="h-4 w-4" aria-hidden />, "章节细则")}
         {tabBtn("refs", <ImageIcon className="h-4 w-4" aria-hidden />, "图表速览")}
-        {tabBtn("literature", <GraduationCap className="h-4 w-4" aria-hidden />, "资料搜索")}
+        {tabBtn("literature", <GraduationCap className="h-4 w-4" aria-hidden />, "文献搜索")}
         {tabBtn("ai", <MessageSquareText className="h-4 w-4" aria-hidden />, "AI 助手")}
+        {tabBtn("review", <ShieldCheck className="h-4 w-4" aria-hidden />, "审阅")}
+        {tabBtn("memory", <Brain className="h-4 w-4" aria-hidden />, "项目记忆")}
         <button
           type="button"
           className="right-panel-tab ml-auto max-w-[44px] flex-none text-slate-500 hover:text-slate-800"
@@ -170,6 +193,7 @@ export default function RightPanel({
             bookId={bookId}
             chapterIndex={chapterIndex ?? null}
             initialOverview={figureTableOverview}
+            figureListSeed={panelToolSeed.figureListSeed}
             onFiguresChanged={onFiguresChanged}
             onFigureGenerated={onFigureGenerated}
             getChapterTiptapJson={getChapterTiptapJson}
@@ -182,6 +206,8 @@ export default function RightPanel({
             bookId={bookId}
             citationStyle={citationStyle}
             chapterIndex={chapterIndex ?? undefined}
+            defaultQuery={panelToolSeed.literatureQuery ?? ""}
+            externalSearchResult={panelToolSeed.literatureResult as LiteratureSearchResult | undefined}
             mode="editor"
             chapterContext={chapterContext}
             onPreviewInsert={onPreviewCitationInsert}
@@ -195,6 +221,10 @@ export default function RightPanel({
           <AiAssistantPanel
             bookId={bookId}
             chapterIndex={chapterIndex}
+            aiModel={aiModel}
+            llmCatalog={llmCatalog}
+            llmCatalogLoading={llmCatalogLoading}
+            onModelChange={onModelChange}
             selectionText={editorSelectionText}
             assistantSeed={assistantSeed}
             onConsumeAssistantSeed={onConsumeAssistantSeed}
@@ -209,6 +239,22 @@ export default function RightPanel({
           </div>
         )}
 
+        {activeTab === "review" && (
+          <ReviewPanel
+            bookId={bookId}
+            chapterIndex={chapterIndex}
+            chapterTitle={activeChapter?.title}
+            chapterContext={chapterContext}
+            reviewRunResult={panelToolSeed.reviewRunResult}
+            onApplySuggestion={onApplyReviewFix}
+            onAiPreviewReady={onAiPreviewReady}
+            onChapterMarkdownReplace={onChapterMarkdownReplace}
+          />
+        )}
+
+        {activeTab === "memory" && (
+          <MemoryPanel bookId={bookId} refreshKey={memoryRefreshKey} />
+        )}
       </div>
     </aside>
   );

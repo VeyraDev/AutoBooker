@@ -77,11 +77,8 @@ def _list_item_body(item: dict[str, Any], depth: int) -> str:
 def _block_to_markdown(node: dict[str, Any], depth: int = 0) -> str:
     t = node.get("type")
     if t == "paragraph":
-        attrs = node.get("attrs") or {}
-        pid = str(attrs.get("paragraphId") or "").strip()
+        pid = str((node.get("attrs") or {}).get("paragraphId") or "").strip()
         body = _inline_to_markdown(node.get("content"))
-        if attrs.get("firstLineIndent") and body.strip() and not body.startswith("\u3000\u3000"):
-            body = "\u3000\u3000" + body.lstrip(" \t\u3000")
         return f"<!-- pid:{pid} -->\n{body}" if pid else body
     if t == "heading":
         level = int((node.get("attrs") or {}).get("level") or 1)
@@ -215,10 +212,10 @@ def chapter_content_to_markdown(content: dict[str, Any] | None) -> str:
     if not content or not isinstance(content, dict):
         return ""
     tx = content.get("text")
-    text_md = tx.strip("\n\r ") if isinstance(tx, str) else ""
+    text_md = tx.strip() if isinstance(tx, str) else ""
     tj = content.get("tiptap_json")
     if isinstance(tj, dict):
-        tj_md = tiptap_json_to_markdown(tj).strip("\n\r ")
+        tj_md = tiptap_json_to_markdown(tj).strip()
         if text_md and "|" in text_md and '"table"' not in str(tj):
             return text_md
         if tj_md:

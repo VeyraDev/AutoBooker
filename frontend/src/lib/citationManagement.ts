@@ -1,7 +1,7 @@
 import type { CitationStyle } from "@/types/book";
 
 export const CITATION_MANAGEMENT_VIEWS = [
-  ["search", "资料搜索"],
+  ["search", "文献搜索"],
   ["manage", "引用管理"],
 ] as const;
 

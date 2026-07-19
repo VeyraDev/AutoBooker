@@ -24,12 +24,13 @@ export function panelHintToTab(hint: string): RightPanelTab | null {
     case "literature":
       return "literature";
     case "review":
+      return "review";
     case "review_workspace":
-      return null;
+      return "review";
     case "refs":
       return "refs";
     case "memory":
-      return null;
+      return "memory";
     case "ai":
       return "ai";
     case "detail":
@@ -42,60 +43,24 @@ export function panelHintToTab(hint: string): RightPanelTab | null {
   }
 }
 
-function literaturePayloadFromToolData(data: Record<string, unknown>): {
-  query: string;
-  result: LiteratureSearchResult;
-} | null {
-  // search_references wraps literature under data.result; search_literature is flat
-  const nested = data.result && typeof data.result === "object" ? (data.result as Record<string, unknown>) : null;
-  const src =
-    nested && (Array.isArray(nested.papers) || Array.isArray(nested.items) || Array.isArray(nested.wiki))
-      ? nested
-      : data;
-  const papers = (src.papers as LiteratureSearchResult["papers"]) ?? [];
-  const github = (src.github as LiteratureSearchResult["github"]) ?? [];
-  const wiki = (src.wiki as LiteratureSearchResult["wiki"]) ?? [];
-  const official_docs = (src.official_docs as LiteratureSearchResult["official_docs"]) ?? [];
-  const items = (src.items as LiteratureSearchResult["items"]) ?? [];
-  if (!papers.length && !github.length && !wiki.length && !official_docs.length && !items.length) {
-    return null;
-  }
-  return {
-    query: String(src.query ?? data.raw_query ?? data.query ?? ""),
-    result: {
-      papers,
-      github,
-      wiki,
-      official_docs,
-      refined_queries: (src.refined_queries as string[]) ?? (data.queries as string[]) ?? [],
-      warnings: (src.warnings as string[]) ?? [],
-      items,
-      profile: src.profile as string | undefined,
-      source_hint: src.source_hint as string | undefined,
-      books: (src.books as LiteratureSearchResult["books"]) ?? [],
-      news: (src.news as LiteratureSearchResult["news"]) ?? [],
-      government: (src.government as LiteratureSearchResult["government"]) ?? [],
-      industry_reports: (src.industry_reports as LiteratureSearchResult["industry_reports"]) ?? [],
-      technical: (src.technical as LiteratureSearchResult["technical"]) ?? [],
-      web: (src.web as LiteratureSearchResult["web"]) ?? [],
-      facets: (src.facets as LiteratureSearchResult["facets"]) ?? [],
-      execution: src.execution as LiteratureSearchResult["execution"],
-      plan: src.plan as LiteratureSearchResult["plan"],
-    },
-  };
-}
-
 export function buildSeedFromToolResults(results: ToolResult[]): PanelToolSeed {
   const seed: PanelToolSeed = {};
   for (const r of results) {
     if (!r.ok) continue;
     const data = r.data ?? {};
-    if (r.panel_hint === "literature" || r.name === "search_references" || r.name === "search_sources" || r.name === "search_literature") {
-      const lit = literaturePayloadFromToolData(data);
-      if (lit) {
-        seed.literatureQuery = lit.query;
-        seed.literatureResult = lit.result;
-      }
+    if (r.panel_hint === "literature") {
+      seed.literatureQuery = String(data.query ?? "");
+      seed.literatureResult = {
+        papers: (data.papers as LiteratureSearchResult["papers"]) ?? [],
+        github: (data.github as LiteratureSearchResult["github"]) ?? [],
+        wiki: (data.wiki as LiteratureSearchResult["wiki"]) ?? [],
+        official_docs: (data.official_docs as LiteratureSearchResult["official_docs"]) ?? [],
+        refined_queries: (data.refined_queries as string[]) ?? [],
+        warnings: (data.warnings as string[]) ?? [],
+        items: (data.items as LiteratureSearchResult["items"]) ?? [],
+        profile: data.profile as string | undefined,
+        source_hint: data.source_hint as string | undefined,
+      };
     }
     if (r.panel_hint === "review" || r.name === "run_review") {
       seed.reviewRunResult = data;
