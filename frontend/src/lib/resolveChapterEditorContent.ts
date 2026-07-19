@@ -15,6 +15,10 @@ import { tiptapDocCollapsedButTextStructured } from "@/lib/reconcileTablesFromTe
 import { plainTextMarkdownToTiptapDoc, shouldParseAsMarkdown } from "@/lib/plainTextMarkdownToTiptap";
 import { repairFragmentedInlineMath } from "@/lib/repairInlineMath";
 import {
+  sanitizeChapterMarkdown,
+  sanitizeTiptapChapterDoc,
+} from "@/lib/sanitizeChapterMarkdown";
+import {
   dropSpuriousDashListLines,
   markdownHasReviewPidCorruption,
   repairEmptyPidListPairs,
@@ -25,7 +29,8 @@ import {
 export function prepareSourceMarkdown(text: string): string {
   const repaired = repairEmptyPidListPairs(text);
   const stripped = stripReviewPidComments(repaired);
-  return repairFragmentedInlineMath(normalizeGfmMarkdown(dropSpuriousDashListLines(stripped)));
+  const sanitized = sanitizeChapterMarkdown(stripped);
+  return repairFragmentedInlineMath(normalizeGfmMarkdown(dropSpuriousDashListLines(sanitized)));
 }
 
 /** 生成结束 / 从服务端载入时：优先保留 tiptap_json 结构，仅就地修补公式/表格。 */
@@ -34,11 +39,15 @@ export function resolveChapterEditorContent(
 ): Record<string, unknown> {
   const c = content ?? {};
   const rawText = typeof c.text === "string" ? c.text : "";
-  const text = rawText.trim() ? prepareSourceMarkdown(rawText) : rawText;
-  const tjObj =
+  const normalizedRawText = rawText.replace(/\r\n/g, "\n");
+  const sanitizedRawText = sanitizeChapterMarkdown(normalizedRawText);
+  const sourceWasSanitized = normalizedRawText !== sanitizedRawText;
+  const text = sanitizedRawText.trim() ? prepareSourceMarkdown(sanitizedRawText) : sanitizedRawText;
+  const rawTiptap =
     c.tiptap_json && typeof c.tiptap_json === "object"
       ? (c.tiptap_json as Record<string, unknown>)
       : null;
+  const tjObj = sanitizeTiptapChapterDoc(rawTiptap);
 
   const textHasAnnotations = text.trim() ? ANNOTATION_TEST_RE.test(text) : false;
   const annotationCount = textHasAnnotations ? countAnnotationsInMarkdown(text) : 0;
@@ -58,6 +67,13 @@ export function resolveChapterEditorContent(
 
   const needsFigureRebuild =
     textHasAnnotations && (!tjHasFigures || tjFigureCount < annotationCount);
+
+  if (sourceWasSanitized && text.trim()) {
+    const figBlocks = tjObj ? extractFigureBlocksFromDoc(tjObj) : [];
+    return migrateTiptapDoc(buildTiptapDocWithFigures(text, figBlocks), {
+      sourceText: text,
+    });
+  }
 
   if (
     tjObj &&

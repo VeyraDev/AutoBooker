@@ -23,6 +23,7 @@ from app.utils.json_llm import parse_llm_json
 logger = logging.getLogger(__name__)
 
 _SUGGEST_FIELDS = (
+    "title",
     "book_type",
     "style_type",
     "target_audience",
@@ -32,6 +33,15 @@ _SUGGEST_FIELDS = (
     "topic_tags",
     "citation_style",
 )
+
+
+def _is_placeholder_title(title: str | None) -> bool:
+    t = (title or "").strip()
+    if not t:
+        return True
+    if t in {"未命名", "未命名书稿", "新书稿", "untitled", "new book"}:
+        return True
+    return t.startswith("书稿") and t[2:].isdigit()
 
 
 def suggest_book_settings(
@@ -53,13 +63,15 @@ def suggest_book_settings(
     protected = protected_origins()
 
     wanted = [f for f in (fields_to_complete or list(_SUGGEST_FIELDS)) if f in _SUGGEST_FIELDS]
-    # Skip fields already protected unless empty
+    # Skip fields already protected unless empty (placeholder title counts as empty)
     effective: list[str] = []
     for field in wanted:
         meta = origins.get(field) if isinstance(origins.get(field), dict) else {}
         origin = str(meta.get("origin") or "")
         cur = current.get(field)
         empty = cur is None or cur == "" or cur == [] or cur == 0
+        if field == "title" and _is_placeholder_title(str(cur or "")):
+            empty = True
         if origin in protected and not empty:
             continue
         effective.append(field)
@@ -90,6 +102,7 @@ def suggest_book_settings(
     prompt = f"""根据证据推断书稿设定建议。只输出 JSON，不要编造无依据字段：
 {{
   "suggestions": {{
+    "title": "正式书名或 null",
     "book_type": "nonfiction|academic|null",
     "style_type": "popular_science|practical_guide|reference_tool|insight_opinion|textbook|technical_deep_dive|ai_review_commentary|null",
     "target_audience": "具体读者或 null",
@@ -109,6 +122,7 @@ def suggest_book_settings(
 - mode={mode}；仅对需要补齐的字段给出建议：{effective}
 - 证据不足时该字段放 unresolved_fields，suggestions 里用 null / []，禁止用泛化读者、默认字数、默认 APA 凑数
 - 当前占位分类 {current_bt}/{current_st} 不是结论；按证据重判
+- title：若当前书名是「书稿1」等占位名，必须根据证据给出正式书名（6-30字，像真实图书名）；已是正式书名则不要改
 - 不要覆盖已有明确设定：{ {k: current.get(k) for k in effective} }
 
 证据：
@@ -120,7 +134,10 @@ def suggest_book_settings(
             [
                 {
                     "role": "system",
-                    "content": "只输出 JSON。无充分依据不要填满设定，不要使用泛化默认值。",
+                    "content": (
+                        "只输出 JSON。无充分依据不要用泛化默认值填满设定。"
+                        "但若当前书名为占位名（如书稿1），必须给出正式 title，不得把 title 留空或放入 unresolved。"
+                    ),
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -142,6 +159,13 @@ def suggest_book_settings(
 
     suggestions: dict[str, Any] = {}
     decisions: list[dict[str, Any]] = []
+
+    if "title" in effective:
+        title = str(raw_sugg.get("title") or "").strip()
+        if title and not _is_placeholder_title(title):
+            suggestions["title"] = title[:500]
+        elif "title" not in unresolved and _is_placeholder_title(book.title):
+            unresolved.append("title")
 
     # Type / style pairing when present
     if "book_type" in effective or "style_type" in effective:
@@ -268,6 +292,12 @@ def apply_book_settings_suggestion(
 
     sugg = suggestion.get("suggestions") if isinstance(suggestion.get("suggestions"), dict) else suggestion
     applied: dict[str, Any] = {}
+
+    title = str(sugg.get("title") or "").strip()
+    if title and not _is_placeholder_title(title):
+        if fill_defaults or _is_placeholder_title(book.title) or not (book.title or "").strip():
+            book.title = title[:500]
+            applied["title"] = book.title
 
     bt = sugg.get("book_type")
     st = sugg.get("style_type")

@@ -76,7 +76,6 @@ def build_book_memory(
     if not topic_tags_line.strip():
         topic_tags_line = "（未选标签）"
     user_material = "（无）"
-    chapter_format_block = ""
     try:
         from app.services.writing.writing_context_builder import WritingContextBuilder
 
@@ -91,16 +90,18 @@ def build_book_memory(
             user_material = block[:6000]
         elif (book.user_material or "").strip():
             user_material = book.user_material[:4000]
-        chapter_format_block = wcb.chapter_format_block(book_id, chapter_index)
     except Exception:
-        chapter_format_block = ""
         if (book.user_material or "").strip():
             user_material = book.user_material[:4000]
 
     narrative_constitution = (book.narrative_constitution or "").strip()
+    style_value = getattr(getattr(book, "style_type", None), "value", None) or getattr(
+        book, "style_type", None
+    )
 
     return {
         "book_type": book.book_type.value,
+        "style_type": str(style_value) if style_value else "",
         "style_guide": style_anchor or "流畅自然，逻辑清晰",
         "citation_style": citation,
         "terms": terms,
@@ -112,7 +113,6 @@ def build_book_memory(
         "prev_chapter_hook": prev_chapter_hook,
         "topic_tags_line": topic_tags_line,
         "user_material": user_material,
-        "chapter_format_block": chapter_format_block,
     }
 
 

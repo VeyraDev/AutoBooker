@@ -345,6 +345,32 @@ def _user_for_book(book, user=None, db=None):
     return None
 
 
+# 各阶段固定模型（忽略用户偏好；前端已取消切换）。
+# 设定/助手/大纲/写作规则 → GPT-5.5；章节写作 → Claude Sonnet 4.6。
+_STAGE_MODEL_IDS: dict[str, str] = {
+    "outline": "gpt-5.5",
+    "constitution": "gpt-5.5",
+    "assistant": "gpt-5.5",
+    "writing": "claude-sonnet-4-6",
+}
+
+
+def stage_fixed_model(scene: str) -> str:
+    """按场景返回固定 provider:model；优先智灵网关。"""
+    model_id = _STAGE_MODEL_IDS.get(scene, "gpt-5.5")
+    if is_provider_configured("zeelin"):
+        zeelin = get_provider_spec("zeelin")
+        if zeelin and model_id in zeelin.models:
+            return format_ai_model("zeelin", model_id)
+    if model_id.startswith("gpt") and is_provider_configured("openai"):
+        return format_ai_model("openai", model_id)
+    if model_id.startswith("claude") and is_provider_configured("claude"):
+        claude = get_provider_spec("claude")
+        if claude and model_id in claude.models:
+            return format_ai_model("claude", model_id)
+    return default_ai_model()
+
+
 def resolve_book_outline_model(book, user=None, db=None) -> str:
     return resolve_user_scene_model(_user_for_book(book, user, db), "outline")
 
@@ -357,21 +383,9 @@ def resolve_book_writing_model(book, user=None, db=None) -> str:
     return resolve_user_scene_model(_user_for_book(book, user, db), "writing")
 
 
-def resolve_user_scene_model(user, scene: str) -> str:
-    """用户在某场景的模型；未设置时使用系统默认。"""
-    field_map = {
-        "outline": "outline_ai_model",
-        "constitution": "constitution_ai_model",
-        "writing": "writing_ai_model",
-        "assistant": "assistant_ai_model",
-    }
-    field = field_map.get(scene)
-    if not field or user is None:
-        return default_ai_model()
-    raw = (getattr(user, field, None) or "").strip()
-    if raw:
-        return normalize_ai_model(raw)
-    return default_ai_model()
+def resolve_user_scene_model(_user, scene: str) -> str:
+    """各阶段固定模型；_user 保留以兼容调用方，不再读取用户偏好。"""
+    return stage_fixed_model(scene)
 
 
 def resolve_assistant_model(user) -> str:

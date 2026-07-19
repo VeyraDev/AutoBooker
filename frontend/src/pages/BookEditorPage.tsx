@@ -6,7 +6,6 @@ import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { patchUserAiModels } from "@/api/auth";
 import ProjectAssistantPage from "@/features/assistant/components/ProjectAssistantPage";
 import { useIntake } from "@/features/intake/api/intakeApi";
 import { EXPORT_EXT, exportBook, fetchExportNotice, getBook, updateBook, duplicateBook, type ExportFormat } from "@/api/books";
@@ -45,15 +44,11 @@ import OutlineNavBody from "@/components/editor/OutlineNavBody";
 import type { OutlineSelection } from "@/components/editor/OutlineNavBody";
 import PlanningWizard from "@/components/editor/PlanningWizard";
 import RightPanel, { AuxPanelFab, type RightPanelTab } from "@/components/editor/RightPanel";
-import GlobalAssistantDock from "@/features/assistant/GlobalAssistantDock";
-import type { PanelToolSeed } from "@/features/assistant/toolDispatch";
 import { getChapterGenMode, setChapterGenMode, type ChapterGenMode } from "@/lib/chapterGenMode";
 import { chapterStreamPrimaryIntent } from "@/lib/chapterStreamPrimaryIntent";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { isCitationInsufficientError, useChapterStream } from "@/hooks/useChapterStream";
-import { useLlmModels } from "@/hooks/useLlmModels";
 import { useDailyWordDelta } from "@/hooks/useDailyWordDelta";
-import { resolveUserSceneModel } from "@/lib/bookAiModels";
 import { phaseOf, type Phase } from "@/lib/bookStatus";
 import {
   consumePendingAutoWrite,
@@ -62,7 +57,6 @@ import {
 } from "@/lib/autoBookWrite";
 import { autoBookProgressPath } from "@/lib/bookRoutes";
 import { shouldEnterEditor } from "@/lib/autoBookProgress";
-import { useAuthStore } from "@/stores/authStore";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import type { Chapter } from "@/types/chapter";
 import { isChapterBodyEffectivelyEmpty } from "@/lib/chapterBodyEmpty";
@@ -224,8 +218,6 @@ export default function BookEditorPage() {
   const [editorSelectionText, setEditorSelectionText] = useState("");
   const [editorChapterContext, setEditorChapterContext] = useState("");
   const [enteringReviewStage, setEnteringReviewStage] = useState(false);
-  const [panelToolSeed, setPanelToolSeed] = useState<PanelToolSeed>({});
-  const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
   /** 大纲页点「返回书稿设定」时强制回到启动助手，而不是旧 SetupView */
   const [forceAssistantSettings, setForceAssistantSettings] = useState(false);
 
@@ -248,9 +240,6 @@ export default function BookEditorPage() {
   const { start: startStream } = useChapterStream();
   const { status: saveStatus, savedAt, scheduleSave } = useAutoSave();
   const { recordChars } = useDailyWordDelta(bookId);
-  const authUser = useAuthStore((s) => s.user);
-  const setAuthUser = useAuthStore((s) => s.setUser);
-
   const autoWriteStartedRef = useRef(false);
   const [autoWriteRequested, setAutoWriteRequested] = useState(() =>
     Boolean(bookId && peekPendingAutoWrite(bookId)),
@@ -289,8 +278,6 @@ export default function BookEditorPage() {
     queryFn: () => getOutline(bookId!),
     enabled: !!bookId,
   });
-
-  const llmModelsQuery = useLlmModels();
 
   const prefaceQuery = useQuery({
     queryKey: ["preface", bookId],
@@ -921,19 +908,6 @@ export default function BookEditorPage() {
     },
   });
 
-  const modelMutation = useMutation({
-    mutationFn: (writing_ai_model: string) => patchUserAiModels({ writing_ai_model }),
-    onSuccess: (u) => setAuthUser(u),
-  });
-
-  const assistantModelMutation = useMutation({
-    mutationFn: (assistant_ai_model: string) => patchUserAiModels({ assistant_ai_model }),
-    onSuccess: (u) => setAuthUser(u),
-  });
-
-  const writingModel = resolveUserSceneModel("writing", authUser?.ai_models, llmModelsQuery.data);
-  const assistantModel = resolveUserSceneModel("assistant", authUser?.ai_models, llmModelsQuery.data);
-
   function toastAxiosDetail(e: unknown, fallback: string): string {
     const ax = axios.isAxiosError(e) ? e : null;
     const raw = ax?.response?.data;
@@ -1545,11 +1519,7 @@ export default function BookEditorPage() {
             title={book.title}
             currentWords={currentWords}
             targetWords={targetWords}
-            aiModel={writingModel}
-            llmCatalog={llmModelsQuery.data}
-            llmCatalogLoading={llmModelsQuery.isLoading}
             onTitleSave={(t) => titleMutation.mutate(t)}
-            onModelChange={(m) => modelMutation.mutate(m)}
             autoSaveStatus={saveStatus}
             savedAt={savedAt}
             onBack={() => navigate("/app/books")}
@@ -1929,10 +1899,6 @@ export default function BookEditorPage() {
                     activeChapter={selectedMeta}
                     autoSaveStatus={saveStatus}
                     savedAt={savedAt}
-                    aiModel={assistantModel}
-                    llmCatalog={llmModelsQuery.data}
-                    llmCatalogLoading={llmModelsQuery.isLoading}
-                    onModelChange={(m) => assistantModelMutation.mutate(m)}
                     activeTab={panelTab}
                     onTabChange={setPanelTab}
                     assistantSeed={assistantSeed}
@@ -1971,15 +1937,6 @@ export default function BookEditorPage() {
                     chapterIndex={chapterIndex}
                     editorSelectionText={editorSelectionText}
                     chapterContext={editorChapterContext}
-                    onApplyReviewFix={(quote, suggestion) => {
-                      const ok = editorRef.current?.replaceQuoteWithSuggestion(quote, suggestion);
-                      if (ok) {
-                        toast.success("已应用修改建议");
-                        editorRef.current?.focusEditor();
-                      } else {
-                        toast.error("未在正文中定位到对应片段，请手动修改");
-                      }
-                    }}
                     onAiPreviewReady={(payload) => {
                       const ok = editorRef.current?.showAiPreview(payload);
                       if (!ok) {
@@ -1988,10 +1945,6 @@ export default function BookEditorPage() {
                       }
                       editorRef.current?.focusEditor();
                       return true;
-                    }}
-                    onChapterMarkdownReplace={(markdown) => {
-                      editorRef.current?.applyServerContent({ text: markdown });
-                      editorRef.current?.focusEditor();
                     }}
                     quotedFigureId={quotedFigureId}
                     quotedFigureAnnotation={quotedFigureAnnotation}
@@ -2054,8 +2007,6 @@ export default function BookEditorPage() {
                       }
                       editorRef.current?.focusEditor();
                     }}
-                    panelToolSeed={panelToolSeed}
-                    memoryRefreshKey={memoryRefreshKey}
                   />
                 </div>
               ) : null}
@@ -2065,19 +2016,6 @@ export default function BookEditorPage() {
         (selection.type === "chapter" ||
           selection.type === "section" ||
           selection.type === "preface") ? (
-          <>
-          <GlobalAssistantDock
-            bookId={bookId}
-            chapterIndex={chapterIndex}
-            onPanelTab={setPanelTab}
-            onOpenPanel={() => setPanelCollapsed(false)}
-            onPanelSeed={(seed) => {
-              setPanelToolSeed((prev) => (typeof seed === "function" ? seed(prev) : { ...prev, ...seed }));
-              if (typeof seed !== "function" && seed.memoryRefresh) {
-                setMemoryRefreshKey((k) => k + 1);
-              }
-            }}
-          />
           <footer className="editor-global-footer">
             <div className="editor-global-footer-inner">
               <span>
@@ -2094,7 +2032,6 @@ export default function BookEditorPage() {
               </span>
             </div>
           </footer>
-          </>
         ) : null}
 
         <AddChapterDialog open={addOpen} onClose={() => setAddOpen(false)} onSubmit={handleAddChapterSubmit} />

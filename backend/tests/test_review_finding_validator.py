@@ -10,6 +10,7 @@ import pytest
 from app.services.review.review_finding_validator import (
     check_locatable,
     classify_product_dimension,
+    route_finding_fix,
     severity_to_tier,
     validate_finding,
 )
@@ -78,6 +79,42 @@ def test_data_evidence_defaults_to_needs_verification():
     assert out["title"] == "具体比例缺少可核验来源"
     assert out.get("action_options")
     assert out.get("why_it_matters") in ("", None) or out.get("why_it_matters") != out.get("detail")
+
+
+def test_fix_router_adds_actions_after_detection_without_replacement():
+    routed = route_finding_fix(
+        {
+            "dimension": "ai_signature",
+            "issue_type": "generic_summary",
+            "severity": "medium",
+            "quote": "综上所述，这既是机遇也是挑战。",
+        }
+    )
+
+    assert routed["fix_capability"] == "preview_apply"
+    assert routed["action_type"] == "revise"
+    assert routed["replacement_text"] == ""
+    assert routed["action_options"][0]["id"] == "preview_fix"
+
+
+def test_fix_router_keeps_evidence_issue_as_choice_not_auto_rewrite():
+    routed = route_finding_fix(
+        {
+            "dimension": "citation_sources",
+            "issue_type": "missing_citation",
+            "severity": "needs_verification",
+            "quote": "数据显示增长了60%。",
+        }
+    )
+
+    assert routed["fix_capability"] == "choice_then_apply"
+    assert routed["action_type"] == "choose"
+    assert routed["replacement_text"] == ""
+    assert {option["id"] for option in routed["action_options"]} == {
+        "add_source",
+        "mark_estimate",
+        "remove_number",
+    }
 
 
 def test_why_it_matters_not_copied_from_detail():

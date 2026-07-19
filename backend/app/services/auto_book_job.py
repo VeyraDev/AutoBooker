@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from uuid import UUID
 
-from app.agents.literature_agent import LiteratureAgent
 from app.agents.outline_agent import OutlineAgent
 from app.database import SessionLocal
 from app.llm.providers import (
     resolve_book_constitution_model,
     resolve_book_outline_model,
-    resolve_book_writing_model,
 )
 from app.models.book import Book, BookStatus
 from app.models.book_job import BookJob, BookJobStatus, BookJobStep
@@ -21,13 +20,32 @@ from app.models.chapter import Chapter, ChapterStatus
 from app.models.notification import Notification, NotificationType
 from app.models.user import User
 from app.routers.chapters import _ensure_narrative_constitution_thread
+from app.schemas.source_search import SourceSearchIn
 from app.services.auto_book_job_progress import patch_job_checkpoint
 from app.services.citation_service import create_citation_from_paper
-from app.services.literature_query_refiner import refine_literature_query
 from app.services.preface_service import get_preface, set_preface
+from app.services.source_search.service import UnifiedSourceSearchService
 from app.services.writing.project_seed import infer_and_apply_book_settings
 
 logger = logging.getLogger(__name__)
+
+_AUTO_CITATION_SOURCE_TYPES = frozenset({"paper", "book", "industry_report"})
+
+_PLACEHOLDER_TITLE_RE = re.compile(
+    r"^(?:书稿|新书|未命名(?:书稿|图书)?|无标题)(?:\s*\d+)?$",
+    re.IGNORECASE,
+)
+
+
+def _is_placeholder_title(title: str | None) -> bool:
+    t = (title or "").strip()
+    if not t:
+        return True
+    if t in {"未命名", "未命名书稿", "新书稿", "untitled", "new book"}:
+        return True
+    if t.startswith("书稿") and t[2:].isdigit():
+        return True
+    return bool(_PLACEHOLDER_TITLE_RE.match(t))
 
 
 def _update_job(
@@ -67,11 +85,53 @@ def _notify(db, user_id: UUID, title: str, body: str, payload: dict | None = Non
 
 
 def _maybe_apply_outline_title(book: Book, outline: dict) -> None:
-    if not book.allow_title_optimization:
-        return
+    """占位书名或允许优化时，采用大纲建议书名。"""
     new_title = (outline.get("title") or "").strip()
-    if new_title:
+    if not new_title or _is_placeholder_title(new_title):
+        return
+    if book.allow_title_optimization or _is_placeholder_title(book.title):
         book.title = new_title[:500]
+
+
+def _record_resolved_title(book: Book) -> None:
+    settings = dict(book.ai_inferred_settings) if isinstance(book.ai_inferred_settings, dict) else {}
+    settings["title"] = book.title
+    book.ai_inferred_settings = settings
+
+
+def _search_item_to_paper(item: dict) -> dict:
+    """Map unified source-search item to citation paper dict."""
+    return {
+        "title": item.get("title") or "",
+        "year": item.get("year"),
+        "authors": list(item.get("authors") or []),
+        "journal": item.get("journal") or "",
+        "doi": item.get("doi") or "",
+        "source": item.get("provider") or item.get("source_type") or "",
+        "external_id": item.get("external_id") or "",
+        "url": item.get("url") or "",
+        "document_type": item.get("document_type") or item.get("source_type") or "",
+        "publisher": item.get("publisher") or "",
+        "abstract_preview": (item.get("snippet") or "")[:800] or None,
+        "quotable_snippet": (item.get("snippet") or "")[:500] or None,
+    }
+
+
+def _search_auto_book_sources(db, book: Book, query: str, *, rows: int = 15) -> dict:
+    """Run the same intent-aware source search used by the Sources API."""
+    response = UnifiedSourceSearchService().search(
+        SourceSearchIn(query=query, rows=rows, scope="book"),
+        book=book,
+    )
+    result = response.model_dump(mode="json")
+    book.last_literature_query = {
+        "query": response.query,
+        "intent": response.plan.intent.model_dump(),
+        "requested_source_types": response.plan.requested_source_types,
+        "execution": response.execution.model_dump(),
+    }
+    db.flush()
+    return result
 
 
 def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
@@ -99,25 +159,40 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
         db.commit()
         outline_model = resolve_book_outline_model(book, user)
         constitution_model = resolve_book_constitution_model(book, user)
-        writing_model = resolve_book_writing_model(book, user)
 
         _update_job(db, job, step=BookJobStep.setting, pct=10)
         patch_job_checkpoint(db, job, stage_message="正在推断书稿设定")
-        project_seed = infer_and_apply_book_settings(book, writing_model, db)
+        # 设定补齐与大纲同用 GPT-5.5 场景模型；章节写作由前端 SSE 调用
+        project_seed = infer_and_apply_book_settings(book, outline_model, db)
+        if _is_placeholder_title(book.title):
+            raise ValueError("未能根据建书意图生成正式书名")
+        _record_resolved_title(book)
         db.commit()
 
         _update_job(db, job, step=BookJobStep.literature, pct=25)
-        patch_job_checkpoint(db, job, stage_message="正在规划参考文献")
-        refined = refine_literature_query(db, book, raw_query=project_seed)
-        queries = refined.get("refined_queries") or [project_seed[:200]]
-        agent = LiteratureAgent()
-        profile = book.style_type or "popular_science"
-        tabbed = agent.search_tabbed(queries, profile, rows=15, raw_query=project_seed[:500])
-        for paper in (tabbed.get("papers") or [])[:8]:
-            try:
-                create_citation_from_paper(db, book, paper)
-            except Exception:
-                pass
+        patch_job_checkpoint(db, job, stage_message="正在检索相关资料")
+        search_query = project_seed[:500]
+        searched_items: list[dict] = []
+        try:
+            result = _search_auto_book_sources(db, book, search_query, rows=15)
+            searched_items = [
+                item
+                for item in (result.get("items") or [])
+                if isinstance(item, dict) and item.get("title")
+            ]
+            citation_items = [
+                item
+                for item in searched_items
+                if item.get("citeability")
+                and item.get("source_type") in _AUTO_CITATION_SOURCE_TYPES
+            ]
+            for item in citation_items[:8]:
+                try:
+                    create_citation_from_paper(db, book, _search_item_to_paper(item))
+                except Exception:
+                    pass
+        except Exception:
+            logger.exception("auto book literature search failed job=%s", job_id)
         db.commit()
 
         _update_job(db, job, step=BookJobStep.outline, pct=45)
@@ -138,6 +213,15 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
             for item in source_items
             if item.get("content")
         ]
+        for item in searched_items[:10]:
+            snippet = str(item.get("snippet") or "").strip()
+            if not snippet:
+                continue
+            source_label = item.get("publisher") or item.get("provider") or item.get("domain") or "公开资料"
+            snippets.append(
+                f"来源：{item.get('title')}｜发布方：{source_label}｜原文：{item.get('url') or '—'}\n"
+                f"{snippet[:1200]}"
+            )
         from app.services.material_parse_service import get_book_level_writing_rules, get_primary_outline_for_book
         from app.services.sources.source_outline_bridge import (
             materials_from_outline_contract,
@@ -184,9 +268,6 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
                 "sections": ch.get("sections", []),
                 "estimated_words": ch.get("estimated_words", 3000),
             }
-            labels = ch.get("column_labels")
-            if isinstance(labels, list) and labels:
-                meta["column_labels"] = [str(x).strip() for x in labels if str(x).strip()][:8]
             db.add(
                 Chapter(
                     book_id=book.id,
@@ -199,6 +280,24 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
                 )
             )
         _maybe_apply_outline_title(book, outline)
+        # 大纲后仍占位则再用主题强制补书名
+        if _is_placeholder_title(book.title):
+            from app.services.writing.project_seed import ensure_book_title
+
+            ensure_book_title(
+                book,
+                (outline.get("title") or book.topic_brief or project_seed or ""),
+                model=outline_model,
+            )
+        if _is_placeholder_title(book.title):
+            raise ValueError("大纲生成后仍未得到正式书名")
+        _record_resolved_title(book)
+        logger.info(
+            "auto_book title after outline job=%s title=%s outline_title=%s",
+            job_id,
+            book.title,
+            (outline.get("title") or "")[:80],
+        )
         pf = get_preface(book)
         preface_brief = (outline.get("preface_brief") or "").strip()
         if preface_brief:
@@ -206,12 +305,6 @@ def run_auto_book_job(job_id: UUID, *, worker_id: str | None = None) -> None:
             pf["status"] = "ready"
             set_preface(book, pf)
         n_chapters = len(outline.get("chapters") or [])
-        try:
-            from app.services.writing.format_strategy_service import FormatStrategyService
-
-            FormatStrategyService(db).apply_after_outline(book, force=True)
-        except Exception:
-            logger.exception("format strategy apply_after_outline failed job=%s", job_id)
         patch_job_checkpoint(
             db,
             job,

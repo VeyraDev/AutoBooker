@@ -23,7 +23,9 @@ _ACADEMIC_STYLES = frozenset(
 )
 _DEFAULT_WORDS = {BookType.nonfiction: 80_000, BookType.academic: 200_000}
 
-_PLACEHOLDER_TITLES = frozenset({"书稿1", "未命名书稿", "untitled", "new book"})
+_PLACEHOLDER_TITLES = frozenset(
+    {"未命名", "未命名书稿", "新书稿", "untitled", "new book"}
+)
 
 
 def _normalize_disciplines(items: object) -> list[str]:
@@ -99,7 +101,7 @@ def resolve_project_seed(book: Book, db: Session | None = None) -> str:
         parts.append(material[:2000])
 
     title = (book.title or "").strip()
-    if title and title.lower() not in {t.lower() for t in _PLACEHOLDER_TITLES}:
+    if title and not _is_placeholder_book_title(title):
         if title not in parts:
             parts.append(title)
 
@@ -218,6 +220,79 @@ def infer_book_settings(book: Book, model: str, db: Session | None = None) -> di
     return suggest_book_settings(db, book, model=model, mode="intake")
 
 
+def _is_placeholder_book_title(title: str | None) -> bool:
+    t = (title or "").strip()
+    if not t:
+        return True
+    if t in _PLACEHOLDER_TITLES or t in {"未命名", "未命名书稿", "新书稿"}:
+        return True
+    return t.startswith("书稿") and t[2:].isdigit()
+
+
+def _heuristic_title_from_seed(seed: str) -> str:
+    candidates = [
+        line.strip()
+        for line in (seed or "").splitlines()
+        if line.strip() and not _is_placeholder_book_title(line)
+    ]
+    text = candidates[0] if candidates else ""
+    if not text:
+        return ""
+    for sep in ("。", "！", "？", "；", "，", ",", ".", "!", "?"):
+        if sep in text:
+            text = text.split(sep, 1)[0].strip()
+            break
+    text = text.strip("《》\"'“”‘’ \t")
+    # Drop leading boilerplate
+    for prefix in ("我想写一本", "写一本", "一本关于", "关于"):
+        if text.startswith(prefix):
+            text = text[len(prefix) :].strip()
+    if len(text) < 4:
+        return ""
+    return text[:24]
+
+
+def ensure_book_title(book: Book, seed: str, *, model: str) -> str | None:
+    """If title is still a placeholder, force a real title from seed (+ optional LLM)."""
+    if not _is_placeholder_book_title(book.title):
+        return None
+    title = ""
+    try:
+        from app.llm.client import LLMClient
+
+        out = LLMClient().chat_completion(
+            [
+                {
+                    "role": "system",
+                    "content": "你是图书编辑。只输出一个正式中文书名（6-24字），不要引号、不要解释、不要副标题冒号对仗。",
+                },
+                {
+                    "role": "user",
+                    "content": f"根据创作意图拟定书名：\n{(seed or '')[:1200]}",
+                },
+            ],
+            model=model,
+            max_tokens=64,
+            temperature=0.3,
+            disable_thinking=True,
+        )
+        title = (out or "").strip().splitlines()[0].strip("《》\"'“”‘’ \t")
+        if "：" in title or ":" in title:
+            title = title.replace("：", " ").replace(":", " ").strip()
+        if _is_placeholder_book_title(title) or len(title) < 4 or len(title) > 40:
+            title = ""
+    except Exception:
+        logger.exception("ensure_book_title LLM failed book=%s", getattr(book, "id", None))
+        title = ""
+    if not title:
+        title = _heuristic_title_from_seed(seed)
+    if title and not _is_placeholder_book_title(title):
+        book.title = title[:500]
+        logger.info("ensure_book_title applied book=%s title=%s", getattr(book, "id", None), book.title)
+        return book.title
+    return None
+
+
 def infer_and_apply_book_settings(book: Book, model: str, db: Session | None = None) -> str:
     """Compat wrapper for one-click / intake: suggest then apply (with legacy defaults).
 
@@ -229,6 +304,8 @@ def infer_and_apply_book_settings(book: Book, model: str, db: Session | None = N
     )
 
     seed = resolve_project_seed(book, db)
+    if seed and not (book.topic_brief or "").strip():
+        book.topic_brief = seed[:3000]
     suggestion = suggest_book_settings(db, book, model=model, mode="intake")
     # Legacy intake paths still fill defaults when fields unresolved
     apply_book_settings_suggestion(book, suggestion, fill_defaults=True)
@@ -243,6 +320,9 @@ def infer_and_apply_book_settings(book: Book, model: str, db: Session | None = N
         book.style_type = st
         mark_classification_source(book, "inferred")
 
+    # 占位书名必须补齐：建议未返回时再强制生成
+    ensure_book_title(book, seed, model=model)
+
     candidates = suggestion.get("discipline_candidates") or []
     if not candidates:
         candidates = _normalize_discipline_candidates([], list(book.disciplines or []))
@@ -256,6 +336,7 @@ def infer_and_apply_book_settings(book: Book, model: str, db: Session | None = N
     prev.update(
         {
             "topic_brief": (book.topic_brief or "")[:3000],
+            "title": book.title,
             "book_type": book.book_type.value if book.book_type else None,
             "style_type": book.style_type,
             "target_words": book.target_words,

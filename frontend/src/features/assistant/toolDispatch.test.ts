@@ -5,8 +5,8 @@ import { buildSeedFromToolResults, panelHintToTab } from "@/features/assistant/t
 describe("toolDispatch", () => {
   it("maps literature hint to tab", () => {
     expect(panelHintToTab("literature")).toBe("literature");
-    expect(panelHintToTab("review")).toBe("review");
-    expect(panelHintToTab("memory")).toBe("memory");
+    expect(panelHintToTab("review")).toBeNull();
+    expect(panelHintToTab("memory")).toBeNull();
   });
 
   it("builds literature seed from tool results", () => {

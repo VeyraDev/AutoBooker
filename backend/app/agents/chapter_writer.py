@@ -45,7 +45,6 @@ class ChapterWriterAgent:
         cites = citation_blocks or []
         policy = book_memory.get("citation_policy") or ""
         sections = chapter.get("sections") or []
-        chapter_format_block = str(book_memory.get("chapter_format_block") or "").strip()
         system = build_writer_system_prompt(
             outline_sections=sections if isinstance(sections, list) else [],
             book_type=book_memory["book_type"],
@@ -63,7 +62,6 @@ class ChapterWriterAgent:
             term_glossary=str(book_memory.get("terms", {})),
             target_words=chapter.get("estimated_words", 3000),
             citation_policy=policy,
-            chapter_format_block=chapter_format_block,
         )
         user_msg = self._build_user_message(chapter, reference_snippets, cites)
         temp = temperature if temperature is not None else float(book_memory.get("writer_temperature", 0.75))

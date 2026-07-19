@@ -23,6 +23,24 @@ class FakeDetector:
         return AiDetectResult(overall_score=score, provider="fake", segments=[], body_hash="hash")
 
 
+class RoutedRewriteClient:
+    def __init__(self, rewritten: str, *, safety: dict | None = None) -> None:
+        self.rewritten = rewritten
+        self.safety = safety or {"safe": True, "semantic_change": False, "reason": "通过"}
+        self.calls: list[list[dict[str, str]]] = []
+
+    def chat_completion(self, messages, **_kwargs) -> str:
+        import json
+
+        self.calls.append(messages)
+        system = messages[0]["content"]
+        if "事实抽取器" in system:
+            return '{"facts": []}'
+        if "局部改写安全校验器" in system:
+            return json.dumps(self.safety, ensure_ascii=False)
+        return self.rewritten
+
+
 def test_dedupe_service_preserves_protected_tokens_and_reports_risk_drop(monkeypatch):
     monkeypatch.setattr("app.services.dedupe_service.get_ai_detect_provider", lambda: FakeDetector())
     original = "模板化表达：2024年，系统在图1-1中达到87%，参考文献[3]说明了API Gateway。"
@@ -54,6 +72,43 @@ def test_dedupe_service_fails_when_protected_tokens_change(monkeypatch):
 
     assert result.report["status"] == "failed"
     assert result.report["protected_tokens_changed"]
+
+
+def test_dedupe_uses_on_demand_rewrite_prompt_and_one_style_patch(monkeypatch):
+    monkeypatch.setattr("app.services.dedupe_service.get_ai_detect_provider", lambda: FakeDetector())
+    original = "模板化表达需要通过更具体的论证来压实。"
+    rewritten = "这段论证需要补出具体条件，才能形成有效判断。"
+    client = RoutedRewriteClient(rewritten)
+
+    result = DedupeService().dedupe_text(
+        original,
+        client=client,
+        chat_model="fake",
+        style_profile="biography",
+        finding_instruction="删除空泛总结，保留人物叙事语气",
+    )
+
+    rewrite_system = next(call[0]["content"] for call in client.calls if "局部改写器" in call[0]["content"])
+    assert result.text == rewritten
+    assert "人物传记补丁" in rewrite_system
+    assert "学术专著补丁" not in rewrite_system
+    assert "删除空泛总结" in next(call[1]["content"] for call in client.calls if "局部改写器" in call[0]["content"])
+
+
+def test_dedupe_calls_safety_prompt_only_for_ambiguous_semantic_change(monkeypatch):
+    monkeypatch.setattr("app.services.dedupe_service.get_ai_detect_provider", lambda: FakeDetector())
+    original = "模板化表达需要说明原有约束与适用范围。"
+    client = RoutedRewriteClient(
+        "结论完全改变。",
+        safety={"safe": False, "semantic_change": True, "reason": "论证边界丢失"},
+    )
+
+    result = DedupeService().dedupe_text(original, client=client, chat_model="fake")
+
+    assert any("局部改写安全校验器" in call[0]["content"] for call in client.calls)
+    assert result.text == original
+    assert result.report["status"] == "failed"
+    assert result.report["llm_safety"]["safe"] is False
 
 
 def test_figure_lint_surfaces_generation_quality_report():

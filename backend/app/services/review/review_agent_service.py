@@ -13,7 +13,6 @@ from app.models.chapter import Chapter
 from app.models.review_stage import BookReviewStageRun, ReviewStageStatus, ReviewTrack
 from app.models.review_task import ReviewTask, ReviewTaskGoal, ReviewTaskScope, ReviewTaskStatus
 from app.services.citation_service import is_bibliography_chapter
-from app.services.review.format_column_reviewer import run_format_column_review
 from app.services.review.objective_checks import run_objective_checks
 from app.services.review.quality_reviewers import run_book_quality_review
 from app.services.review.review_finding_validator import classify_product_dimension, enrich_finding_metadata
@@ -58,10 +57,6 @@ class ReviewAgentService:
             "public_rules": True,
             "editorial_principles": True,
             "user_writing_basis": bool(snap.get("must_avoid") or snap.get("must_keep")),
-            "format_strategy": bool(
-                isinstance(snap.get("format_strategy"), dict)
-                and snap.get("format_strategy", {}).get("status") == "confirmed"
-            ),
         }
         summary = self._render_summary_text(
             scope=scope,
@@ -171,19 +166,6 @@ class ReviewAgentService:
             context_snapshot=snap,
         )
 
-        format_findings = run_format_column_review(chapters, snap)
-        for f in format_findings:
-            enrich_finding_metadata(f, snap)
-        if format_findings:
-            self.findings.persist_batch(
-                run_id=run.id,
-                book_id=book.id,
-                track=ReviewTrack.publication_standard,
-                items=format_findings,
-                source_ref=context_ref,
-                context_snapshot=snap,
-            )
-
         quality_findings = run_book_quality_review(book, chapters, snap)
         if quality_findings:
             writing_quality_items = [
@@ -289,8 +271,6 @@ class ReviewAgentService:
         if adopted.get("user_writing_basis"):
             for item in (snap.get("must_avoid") or [])[:3]:
                 lines.append(f"- 用户要求（避免）：{str(item)[:80]}")
-        if adopted.get("format_strategy"):
-            lines.append("- 全书体例与栏目策略")
         lines.append("")
         lines.append("本次排除：")
         lines.append("- 不把图题/表题标为 AI 味")

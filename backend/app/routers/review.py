@@ -210,8 +210,29 @@ def preview_review_issue(
             preview = layout_preview
             preview_kind = "replace"
             apply_type = str(layout_preview.get("apply_type") or "full_chapter_replace")
+        elif _is_ai_signature_issue(issue):
+            source_text, replacement, report = _dedupe_replacement_for_issue(book, issue, current_md)
+            preview = preview_issue_application(
+                current_markdown=current_md,
+                issue_snapshot_hash=issue.snapshot_hash,
+                quote=source_text,
+                action_type="revise",
+                replacement_text=replacement,
+                paragraph_id=issue.paragraph_id,
+                paragraph_index=issue.paragraph_index,
+                char_start=issue.char_start,
+                char_end=issue.char_end,
+            )
+            preview["warning"] = {"dedupe_report": _compact_dedupe_report(report)}
+            preview_kind = "replace"
+            apply_type = "dedupe"
         else:
-            replacement, preview_kind = _replacement_for_issue(book, issue, current_md)
+            replacement, preview_kind = _replacement_for_issue(
+                book,
+                issue,
+                current_md,
+                chat_model=_chat_model_for_book(book, user, db),
+            )
             preview = preview_issue_application(
                 current_markdown=current_md,
                 issue_snapshot_hash=issue.snapshot_hash,
@@ -499,33 +520,29 @@ def ai_inline_preview(
     original = body.selection.text.strip()
     if len(original) > 500:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "选区改写不能超过 500 字")
-    client = LLMClient()
-    out = client.chat_completion(
-        [
-            {"role": "system", "content": "你是专业中文编辑。只输出改写后的正文，不要解释。"},
-            {
-                "role": "user",
-                "content": (
-                    f"改写要求：{body.instruction.strip() or '使表达更清晰、自然。'}\n\n"
-                    f"上文：{body.context_before[:2000]}\n\n"
-                    f"待改写：{original}\n\n"
-                    f"下文：{body.context_after[:2000]}"
-                ),
-            },
-        ],
-        model=_chat_model_for_book(book, user, db),
-        max_tokens=1600,
-        temperature=0.45,
-    ).strip()
+    result = DedupeService().dedupe_text(
+        original,
+        client=LLMClient(),
+        chat_model=_chat_model_for_book(book, user, db),
+        context=f"上文：{body.context_before[:2000]}\n\n下文：{body.context_after[:2000]}",
+        style_profile=_review_style_profile(book),
+        finding_instruction=body.instruction.strip() or "使表达更清晰、自然。",
+    )
+    out = result.text.strip()
+    report = result.report
     return AiInlinePreviewOut(
         preview_id=str(uuid.uuid4()),
         original_text=original,
         rewritten_text=out,
         diff={"before": original, "after": out},
         validation={
+            "status": report.get("status"),
             "length_ok": len(original) <= 500,
-            "meaning_preserved": True,
-            "style_consistent": True,
+            "meaning_preserved": bool(report.get("meaning_preserved")),
+            "structure_preserved": bool(report.get("structure_preserved")),
+            "protected_tokens_changed": report.get("protected_tokens_changed") or [],
+            "facts_missing": report.get("facts_missing") or [],
+            "warnings": report.get("warnings") or [],
         },
     )
 
@@ -679,8 +696,6 @@ def _create_review_report(
 
     snap = stage_context["snapshot"]
     user_material = stage_context["prompt_block"][:10000] or book.user_material or ""
-    if review_context_block:
-        user_material = f"{user_material}\n\n{review_context_block}".strip()
 
     agent = ReviewAgent(model=_chat_model_for_book(book, user, db))
     result = agent.review_chapter(
@@ -688,8 +703,10 @@ def _create_review_report(
         body=canonical,
         book_title=book.title or "",
         book_type=book.book_type.value,
+        review_profile=book.style_type or book.book_type.value,
         citation_style=book.citation_style.value if book.citation_style else "无",
         user_material=user_material,
+        review_instruction=review_context_block or "",
         narrative_constitution=(book.narrative_constitution or ""),
         approved_citations=cite_lines,
         figure_summaries=figure_lines,
@@ -1140,14 +1157,20 @@ def _layout_preview_for_issue(
     return None
 
 
-def _replacement_for_issue(book, issue: ChapterReviewIssue, current_md: str) -> tuple[str, str]:
+def _replacement_for_issue(
+    book,
+    issue: ChapterReviewIssue,
+    current_md: str,
+    *,
+    chat_model: str,
+) -> tuple[str, str]:
     if issue.action == "delete":
         return "", "delete"
     if issue.action == "replace" and (issue.replacement_text or "").strip():
         return issue.replacement_text.strip(), "replace"
     result_text, preview_kind = apply_review_issue_text(
         book=book,
-        chat_model=_chat_model_for_book(book, user, db),
+        chat_model=chat_model,
         action_type=issue.action,
         quote=issue.quote or "",
         suggestion=issue.replacement_text or "",
@@ -1196,6 +1219,8 @@ def _dedupe_replacement_for_issue(
         client=LLMClient(),
         chat_model=_chat_model_for_book(book, user, db),
         context=_dedupe_context(current_md, source_text),
+        style_profile=_review_style_profile(book),
+        finding_instruction=issue.explanation or issue.title or "压实机器化表达",
     )
     replacement = (result.text or "").strip()
     if not replacement:
@@ -1217,6 +1242,18 @@ def _compact_dedupe_report(report: dict[str, Any]) -> dict[str, Any]:
         "protected_tokens_changed",
     )
     return {k: report.get(k) for k in keys if k in report}
+
+
+def _review_style_profile(book) -> str:
+    style = getattr(book, "style_type", None)
+    if hasattr(style, "value"):
+        style = style.value
+    if style:
+        return str(style)
+    book_type = getattr(book, "book_type", None)
+    if hasattr(book_type, "value"):
+        book_type = book_type.value
+    return str(book_type or "default")
 
 
 def _review_or_404(db: Session, review_id: UUID) -> ChapterReview:

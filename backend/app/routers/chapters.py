@@ -719,6 +719,8 @@ def edit_selection(
             client=client,
             chat_model=chat_model,
             context=body.context or "",
+            style_profile=book.style_type or book.book_type.value,
+            finding_instruction=(body.instruction or "").strip() or "压实机器化表达，保留原意和有效信息",
         )
         return SelectionEditOut(text=result.text, report=result.report)
 
@@ -774,53 +776,6 @@ def edit_selection(
     return SelectionEditOut(text=out.strip())
 
 
-_DEDUPE_PROMPT = (
-    "请对以下文字做「降重」改写：在完整保留原意、事实与专业术语的前提下，"
-    "调整句式与用词，降低与常见表述的雷同度，使表达更原创。"
-    "不要添加新观点，不要删减关键信息。保留原有 Markdown 结构（标题、列表、表格等）。"
-    "只输出改写后的正文。"
-)
-_DEDUPE_CHUNK_CHARS = 8000
-
-
-def _dedupe_markdown_chunks(md: str, client: LLMClient, chat_model: str) -> str:
-    system = "你是专业中文编辑，只输出改写结果，不要加引号、标题或前言。"
-    if len(md) <= _DEDUPE_CHUNK_CHARS:
-        out = client.chat_completion(
-            [{"role": "system", "content": system}, {"role": "user", "content": f"{_DEDUPE_PROMPT}\n\n---\n{md.strip()}"}],
-            model=chat_model,
-            max_tokens=8192,
-            temperature=0.55,
-        )
-        return out.strip()
-
-    parts: list[str] = []
-    buf: list[str] = []
-    size = 0
-    for para in md.split("\n\n"):
-        chunk_len = len(para) + (2 if buf else 0)
-        if buf and size + chunk_len > _DEDUPE_CHUNK_CHARS:
-            parts.append("\n\n".join(buf))
-            buf = [para]
-            size = len(para)
-        else:
-            buf.append(para)
-            size += chunk_len
-    if buf:
-        parts.append("\n\n".join(buf))
-
-    rewritten: list[str] = []
-    for part in parts:
-        out = client.chat_completion(
-            [{"role": "system", "content": system}, {"role": "user", "content": f"{_DEDUPE_PROMPT}\n\n---\n{part.strip()}"}],
-            model=chat_model,
-            max_tokens=8192,
-            temperature=0.55,
-        )
-        rewritten.append(out.strip())
-    return "\n\n".join(rewritten)
-
-
 @router.post(
     "/{book_id}/chapters/{chapter_index}/dedupe-chapter",
     response_model=ChapterDedupeOut,
@@ -831,7 +786,7 @@ def dedupe_chapter(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """对本章全文做降 AI 率改写（保留原意与 Markdown 结构）。"""
+    """预览本章机器化表达压实结果（保留原意与 Markdown 结构）。"""
     book = book_service.get_book_or_404(book_id, user, db)
     ch = _get_chapter(book_id, chapter_index, db)
     content = ch.content if isinstance(ch.content, dict) else {}
@@ -841,5 +796,11 @@ def dedupe_chapter(
 
     client = LLMClient()
     chat_model = _chat_model_for_book(book, user, db)
-    result = DedupeService().dedupe_markdown(md, client=client, chat_model=chat_model)
+    result = DedupeService().dedupe_markdown(
+        md,
+        client=client,
+        chat_model=chat_model,
+        style_profile=book.style_type or book.book_type.value,
+        finding_instruction="按章节范围压实已识别的空泛、重复和机械化表达",
+    )
     return ChapterDedupeOut(text=result.text, original_text=md, report=result.report)

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.llm.client import LLMClient
+from app.prompts.review_quality import build_ai_rewrite_prompt, build_rewrite_safety_prompt
 from app.services.ai_detect import get_ai_detect_provider, result_to_dict
 from app.services.dedupe_verify import (
     assess_similarity_warnings,
@@ -16,6 +17,7 @@ from app.services.dedupe_verify import (
     verify_facts_preserved,
 )
 from app.services.quality import QualityStatus
+from app.utils.json_llm import parse_llm_json
 
 _CODE_FENCE_RE = re.compile(r"```[\s\S]*?```", re.MULTILINE)
 _INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
@@ -48,6 +50,8 @@ class DedupeService:
         chat_model: str,
         context: str = "",
         glossary_terms: list[str] | None = None,
+        style_profile: str = "default",
+        finding_instruction: str = "",
     ) -> DedupeResult:
         return self._run(
             text,
@@ -56,6 +60,8 @@ class DedupeService:
             context_summary=context,
             whole_chapter=False,
             glossary_terms=glossary_terms,
+            style_profile=style_profile,
+            finding_instruction=finding_instruction,
         )
 
     def dedupe_markdown(
@@ -66,6 +72,8 @@ class DedupeService:
         chat_model: str,
         context_summary: str = "",
         glossary_terms: list[str] | None = None,
+        style_profile: str = "default",
+        finding_instruction: str = "",
     ) -> DedupeResult:
         return self._run(
             markdown,
@@ -74,6 +82,8 @@ class DedupeService:
             context_summary=context_summary,
             whole_chapter=True,
             glossary_terms=glossary_terms,
+            style_profile=style_profile,
+            finding_instruction=finding_instruction,
         )
 
     def _run(
@@ -85,6 +95,8 @@ class DedupeService:
         context_summary: str,
         whole_chapter: bool,
         glossary_terms: list[str] | None = None,
+        style_profile: str = "default",
+        finding_instruction: str = "",
     ) -> DedupeResult:
         original = (text or "").strip()
         before_risk, before_raw, detect_warnings = self._detect_risk(original)
@@ -110,6 +122,8 @@ class DedupeService:
                 whole_chapter=whole_chapter,
                 facts=facts,
                 before_risk=chunk_original_risk,
+                style_profile=style_profile,
+                finding_instruction=finding_instruction,
             )
             chunk_reports.append(chunk_report)
             if chunk_report.get("status") != QualityStatus.passed.value:
@@ -121,7 +135,13 @@ class DedupeService:
         rewritten_text = _restore_protected_blocks(rewritten_text, replacements)
 
         if whole_chapter and len(chunks) > 1 and len(rewritten_text) <= 24000 and all_passed:
-            unified = self._style_unify_pass(client, chat_model, rewritten_text, protected=protected)
+            unified = self._style_unify_pass(
+                client,
+                chat_model,
+                rewritten_text,
+                protected=protected,
+                style_profile=style_profile,
+            )
             rewritten_text = _restore_protected_blocks(unified.strip(), replacements)
 
         after_risk, after_raw, after_warnings = self._detect_risk(rewritten_text)
@@ -146,6 +166,22 @@ class DedupeService:
                 for cr in chunk_reports
                 if cr.get("status") == QualityStatus.failed.value
             ]
+        llm_safety: dict[str, Any] | None = None
+        if not validation["protected_tokens_changed"] and not missing_facts and _needs_llm_safety(
+            warnings,
+            before_risk=before_risk,
+            after_risk=after_risk,
+        ):
+            llm_safety = self._llm_safety_check(
+                client,
+                chat_model,
+                original,
+                rewritten_text,
+                protected=protected,
+            )
+            if not llm_safety.get("safe"):
+                validation["protected_tokens_changed"] = ["llm_safety_unconfirmed"]
+                warnings.append(str(llm_safety.get("reason") or "llm_safety_unconfirmed"))
         status = QualityStatus.passed.value
         if validation["protected_tokens_changed"] or chunk_failed:
             status = QualityStatus.failed.value
@@ -177,6 +213,7 @@ class DedupeService:
                 "before": before_raw,
                 "after": after_raw,
             },
+            "llm_safety": llm_safety,
         }
         if status == QualityStatus.failed.value:
             return DedupeResult(text=original, original_text=original, report=report)
@@ -195,6 +232,8 @@ class DedupeService:
         whole_chapter: bool,
         facts: list[str],
         before_risk: float | None,
+        style_profile: str,
+        finding_instruction: str,
     ) -> tuple[str, dict[str, Any]]:
         failure_reason = ""
         current = chunk
@@ -212,6 +251,8 @@ class DedupeService:
                 chunk_count=chunk_count,
                 whole_chapter=whole_chapter,
                 failure_reason=failure_reason,
+                style_profile=style_profile,
+                finding_instruction=finding_instruction,
             )
             validation = _validate_preservation(chunk, rewritten, protected)
             missing_facts = verify_facts_preserved(facts, rewritten)
@@ -253,14 +294,16 @@ class DedupeService:
         chunk_count: int,
         whole_chapter: bool,
         failure_reason: str = "",
+        style_profile: str = "default",
+        finding_instruction: str = "",
     ) -> str:
-        system = "你是专业中文编辑，只输出改写后的正文，不要加引号、标题或前言。"
+        system = build_ai_rewrite_prompt(style_profile)
         constraints = _protected_prompt(protected)
         scope = "整章分块" if whole_chapter else "选区"
         retry = f"\n上次失败原因：{failure_reason}。务必保留所有事实与保护元素。\n" if failure_reason else ""
         user = (
-            "请对文本做降重改写：保留原意、事实、数字、引用、术语、标题层级、Markdown 表格、代码块和图表编号；"
-            "通过调整句式、衔接和词序降低模板化与雷同表达。不要添加新观点，不要删减关键信息。\n\n"
+            "请只修复已经确认的机器化表达问题，不做无目标的全文同义替换。\n"
+            f"问题依据：{finding_instruction.strip() or '压实空泛、重复或机械化表达，保留全部有效信息。'}\n"
             f"处理范围：{scope}，第 {chunk_index}/{chunk_count} 块。\n"
             f"上下文摘要：{context_summary or '无'}\n"
             f"{constraints}\n"
@@ -281,8 +324,9 @@ class DedupeService:
         text: str,
         *,
         protected: dict[str, list[str]],
+        style_profile: str = "default",
     ) -> str:
-        system = "你是专业中文编辑，只输出处理后的正文。"
+        system = build_ai_rewrite_prompt(style_profile)
         user = (
             "请只做全章语气与术语统一，不要继续大幅改写。必须保留所有数字、引用、Markdown 结构、表格、代码块和图表编号。\n"
             f"{_protected_prompt(protected)}\n\n---\n{text}"
@@ -293,6 +337,44 @@ class DedupeService:
             max_tokens=8192,
             temperature=0.35,
         )
+
+    def _llm_safety_check(
+        self,
+        client: LLMClient,
+        chat_model: str,
+        original: str,
+        rewritten: str,
+        *,
+        protected: dict[str, list[str]],
+    ) -> dict[str, Any]:
+        raw = client.chat_completion(
+            [
+                {"role": "system", "content": build_rewrite_safety_prompt()},
+                {
+                    "role": "user",
+                    "content": (
+                        f"【受保护元素】\n{_protected_prompt(protected)}\n\n"
+                        f"【原文】\n{original[:8000]}\n\n"
+                        f"【候选改写】\n{rewritten[:8000]}"
+                    ),
+                },
+            ],
+            model=chat_model,
+            max_tokens=1200,
+            temperature=0.0,
+        )
+        try:
+            data = parse_llm_json(raw)
+        except Exception:
+            return {"safe": False, "reason": "安全校验结果无法解析"}
+        return {
+            "safe": bool(data.get("safe")),
+            "semantic_change": bool(data.get("semantic_change")),
+            "new_factual_claims": data.get("new_factual_claims") or [],
+            "lost_constraints": data.get("lost_constraints") or [],
+            "protected_changes": data.get("protected_changes") or [],
+            "reason": str(data.get("reason") or ""),
+        }
 
     def _detect_risk(self, text: str) -> tuple[float | None, dict[str, Any] | None, list[str]]:
         if not text.strip():
@@ -404,3 +486,23 @@ def _unique(items: list[str]) -> list[str]:
         if item and item not in out:
             out.append(item)
     return out
+
+
+def _needs_llm_safety(
+    warnings: list[str],
+    *,
+    before_risk: float | None,
+    after_risk: float | None,
+) -> bool:
+    semantic_warnings = {
+        "similarity_too_low_meaning_drift_risk",
+        "length_ratio_out_of_range",
+        "heading_hierarchy_changed",
+    }
+    if any(warning in semantic_warnings for warning in warnings):
+        return True
+    return bool(
+        before_risk is not None
+        and after_risk is not None
+        and after_risk > before_risk
+    )

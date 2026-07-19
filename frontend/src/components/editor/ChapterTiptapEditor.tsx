@@ -41,6 +41,7 @@ import type { EditorAiPreviewPayload } from "@/types/aiPreview";
 import { isChapterBodyEffectivelyEmpty } from "@/lib/chapterBodyEmpty";
 import { resolveChapterEditorContent } from "@/lib/resolveChapterEditorContent";
 import { prepareSourceMarkdown } from "@/lib/resolveChapterEditorContent";
+import { sanitizeChapterMarkdown } from "@/lib/sanitizeChapterMarkdown";
 import { tiptapDocToMarkdown } from "@/lib/tiptapDocToMarkdown";
 import { isRichMarkdown, markdownToTiptapDoc } from "@/lib/markdownToTiptapDoc";
 import { hasUnlinkedFigureBlocks, syncFigureBlocksWithServer } from "@/lib/syncFigureBlocksWithServer";
@@ -897,6 +898,10 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
   );
 
   const showStreamPreview = readOnly && streamingMarkdown !== null;
+  const renderedStreamingMarkdown = useMemo(
+    () => (streamingMarkdown === null ? "" : sanitizeChapterMarkdown(streamingMarkdown)),
+    [streamingMarkdown],
+  );
 
   const figureContextValue = useMemo(
     () => ({
@@ -1193,7 +1198,7 @@ const ChapterTiptapEditor = forwardRef<ChapterEditorHandle, Props>(function Chap
       ) : (
         <div className="chapter-md-preview book-md-body prose prose-slate max-w-none px-1 py-2 prose-headings:font-semibold">
           <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-            {streamingMarkdown}
+            {renderedStreamingMarkdown}
           </ReactMarkdown>
         </div>
       )}

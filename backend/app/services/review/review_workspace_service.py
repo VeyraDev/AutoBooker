@@ -36,6 +36,23 @@ def _issue_meta(issue: ChapterReviewIssue) -> dict:
     return ev
 
 
+def _compact_dedupe_report(report: dict) -> dict:
+    keys = (
+        "status",
+        "before_ai_risk",
+        "after_ai_risk",
+        "risk_delta",
+        "similarity_score",
+        "meaning_preserved",
+        "structure_preserved",
+        "warnings",
+        "facts_missing",
+        "protected_tokens_changed",
+        "llm_safety",
+    )
+    return {key: report.get(key) for key in keys if key in report}
+
+
 def _batch_preview_skip_reason(issue: ChapterReviewIssue) -> str | None:
     if _chapter_issue_status(issue) != "open":
         return "not_open"
@@ -673,6 +690,8 @@ class ReviewWorkspaceService:
             DATA_ACTION_OPTIONS,
             is_data_evidence_issue,
         )
+        from app.llm.client import LLMClient
+        from app.services.dedupe_service import DedupeService
         from app.services.review_apply import apply_review_issue_text, preview_issue_application
         from app.services.review_incremental import affected_dimensions
         from app.services.tiptap_convert import chapter_content_to_markdown
@@ -723,6 +742,8 @@ class ReviewWorkspaceService:
             option_instruction = str(chosen.get("instruction") or chosen.get("description") or "")
 
         preview_kind = "replace"
+        warning = None
+        is_ai_expression = issue.dimension == "ai_signature" or str(issue.detector or "").startswith("ai_detect")
         if replacement_text is not None and replacement_text.strip():
             replacement = replacement_text.strip()
         elif act == "delete":
@@ -735,6 +756,21 @@ class ReviewWorkspaceService:
                 "数据/事实类问题请先选择处理方式：补充来源、保留为估算、或删除精确比例；"
                 "系统不会自动改成空泛比例表述。"
             )
+        elif is_ai_expression:
+            style_profile = book.style_type or (book.book_type.value if hasattr(book.book_type, "value") else book.book_type)
+            dedupe = DedupeService().dedupe_text(
+                issue.quote or "",
+                client=LLMClient(),
+                chat_model=chat_model,
+                context=current_md[:5000],
+                style_profile=str(style_profile or "default"),
+                finding_instruction=issue.explanation or issue.title or "压实机器化表达",
+            )
+            if dedupe.report.get("status") == "failed" or not dedupe.text.strip() or dedupe.text.strip() == (issue.quote or "").strip():
+                raise ValueError("局部改写未通过事实与保护元素校验，请人工处理")
+            replacement = dedupe.text.strip()
+            act = "revise"
+            warning = {"dedupe_report": _compact_dedupe_report(dedupe.report)}
         else:
             replacement, preview_kind = apply_review_issue_text(
                 book=book,
@@ -772,6 +808,7 @@ class ReviewWorkspaceService:
             diff=preview["diff"],
             affected_dimensions=affected,
             score_before={"total_score": review.total_score, "dimensions": review.dimensions},
+            warning=warning,
         )
         self.db.flush()
         return {

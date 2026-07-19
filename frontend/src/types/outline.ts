@@ -13,7 +13,6 @@ export interface OutlineChapter {
   key_points: string[];
   estimated_words: number;
   sections: OutlineSection[];
-  column_labels?: string[];
   word_count: number;
   status: ChapterGenStatus;
 }

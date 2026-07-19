@@ -22,6 +22,8 @@ CHAPTER_WRITER_MARKDOWN_RULES = """
 - 必须按大纲节次顺序依次写完；每节先单独一行写节标题，再写该节正文。
 - 节标题文字请与大纲一致或尽量接近（系统会按大纲标题校正）。
 - 节与节之间仅用上述层级的标题行分隔，不要在正文里重复写节标题。
+- 禁止单独一行输出 Markdown 水平线（`---`、`***`、`___`）；节间只用标题分隔。GFM 表格分隔行（如 `|---|---|`）除外。
+- 禁止用 `>` 引用块；禁止用方括号包裹节标题（如 `[第一节 …]`）。
 - 禁止元叙事开场（「好的」「接下来」「本章将」等）。
 - 需要配图处单独一行使用 [DIAGRAM: 自然语言描述应展示的内容]；截图用 [SCREENSHOT: 描述]。
 - 需要表格处严格输出三行：引用句（含见表x-x）→ 表x-x：表题 → GFM 表格（表头+分隔行）。
@@ -44,15 +46,12 @@ WRITER_SYSTEM_PROMPT = """
 5. 同类写法参考与既有章节风格只用于感受语言品质，不得复制其句子、段落结构、标题模式或论证顺序。
 
 发生冲突时，事实与用户资料优先于风格；当前大纲优先于通用写法偏好。
-不得为了满足风格或宪法而增加大纲中没有依据的事实、案例、作者经历、栏目或结论。
-
-{chapter_format_strategy_block}
+不得为了满足风格或宪法而增加大纲中没有依据的事实、案例、作者经历或结论。
 
 === 全书叙事宪法 / 体例宪法 ===
 
 以下内容是写作判断依据，不是正文模板，也不是逐项验收清单。
 不要复制其中的分类标题、规则名称、章节角色、情绪任务、数量描述或策划措辞。
-不要把宪法条目转换成正文中的固定栏目、提示框、总结格式或可见标签。
 正文结构以当前章节大纲和本章内容的真实需要为准。
 
 {narrative_constitution}
@@ -78,7 +77,7 @@ WRITER_SYSTEM_PROMPT = """
 
 === 体裁：语气、证据态度与禁区 ===
 
-以下要求只控制写作感觉和质量边界，不规定正文栏目和固定段落结构。
+以下要求只控制写作感觉和质量边界。
 不要照抄其中的示例句，也不要在正文中解释自己遵守了哪些规则。
 
 {style_voice_block}
@@ -102,7 +101,7 @@ WRITER_SYSTEM_PROMPT = """
 {style_guide}
 
 风格锚点只用于保持全书语气、术语和叙述距离基本一致。
-不得复制其中的句子，不得沿用上一章的开头方式、论证模版、类比、栏目和收束句式。
+不得复制其中的句子，不得沿用上一章的开头方式、论证模版、类比和收束句式。
 一致性不等于重复；相邻章节应根据内容自然改变节奏。
 
 === 出版与引用 ===
@@ -142,24 +141,13 @@ def build_section_structure_lines(sections: list[dict]) -> str:
 def build_writer_system_prompt(
     *,
     outline_sections: list[dict] | None = None,
-    chapter_format_block: str = "",
     **kwargs: str | int,
 ) -> str:
     """拼接系统提示词；Markdown规则须在format之后追加，避免花括号被误解析。"""
+    kwargs.pop("style_type", None)
     sections = normalize_outline_sections(outline_sections or [])
     structure = build_section_structure_lines(sections)
     markdown_rules = CHAPTER_WRITER_MARKDOWN_RULES.format(
         section_structure_lines=structure
     )
-    block = (chapter_format_block or "").strip()
-    if block:
-        strategy_section = (
-            "=== 本章栏目策略（已确认，优先执行）===\n"
-            f"{block}\n\n"
-            "规则：仅在本章任务需要时出现对应阅读装置；禁止为凑栏目添加空泛提示框。"
-        )
-    else:
-        strategy_section = ""
-    kwargs = dict(kwargs)
-    kwargs["chapter_format_strategy_block"] = strategy_section
     return WRITER_SYSTEM_PROMPT.format(**kwargs) + "\n\n" + markdown_rules

@@ -58,7 +58,6 @@ class ProjectIntake(Base):
     confirmed_understanding_id = Column(UUID(as_uuid=True), nullable=True)
     confirmed_writing_plan_id = Column(UUID(as_uuid=True), nullable=True)
     confirmed_writing_basis_id = Column(UUID(as_uuid=True), nullable=True)
-    confirmed_format_strategy_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

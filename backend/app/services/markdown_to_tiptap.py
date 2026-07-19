@@ -69,11 +69,13 @@ def strip_review_pid_comments(markdown: str) -> str:
 
 
 def prepare_source_markdown(markdown: str) -> str:
+    from app.services.chapter_markdown_sanitize import sanitize_chapter_markdown
     from app.services.repair_inline_math import repair_fragmented_inline_math
 
     repaired = repair_empty_pid_list_pairs(markdown)
     stripped = strip_review_pid_comments(repaired)
-    normalized = normalize_gfm_tables(drop_spurious_dash_list_lines(stripped))
+    sanitized = sanitize_chapter_markdown(stripped)
+    normalized = normalize_gfm_tables(drop_spurious_dash_list_lines(sanitized))
     return repair_fragmented_inline_math(normalized)
 
 
@@ -260,6 +262,27 @@ def _markdown_text_to_tiptap_blocks(body: str) -> list[dict[str, Any]]:
             if table_node:
                 blocks.append(table_node)
             continue
+        # Standalone HR → paragraph break (never store literal ---)
+        if re.match(r"^\s*([-*_])\1{2,}\s*$", line):
+            flush_para()
+            flush_bullets()
+            flush_ordered()
+            i += 1
+            continue
+        if not line.strip():
+            flush_para()
+            flush_bullets()
+            flush_ordered()
+            i += 1
+            continue
+        # Strip blockquote markers so ">" never appears as literal text
+        work = line
+        while True:
+            bm = re.match(r"^(\s*)>\s?", work)
+            if not bm:
+                break
+            work = bm.group(1) + work[bm.end() :]
+        line = work
         if not line.strip():
             flush_para()
             flush_bullets()

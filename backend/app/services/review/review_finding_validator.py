@@ -32,7 +32,6 @@ PRODUCT_DIMENSION_MAP: dict[str, str] = {
     "logic_structure": "argument_quality",
     "ai_signature": "argument_quality",
     "structure": "structure_progress",
-    "format_strategy": "structure_progress",
     "export_structure": "publication_delivery",
     "book_structure": "publication_delivery",
     "copyediting": "publication_delivery",
@@ -164,6 +163,118 @@ def infer_fix_capability(finding: dict[str, Any]) -> str:
     if severity == "low":
         return "observe_only"
     return "manual_only"
+
+
+def route_finding_fix(finding: dict[str, Any]) -> dict[str, Any]:
+    """Add fix metadata after detection without asking the detector to rewrite."""
+    item = dict(finding)
+    issue_type = str(item.get("issue_type") or item.get("category") or "").strip().lower()
+    dimension = str(item.get("dimension") or "").strip().lower()
+    severity = str(item.get("severity") or "medium").strip().lower()
+    capability = infer_fix_capability(item)
+
+    if is_data_evidence_issue(item):
+        return {
+            "fix_capability": capability,
+            "action_type": "choose",
+            "action": "choose",
+            "action_options": default_data_action_options(),
+            "suggestion": "",
+            "replacement_text": "",
+        }
+
+    if capability == "preview_apply":
+        if issue_type in {"paragraph_near_duplicate", "paragraph_adjacent_echo", "duplicate_sentence"}:
+            options = [
+                {
+                    "id": "preview_delete_duplicate",
+                    "label": "删除重复内容",
+                    "description": "生成删除预览并由用户确认",
+                    "action_type": "delete",
+                },
+                {
+                    "id": "preview_compress",
+                    "label": "压缩合并",
+                    "description": "保留新增信息并生成局部改写预览",
+                    "action_type": "revise",
+                },
+            ]
+            action_type = "revise"
+        else:
+            options = [
+                {
+                    "id": "preview_fix",
+                    "label": "预览修改",
+                    "description": "生成局部修改结果，确认后应用",
+                    "action_type": "revise",
+                }
+            ]
+            action_type = "revise"
+        return {
+            "fix_capability": capability,
+            "action_type": action_type,
+            "action": action_type,
+            "action_options": options,
+            "suggestion": "",
+            "replacement_text": "",
+        }
+
+    if capability == "choice_then_apply":
+        options = [
+            {
+                "id": "preview_local_rewrite",
+                "label": "预览局部修改",
+                "description": "按问题依据生成局部改写，不直接应用",
+                "action_type": "revise",
+            },
+            {
+                "id": "keep_original",
+                "label": "保留原文",
+                "description": "确认符合写作意图后保留",
+                "action_type": "observe",
+            },
+        ]
+        return {
+            "fix_capability": capability,
+            "action_type": "revise",
+            "action": "revise",
+            "action_options": options,
+            "suggestion": "",
+            "replacement_text": "",
+        }
+
+    if capability == "manual_only" or dimension in {"citation_sources", "factual_support"}:
+        return {
+            "fix_capability": "manual_only",
+            "action_type": "revise",
+            "action": "revise",
+            "action_options": [
+                {
+                    "id": "manual_review",
+                    "label": "人工处理",
+                    "description": "核对事实、结构或专业判断后手动修改",
+                    "action_type": "manual",
+                }
+            ],
+            "suggestion": "",
+            "replacement_text": "",
+        }
+
+    return {
+        "fix_capability": "observe_only" if severity == "low" else capability,
+        "action_type": "revise",
+        "action": "revise",
+        "action_options": [
+            {
+                "id": "keep_original",
+                "label": "保留原文",
+                "description": "该问题无需立即修改",
+                "action_type": "observe",
+            }
+        ],
+        "suggestion": "",
+        "replacement_text": "",
+    }
 
 
 def _quote_text(finding: dict[str, Any]) -> str:

@@ -26,7 +26,7 @@ def test_prompt_registry_exposes_review_assets():
     assert "title_reviewer" in keys
     assert "reference_authenticity_reviewer" in keys
     prompt = get_review_prompt_asset("ai_text_risk_detector").prompt
-    assert "AI" in prompt and "百分比" in prompt
+    assert "AI" in prompt and "不输出 AI 率" in prompt
 
 
 def test_quality_reviewers_detect_title_echo_reference_layout_and_ai_risk():
@@ -61,11 +61,9 @@ def test_quality_reviewers_detect_title_echo_reference_layout_and_ai_risk():
     assert "figure_table_numbering" in issue_types
     assert "generic_summary" in issue_types
     ai_issue = next(item for item in result.issues if item["issue_type"] == "generic_summary")
-    assert ai_issue["action"] == "replace"
-    assert ai_issue["replacement_text"]
-    assert "综上所述" not in ai_issue["replacement_text"]
-    assert "既是机遇也是挑战" not in ai_issue["replacement_text"]
-    assert "持续验证" in ai_issue["replacement_text"]
+    assert ai_issue["action"] == "revise"
+    assert ai_issue["replacement_text"] == ""
+    assert ai_issue["fix_capability"] == "preview_apply"
 
 
 def test_title_benchmark_uses_document_filenames(tmp_path):

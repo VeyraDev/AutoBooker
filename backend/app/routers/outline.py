@@ -53,7 +53,6 @@ def _chapter_to_outline(ch: Chapter) -> OutlineChapterOut:
         key_points=list(meta.get("key_points") or []),
         estimated_words=int(meta.get("estimated_words") or 3000),
         sections=sections,
-        column_labels=[str(x) for x in (meta.get("column_labels") or []) if str(x).strip()],
         word_count=ch.word_count or 0,
         status=ch.status,
     )
@@ -254,9 +253,6 @@ def generate_outline(
                 "sections": sections,
                 "estimated_words": ch.get("estimated_words", 3000),
             }
-            labels = ch.get("column_labels")
-            if isinstance(labels, list) and labels:
-                meta["column_labels"] = [str(x).strip() for x in labels if str(x).strip()][:8]
             db.add(
                 Chapter(
                     book_id=book.id,
@@ -275,10 +271,13 @@ def generate_outline(
 
         refresh_book_citation_rendering(db, book)
         sync_book_bibliography(db, book, commit=False)
-        if book.allow_title_optimization:
-            new_title = (outline.get("title") or "").strip()
-            if new_title:
-                book.title = new_title[:500]
+        new_title = (outline.get("title") or "").strip()
+        if new_title:
+            from app.services.assistant.suggest_book_settings import _is_placeholder_title
+
+            if book.allow_title_optimization or _is_placeholder_title(book.title):
+                if not _is_placeholder_title(new_title):
+                    book.title = new_title[:500]
         book.constitution_stale = True
         from app.services.preface_service import get_preface, set_preface
 
@@ -291,14 +290,6 @@ def generate_outline(
         book.status = BookStatus.outline_ready
         db.commit()
         db.refresh(book)
-
-        try:
-            from app.services.writing.format_strategy_service import FormatStrategyService
-
-            FormatStrategyService(db).apply_after_outline(book, force=True)
-            db.commit()
-        except Exception:
-            logger.exception("format strategy apply_after_outline failed after outline book=%s", book.id)
 
         chapters = (
             db.query(Chapter).filter(Chapter.book_id == book.id).order_by(Chapter.index.asc()).all()

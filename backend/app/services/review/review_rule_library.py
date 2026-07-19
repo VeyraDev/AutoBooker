@@ -75,8 +75,6 @@ def retrieve_relevant_rules(finding: dict[str, Any], context_snapshot: dict[str,
         if any(k in detail for k in c["text"][:40].split() if len(k) > 1) or c["text"][:20] in detail:
             prefix = "用户要求" if c["kind"] == "UserCriterion" else c["kind"]
             refs.append(f"{prefix}：{c['text'][:200]}")
-    if finding.get("category") == "format_strategy":
-        refs.append("全书体例与栏目策略")
     # 不再用 generic fallback 伪造「出版规范」依据
     return refs[:8]
 
@@ -87,6 +85,4 @@ def match_basis_refs(finding: dict[str, Any], context_snapshot: dict[str, Any] |
         detail = str(finding.get("detail") or finding.get("title") or "")
         matched = [r for r in refs if any(k in detail for k in ("避免", "保留", "用户要求"))]
         return matched or refs[:2]
-    if finding.get("category") == "format_strategy":
-        return refs[:1] + ["全书体例与栏目策略"]
     return refs

@@ -1,5 +1,12 @@
 from app.config import settings
-from app.llm.providers import default_ai_model, get_provider_spec, llm_models_catalog, normalize_ai_model, provider_base_url
+from app.llm.providers import (
+    default_ai_model,
+    get_provider_spec,
+    llm_models_catalog,
+    normalize_ai_model,
+    provider_base_url,
+    stage_fixed_model,
+)
 
 
 def test_zeelin_provider_registered_with_default_base_url(monkeypatch):
@@ -70,3 +77,11 @@ def test_embed_provider_requires_dashscope_key(monkeypatch):
         assert False, "expected RuntimeError"
     except RuntimeError as e:
         assert "DASHSCOPE_API_KEY" in str(e)
+
+
+def test_stage_fixed_models_prefer_zeelin(monkeypatch):
+    monkeypatch.setattr(settings, "ZEELIN_API_KEY", "test-key")
+    assert stage_fixed_model("outline") == "zeelin:gpt-5.5"
+    assert stage_fixed_model("constitution") == "zeelin:gpt-5.5"
+    assert stage_fixed_model("assistant") == "zeelin:gpt-5.5"
+    assert stage_fixed_model("writing") == "zeelin:claude-sonnet-4-6"

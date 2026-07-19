@@ -4,6 +4,7 @@
 
 import { repairFragmentedInlineMath } from "@/lib/repairInlineMath";
 import { splitInlineMath, type MathSegment } from "@/lib/mathTokenizer";
+import { sanitizeChapterMarkdown } from "@/lib/sanitizeChapterMarkdown";
 
 export function shouldParseAsMarkdown(text: string): boolean {
   const s = text.replace(/\r\n/g, "\n");
@@ -13,6 +14,8 @@ export function shouldParseAsMarkdown(text: string): boolean {
   if (/(^|\n)\s*\d+\.\s+\S/.test(s)) return true;
   if (/\$\$[\s\S]+?\$\$/.test(s)) return true;
   if (/(?<!\$)\$(?!\$)[^\$]+?\$(?!\$)/.test(s)) return true;
+  if (/(^|\n)\s*>\s?\S/.test(s)) return true;
+  if (/(^|\n)\s*([-*_])\1{2,}\s*($|\n)/.test(s)) return true;
   return false;
 }
 
@@ -62,7 +65,9 @@ function isOrderedLine(line: string): boolean {
 }
 
 export function plainTextMarkdownToTiptapDoc(text: string): Record<string, unknown> {
-  const normalized = repairFragmentedInlineMath(text.replace(/\r\n/g, "\n"));
+  const normalized = repairFragmentedInlineMath(
+    sanitizeChapterMarkdown(text.replace(/\r\n/g, "\n")),
+  );
   const lines = normalized.split("\n");
   const blocks: Record<string, unknown>[] = [];
   const paraLines: string[] = [];

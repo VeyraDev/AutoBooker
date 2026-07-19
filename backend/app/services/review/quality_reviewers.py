@@ -570,7 +570,6 @@ def _review_ai_text_risk(markdown: str, *, book_style: str, chapter_index: int |
         hits = [phrase for phrase in _GENERIC_AI_PHRASES if phrase in text]
         if len(hits) < 2 and not ("机遇也是挑战" in text and "不断探索" in text):
             continue
-        replacement = _rewrite_generic_ai_summary(text)
         findings.append(
             _finding(
                 category="ai_text_risk",
@@ -584,10 +583,10 @@ def _review_ai_text_risk(markdown: str, *, book_style: str, chapter_index: int |
                 product_dimension="argument_quality",
                 fix_capability="preview_apply",
                 why="空泛总结会降低信息密度，让读者难以判断本段提供了什么新判断或行动含义。",
-                action="replace",
-                replacement_text=replacement,
+                action="revise",
+                replacement_text="",
                 action_options=[
-                    _action("compress", "压实表达", "删除无信息套话，保留必要结论", "preview"),
+                    _action("compress", "压实表达", "删除无信息套话，保留必要结论", "revise"),
                     _action("keep", "保留", "如果该段承担章节收束功能，可保留", "observe"),
                 ],
                 paragraph_index=p.paragraph_index,
@@ -600,27 +599,6 @@ def _review_ai_text_risk(markdown: str, *, book_style: str, chapter_index: int |
         if len(findings) >= 6:
             break
     return findings
-
-
-def _rewrite_generic_ai_summary(text: str) -> str:
-    result = (text or "").strip()
-    replacements = (
-        (r"^\s*(综上所述|总的来说)[，,、\s]*", ""),
-        (r"(值得注意的是|在这个过程中|从某种意义上说)[，,、\s]*", ""),
-        (r"全面、系统、深入地理解", "明确识别"),
-        (r"全面、系统、深入", "具体"),
-        (r"既是机遇也是挑战", "带来机会，也形成新的约束"),
-        (r"机遇也是挑战", "机会与约束并存"),
-        (r"不断探索", "持续验证"),
-    )
-    for pattern, replacement in replacements:
-        result = re.sub(pattern, replacement, result)
-    result = re.sub(r"[，,]\s*。", "。", result)
-    result = re.sub(r"。{2,}", "。", result)
-    result = re.sub(r"\s+", " ", result).strip()
-    if result == (text or "").strip():
-        return result
-    return result
 
 
 def _dimension_summaries(issues: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

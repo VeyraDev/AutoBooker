@@ -141,7 +141,6 @@ class StageContextBuilder:
             "chapter_index": chapter_index,
             "book_settings": {
                 "writing_basis": snapshot.get("writing_basis"),
-                "format_strategy": snapshot.get("format_strategy"),
                 "intent_effects": snapshot.get("intent_effects") or [],
             },
             "writing_requirements": snapshot.get("requirements") or [],

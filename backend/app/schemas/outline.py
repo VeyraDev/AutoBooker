@@ -18,7 +18,6 @@ class OutlineChapterOut(BaseModel):
     key_points: list[str] = []
     estimated_words: int = Field(default=3000, ge=100)
     sections: list[OutlineSectionOut] = []
-    column_labels: list[str] = []
     word_count: int = 0
     status: ChapterStatus
 

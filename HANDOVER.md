@@ -183,7 +183,6 @@ ChapterWriterAgent (agents/chapter_writer.py)
 | `intake.py` | `/books/{id}/intake`, `project-start/*` | bootstrap/complete；**写接口 410 Gone** |
 | `project_assistant.py` | `/books/{id}/project-assistant` | 项目助手对话轮次与 trace |
 | `writing_basis.py` | `/books/{id}/writing-basis` | 写作依据 CRUD/确认 |
-| `format_strategy.py` | `/books/{id}/format-strategy` | 章节格式策略 |
 | `sources.py` | `/books/{id}/sources` | 资料库上传/分段 |
 | `memories.py` | `/books/{id}/memories` | 项目长期记忆 |
 | `references.py` | `/books/{id}/references` | 资料上传、向量检索 |
@@ -612,7 +611,6 @@ cd autobooker/backend
 | Markdown 转换 | `lib/tiptapDocToMarkdown.ts`, `lib/markdown_to_tiptap.py`（后端） |
 | 公式渲染 | `lib/repairInlineMath.ts`, `math_tokenizer.py` |
 | 认证 JWT | `routers/auth.py`, `stores/authStore.ts`, `api/client.ts` |
-| 格式策略 | `features/outline/FormatStrategyPanel.tsx`, `format_strategy.py` |
 | 资料库 sources | `routers/sources.py`, `SourceLibraryPanel.tsx` |
 | 项目启动 bootstrap | `routers/intake.py`, `features/intake/intakeApi.ts` |
 | 旧 Intake 410 | `routers/intake.py`, `test_intake_deprecation.py` |

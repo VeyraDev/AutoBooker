@@ -1,93 +1,42 @@
-"""章节/书稿审校：结构化问题列表与修改建议。"""
+"""Task-routed chapter review with separate detection responsibilities."""
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
 from app.llm.client import LLMClient
-from app.prompts.publication_standards import CHAPTER_PUBLICATION_STANDARDS
-from app.prompts.review_quality import build_chapter_review_system_prompt
+from app.prompts.review_quality import ReviewTask, build_review_prompt
+from app.services.review.review_finding_validator import classify_product_dimension, route_finding_fix
 from app.utils.json_llm import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
-MAX_ISSUES = 12
-MAX_CHUNK_ISSUES = 30
+MAX_ISSUES = 18
+MAX_LONG_CHAPTER_ISSUES = 30
 
-REVIEW_SYSTEM = """你是一位资深图书审校编辑，熟悉中文非虚构与学术专著的出版规范。
-请对提交的章节正文做专业审校，输出严格 JSON（不要 markdown 代码块外的任何文字）。
+# Compatibility export only. Runtime calls build_review_prompt(task, profile).
+REVIEW_SYSTEM = build_review_prompt("content_argument", "default")
 
-输出 schema：
-{
-  "summary": "200字以内整体评价",
-  "dimensions": [
-    {"key": "logic_structure", "raw_score": 0-100, "confidence": 0-1, "summary": "逻辑结构简评"},
-    {"key": "language_grammar", "raw_score": 0-100, "confidence": 0-1, "summary": "语言语法简评"},
-    {"key": "style_consistency", "raw_score": 0-100, "confidence": 0-1, "summary": "风格一致简评"},
-    {"key": "factual_support", "raw_score": 0-100, "confidence": 0-1, "summary": "事实支撑简评"}
-  ],
-  "issues": [
-    {
-      "id": "1",
-      "dimension": "logic_structure|language_grammar|style_consistency|citation_sources|factual_support|figure_quality|ai_signature",
-      "issue_type": "unclear_transition|grammar|unsupported_claim|generic_phrasing|...",
-      "severity": "high|medium|low|needs_verification",
-      "penalty": 1-30,
-      "category": "logic|style|grammar|citation|structure|hallucination|figure|code|consistency|other",
-      "title": "问题标题（15字内，如：具体比例缺少可核验来源）",
-      "detail": "证据说明：指出原文用了什么表述、缺了什么",
-      "why_it_matters": "影响：对论证确定性/专业可信度的影响（勿复述 detail）",
-      "quote": "原文中有问题的片段（尽量逐字引用，无则空字符串）",
-      "suggestion": "见 action_type 说明",
-      "action_type": "replace|delete|insert|revise|choose",
-      "action_options": ["补充来源", "保留为估算", "删除精确比例"],
-      "basis_rule_ids": ["仅当确实匹配公开规则时填写，如 data_source_attribution"],
-      "paragraph_index": 0,
-      "confidence": 0-1
-    }
-  ]
+_TASK_DIMENSIONS: dict[ReviewTask, tuple[str, ...]] = {
+    "content_argument": ("logic_structure", "style_consistency"),
+    "reference_evidence": ("factual_support", "citation_sources"),
+    "language_ai": ("language_grammar", "style_consistency", "ai_signature"),
 }
 
-注意：不要输出总分 score；引用来源、图表质量、AI味风险会由程序化 detector 补充，你只在发现明显问题时可输出对应 issue。
-
-action_type 含义（必须准确分类）：
-- replace：suggestion 为**可直接替换 quote 的完整改写句/段**（不含「改为」「建议」等说明语）
-- delete：删除 quote 指出的片段，suggestion 留空
-- insert：在 quote 锚点附近**新增**内容，suggestion 为要插入的完整句子（不是操作说明）
-- revise：suggestion 为**给编辑/AI 的操作说明**（如「统一使用我们」「改为不涉及代码」），不可直接当正文替换
-
-要求：
-- issues 按严重程度排序，最多 12 条；无重大问题时 issues 可为空数组
-- severity 判定（先判断问题是否成立，再定等级）：
-  - high（必须处理）：可证伪的事实错误、逻辑矛盾、严重语病、未入库且影响论证的引用；
-    以及「无来源具体数据」仅在以下情况：该数据是章节核心结论的主证据 / 用户要求所有统计必有来源 /
-    已指定出版学术标准要求该类数据提供出处 / 数据可能影响读者决策、法律责任或专业可信度
-  - medium / needs_verification（建议处理・待核验）：具体比例、统计数字、案例缺少可核验出处，但尚非上述升格情形
-  - low：润色级建议
-- 无来源具体数据的默认标题用「具体比例缺少可核验来源」或「具体数据缺少可核验来源」，不要写成笼统「违反出版规范」
-- 若声称依据「出版规范/国家标准」，必须填写 basis_rule_ids（仅可从已注入的公开规则 id 中选择）；没有对应规则就不要写「出版规范要求」
-- why_it_matters：说明对论证可信度/读者理解的影响，不得复述 detail
-- 对数据/事实/案例缺来源类问题：action_type 用 choose 或 revise，suggestion 只列处理方式（补充来源 / 标记为估算 / 删除精确比例），
-  不要直接给出把数字改成「相当比例」「同样不低」的替换正文
-审校维度（逐项扫描）：
-- structure：大纲小节是否在正文中有对应节标题；结构是否完整
-- logic：论证链、衔接、前后矛盾
-- citation / hallucination：无来源断言、未入库引用、具体数据无出处（默认待核验）
-- grammar：语序与病句
-- style / consistency：术语、语气与全书宪法是否一致
-- code：代码块是否明显语法错误或与正文描述不符
-- figure：图表占位、数据与正文是否一致；数据图是否缺数值
-- structure：表格须有表头行与 GFM 分隔行；正文须引用（如「见表1-1」）；序号列须从 1 连续编号
-
-- 重点检查：无来源断言（「研究表明」等）、人名+时间+地点齐全但无出处的「案例」、与【已批准本书文献】不一致的引用
-- 勿编造书中不存在的内容；quote 必须来自给定正文
-"""
-
-REVIEW_SYSTEM = build_chapter_review_system_prompt()
+_FACT_SIGNAL_RE = re.compile(
+    r"(?:\d+(?:\.\d+)?\s*(?:%|％|亿元|万元|万人|人|家|项|年|月|日)|"
+    r"(?:19|20)\d{2}年|研究(?:表明|发现|显示)|数据(?:表明|显示)|据(?:报道|统计|调查)|"
+    r"报告(?:指出|显示)|调查(?:表明|显示)|政策|条例|办法|任职|担任|创立|成立|增长|下降|占比)"
+)
+_CITATION_SIGNAL_RE = re.compile(r"\[[0-9]{1,3}\]|\([^()]{1,40},\s*(?:19|20)\d{2}\)|《[^》]{2,80}》")
 
 
 class ReviewAgent:
+    """Run three focused reviewers, then merge and route findings in code."""
+
     def __init__(self, *, model: str) -> None:
         self._model = model
         self._client = LLMClient()
@@ -100,6 +49,8 @@ class ReviewAgent:
         book_title: str,
         book_type: str,
         citation_style: str,
+        review_profile: str = "",
+        review_instruction: str = "",
         user_material: str = "",
         narrative_constitution: str = "",
         approved_citations: list[str] | None = None,
@@ -107,339 +58,460 @@ class ReviewAgent:
     ) -> dict[str, Any]:
         text = (body or "").strip()
         if not text:
-            return {
-                "summary": "本章暂无正文，无法审校。",
-                "dimensions": {},
-                "issues": [],
-            }
+            return {"summary": "本章暂无正文，无法审校。", "dimensions": {}, "issues": []}
 
-        if len(text) > 28_000:
-            return self._review_long_chapter(
-                chapter_title=chapter_title,
-                body=text,
-                book_title=book_title,
-                book_type=book_type,
-                citation_style=citation_style,
-                user_material=user_material,
-                approved_citations=approved_citations,
-                figure_summaries=figure_summaries,
-                narrative_constitution=narrative_constitution,
-            )
+        profile = review_profile or book_type
+        common = {
+            "chapter_title": chapter_title,
+            "book_title": book_title,
+            "book_type": book_type,
+            "citation_style": citation_style,
+            "review_instruction": review_instruction,
+        }
+        task_results: list[tuple[ReviewTask, list[dict[str, Any]], bool]] = []
 
-        truncated = _preprocess_code_blocks(text[:28_000])
-        user_parts = [
-            f"书名：{book_title or '未命名'}",
-            f"类型：{book_type}",
-            f"引用格式要求：{citation_style}",
-            f"章节标题：{chapter_title}",
-            CHAPTER_PUBLICATION_STANDARDS,
-        ]
-        if (narrative_constitution or "").strip():
-            user_parts.append(f"【全书叙事宪法】\n{narrative_constitution.strip()[:2000]}")
-        if user_material.strip():
-            user_parts.append(f"作者写作约束与资料依据（审校时参考）：\n{user_material[:9000]}")
-        if approved_citations:
-            user_parts.append(
-                "【已批准本书文献】\n" + "\n".join(approved_citations[:200])
-            )
-        if figure_summaries:
-            user_parts.append(
-                "【本章图表】\n" + "\n".join(figure_summaries[:30])
-            )
-        user_parts.append(f"【待审校正文】\n{truncated}")
-
-        raw = self._client.chat_completion(
-            [
-                {"role": "system", "content": REVIEW_SYSTEM},
-                {"role": "user", "content": "\n\n".join(user_parts)},
-            ],
-            model=self._model,
-            max_tokens=4096,
-            temperature=0.35,
+        content_input = _content_argument_input(
+            common,
+            text,
+            user_material=user_material,
+            narrative_constitution=narrative_constitution,
+            figure_summaries=figure_summaries or [],
         )
+        content_issues, content_ok = self._run_task(
+            "content_argument",
+            profile=profile,
+            user_content=content_input,
+        )
+        task_results.append(("content_argument", content_issues, content_ok))
+
+        claims = _extract_fact_claims(text)
+        citation_rows = list(approved_citations or [])[:60]
+        if claims or citation_rows:
+            reference_issues: list[dict[str, Any]] = []
+            reference_ok = True
+            for claim_batch in _batch_items(claims, 30) or [[]]:
+                reference_input = _reference_evidence_input(
+                    common,
+                    claim_batch,
+                    approved_citations=citation_rows,
+                    user_material=user_material,
+                )
+                batch_issues, batch_ok = self._run_task(
+                    "reference_evidence",
+                    profile=profile,
+                    user_content=reference_input,
+                )
+                reference_issues.extend(batch_issues)
+                reference_ok = reference_ok and batch_ok
+            task_results.append(("reference_evidence", reference_issues, reference_ok))
+
+        language_issues: list[dict[str, Any]] = []
+        language_ok = True
+        language_chunks = _split_language_chunks(text)
+        for index, chunk in enumerate(language_chunks, start=1):
+            language_input = _language_ai_input(
+                common,
+                chunk,
+                chunk_index=index,
+                chunk_count=len(language_chunks),
+                user_material=user_material,
+            )
+            chunk_issues, chunk_ok = self._run_task(
+                "language_ai",
+                profile=profile,
+                user_content=language_input,
+            )
+            language_issues.extend(chunk_issues)
+            language_ok = language_ok and chunk_ok
+        task_results.append(("language_ai", language_issues, language_ok))
+
+        issues = _merge_task_findings(task_results)
+        issue_limit = MAX_LONG_CHAPTER_ISSUES if len(text) > 18_000 else MAX_ISSUES
+        issues = issues[:issue_limit]
+        dimensions = _dimensions_from_findings(task_results)
+        completed = sum(1 for _, _, ok in task_results if ok)
+        total = len(task_results)
+        if issues:
+            summary = f"已完成 {completed}/{total} 类专项审校，保留 {len(issues)} 条待验证问题。"
+        elif completed == total:
+            summary = "专项审校已完成，未发现有充分依据且值得立即处理的问题。"
+        else:
+            summary = f"已完成 {completed}/{total} 类专项审校；部分审校器暂未返回可解析结果。"
+        return {"summary": summary, "dimensions": dimensions, "issues": issues}
+
+    def _run_task(
+        self,
+        task: ReviewTask,
+        *,
+        profile: str,
+        user_content: str,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        try:
+            raw = self._client.chat_completion(
+                [
+                    {"role": "system", "content": build_review_prompt(task, profile)},
+                    {"role": "user", "content": user_content},
+                ],
+                model=self._model,
+                max_tokens=4096,
+                temperature=0.25,
+            )
+        except Exception as exc:
+            logger.warning("review task call failed task=%s: %s", task, exc)
+            return [], False
         try:
             data = parse_llm_json(raw)
-        except Exception as e:
-            logger.warning("review JSON parse failed: %s", e)
-            return {
-                "summary": "审校结果解析失败，请重试。",
-                "dimensions": {},
-                "issues": [],
-            }
-
-        issues = data.get("issues") or []
-        if not isinstance(issues, list):
-            issues = []
-        normalized: list[dict[str, Any]] = []
-        for i, item in enumerate(issues[:MAX_ISSUES]):
-            if not isinstance(item, dict):
-                continue
-            location = item.get("location") if isinstance(item.get("location"), dict) else {}
-            quote = str(item.get("quote") or location.get("quote") or "")[:500]
-            suggestion = str(item.get("suggestion") or item.get("replacement_text") or "")[:2000]
-            action_options = _action_options(item.get("action_options"))
-            basis_refs = _as_str_list(item.get("basis_refs"))
-            basis_rule_ids = _as_str_list(item.get("basis_rule_ids"))
-            evidence = _as_str_list(item.get("evidence"))
-            paragraph_index = _optional_int(
-                item.get("paragraph_index") if item.get("paragraph_index") is not None else location.get("paragraph_index")
-            )
-            char_start = _optional_int(
-                item.get("char_start") if item.get("char_start") is not None else location.get("char_start")
-            )
-            char_end = _optional_int(item.get("char_end") if item.get("char_end") is not None else location.get("char_end"))
-            severity = _enum_val(
-                item.get("severity"),
-                ("high", "medium", "low", "needs_verification"),
-                "medium",
-            )
-            action_type = _enum_val(
-                item.get("action_type") or item.get("action"),
-                ("replace", "delete", "insert", "revise", "choose"),
-                _infer_action_type(quote, suggestion),
-            )
-            quality_evidence = _quality_evidence(
-                item,
-                location=location,
-                action_options=action_options,
-                basis_refs=basis_refs,
-                basis_rule_ids=basis_rule_ids,
-                evidence=evidence,
-            )
-            normalized.append(
-                {
-                    "id": str(item.get("id") or i + 1),
-                    "dimension": str(item.get("dimension") or item.get("category") or "other"),
-                    "issue_type": str(item.get("issue_type") or item.get("category") or "review_issue")[:80],
-                    "severity": severity,
-                    "penalty": _penalty(item.get("penalty"), severity),
-                    "category": _enum_val(
-                        item.get("category"),
-                        (
-                            "logic",
-                            "style",
-                            "grammar",
-                            "citation",
-                            "structure",
-                            "hallucination",
-                            "figure",
-                            "code",
-                            "consistency",
-                            "other",
-                        ),
-                        "other",
-                    ),
-                    "title": str(item.get("title") or "待改进")[:80],
-                    "detail": str(item.get("detail") or item.get("explanation") or "")[:2000],
-                    "why_it_matters": str(item.get("why_it_matters") or "")[:2000],
-                    "quote": quote,
-                    "suggestion": suggestion,
-                    "action_type": action_type,
-                    "action": action_type,
-                    "paragraph_index": paragraph_index,
-                    "char_start": char_start,
-                    "char_end": char_end,
-                    "confidence": _confidence(item.get("confidence")),
-                    "basis_refs": basis_refs,
-                    "basis_rule_ids": basis_rule_ids,
-                    "evidence": evidence,
-                    "action_options": action_options,
-                    "fix_capability": str(item.get("fix_capability") or ""),
-                    "product_dimension": str(item.get("product_dimension") or ""),
-                    "verification_status": str(item.get("verification_status") or ""),
-                    "tier": str(item.get("tier") or ""),
-                    "quality_evidence": quality_evidence,
-                }
-            )
-
-        from app.services.review_scoring import normalize_agent_dimensions
-
-        raw_dims = data.get("dimensions") or {}
-        dimensions = normalize_agent_dimensions(raw_dims)
-
-        return {
-            "summary": str(data.get("summary") or "")[:1500],
-            "dimensions": {
-                k: {
-                    "raw_score": dimensions[k]["raw_score"],
-                    "summary": dimensions[k]["summary"],
-                    "confidence": dimensions[k]["confidence"],
-                    "detector": "review_agent",
-                    "status": "completed",
-                }
-                for k in dimensions
-            },
-            "issues": normalized,
-        }
-
-    def _review_long_chapter(
-        self,
-        *,
-        chapter_title: str,
-        body: str,
-        book_title: str,
-        book_type: str,
-        citation_style: str,
-        user_material: str = "",
-        narrative_constitution: str = "",
-        approved_citations: list[str] | None = None,
-        figure_summaries: list[str] | None = None,
-    ) -> dict[str, Any]:
-        chunks = _split_review_chunks(body)
-        chunk_results: list[tuple[int, dict[str, Any]]] = []
-        for idx, chunk in enumerate(chunks, start=1):
-            result = self.review_chapter(
-                chapter_title=f"{chapter_title}（片段 {idx}/{len(chunks)}）",
-                body=chunk,
-                book_title=book_title,
-                book_type=book_type,
-                citation_style=citation_style,
-                user_material=user_material,
-                approved_citations=approved_citations,
-                figure_summaries=figure_summaries,
-                narrative_constitution=narrative_constitution,
-            )
-            chunk_results.append((len(chunk), result))
-        return _merge_chunk_reviews(chunk_results, max_issues=MAX_CHUNK_ISSUES)
+        except Exception as exc:
+            logger.warning("review task JSON parse failed task=%s: %s", task, exc)
+            return [], False
+        raw_findings = data.get("findings") or data.get("issues") or []
+        if not isinstance(raw_findings, list):
+            return [], False
+        normalized = [
+            item
+            for index, raw_item in enumerate(raw_findings[:16])
+            if isinstance(raw_item, dict)
+            for item in [_normalize_detection_finding(raw_item, task=task, index=index)]
+        ]
+        return normalized, True
 
 
-def _split_review_chunks(text: str, *, limit: int = 16_000) -> list[str]:
-    chunks: list[str] = []
-    buf: list[str] = []
-    size = 0
-    for para in (text or "").split("\n\n"):
-        if len(para) > limit:
-            if buf:
-                chunks.append("\n\n".join(buf))
-                buf = []
-                size = 0
-            for start in range(0, len(para), limit):
-                chunks.append(para[start : start + limit])
+def _normalize_detection_finding(
+    item: dict[str, Any],
+    *,
+    task: ReviewTask,
+    index: int,
+) -> dict[str, Any]:
+    location = item.get("location") if isinstance(item.get("location"), dict) else {}
+    quote = str(item.get("quote") or location.get("quote") or "")[:800]
+    severity = _enum_val(
+        item.get("proposed_severity") or item.get("severity"),
+        ("high", "medium", "low", "needs_verification"),
+        "medium",
+    )
+    evidence = _as_str_list(item.get("evidence"))
+    basis_refs = _as_str_list(item.get("basis_refs"))
+    basis_rule_ids = _as_str_list(item.get("basis_rule_ids"))
+    raw_finding: dict[str, Any] = {
+        "id": str(item.get("id") or f"{task}_{index + 1}"),
+        "dimension": str(item.get("dimension") or _TASK_DIMENSIONS[task][0]),
+        "issue_type": str(item.get("issue_type") or f"{task}_issue")[:80],
+        "severity": severity,
+        "penalty": _penalty(None, severity),
+        "category": _enum_val(
+            item.get("category"),
+            ("logic", "style", "grammar", "citation", "structure", "hallucination", "figure", "code", "consistency", "other"),
+            "other",
+        ),
+        "title": str(item.get("title") or "待核对问题")[:80],
+        "detail": "；".join(evidence)[:2000] or str(item.get("detail") or "")[:2000],
+        "why_it_matters": str(item.get("why_it_matters") or "")[:2000],
+        "quote": quote,
+        "suggestion": "",
+        "replacement_text": "",
+        "paragraph_index": _optional_int(item.get("paragraph_index") or location.get("paragraph_index")),
+        "char_start": _optional_int(item.get("char_start") or location.get("char_start")),
+        "char_end": _optional_int(item.get("char_end") or location.get("char_end")),
+        "confidence": _confidence(item.get("confidence")),
+        "basis_refs": basis_refs,
+        "basis_rule_ids": basis_rule_ids,
+        "evidence": evidence,
+        "verification_status": str(item.get("verification_status") or ""),
+        "detector": f"review_agent:{task}",
+        "review_task": task,
+    }
+    routed = route_finding_fix(raw_finding)
+    raw_finding.update(routed)
+    raw_finding["product_dimension"] = classify_product_dimension(raw_finding)
+    raw_finding["quality_evidence"] = _quality_evidence(raw_finding, location=location)
+    return raw_finding
+
+
+def _content_argument_input(
+    common: dict[str, str],
+    text: str,
+    *,
+    user_material: str,
+    narrative_constitution: str,
+    figure_summaries: list[str],
+) -> str:
+    parts = [
+        _render_book_context(common),
+        "【章节结构材料】\n" + _build_structure_digest(text),
+    ]
+    if narrative_constitution.strip():
+        parts.append("【与结构有关的叙事约束】\n" + narrative_constitution.strip()[:2600])
+    if user_material.strip():
+        excerpt = _select_context_blocks(
+            user_material,
+            allowed_titles=("写作依据", "已确认理解", "写作方案", "输入意图", "必须保留", "必须避免", "项目长期记忆", "大纲规则", "已确认写作要求", "写作要求", "术语"),
+            budget=5000,
+        )
+        if excerpt:
+            parts.append("【用户确认的写作要求】\n" + excerpt)
+    if figure_summaries:
+        parts.append("【本章图表语义摘要】\n" + "\n".join(figure_summaries[:20]))
+    return "\n\n".join(parts)
+
+
+def _reference_evidence_input(
+    common: dict[str, str],
+    claims: list[dict[str, Any]],
+    *,
+    approved_citations: list[str],
+    user_material: str,
+) -> str:
+    parts = [
+        _render_book_context(common),
+        "【待核验事实主张】\n" + json.dumps(claims, ensure_ascii=False),
+    ]
+    if approved_citations:
+        parts.append("【本章命中的已绑定文献】\n" + "\n".join(approved_citations[:60]))
+    if user_material.strip():
+        excerpt = _select_context_blocks(
+            user_material,
+            allowed_titles=("资料使用规则", "引用要求", "资料使用策略", "本书文献与核验状态", "本阶段检索到的资料依据", "用户资料（兼容）"),
+            budget=9000,
+        )
+        if excerpt:
+            parts.append("【本章命中的资料依据】\n" + excerpt)
+    return "\n\n".join(parts)
+
+
+def _language_ai_input(
+    common: dict[str, str],
+    chunk: str,
+    *,
+    chunk_index: int,
+    chunk_count: int,
+    user_material: str,
+) -> str:
+    parts = [
+        _render_book_context(common),
+        f"【局部正文 {chunk_index}/{chunk_count}】\n{_preprocess_code_blocks(chunk)}",
+    ]
+    if user_material.strip():
+        excerpt = _select_context_blocks(
+            user_material,
+            allowed_titles=("必须保留", "必须避免", "已确认写作要求", "写作要求", "术语"),
+            budget=3000,
+        )
+        if excerpt:
+            parts.append("【术语、禁忌与明确写作要求】\n" + excerpt)
+    return "\n\n".join(parts)
+
+
+def _render_book_context(common: dict[str, str]) -> str:
+    lines = [
+        f"书名：{common.get('book_title') or '未命名'}",
+        f"书类：{common.get('book_type') or '未指定'}",
+        f"章节标题：{common.get('chapter_title') or '未命名章节'}",
+        f"引用格式：{common.get('citation_style') or '未指定'}",
+    ]
+    instruction = str(common.get("review_instruction") or "").strip()
+    if instruction:
+        lines.append(f"专项审校要求：{instruction[:1200]}")
+    return "\n".join(lines)
+
+
+def _select_context_blocks(
+    text: str,
+    *,
+    allowed_titles: tuple[str, ...],
+    budget: int,
+) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    blocks = re.findall(r"【([^】]+)】\s*([\s\S]*?)(?=\n【[^】]+】|\Z)", raw)
+    if not blocks:
+        return raw[:budget]
+    selected: list[str] = []
+    used = 0
+    for title, content in blocks:
+        if not any(allowed in title for allowed in allowed_titles):
             continue
-        chunk_len = len(para) + (2 if buf else 0)
-        if buf and size + chunk_len > limit:
-            chunks.append("\n\n".join(buf))
-            buf = [para]
-            size = len(para)
+        piece = f"【{title}】\n{content.strip()}"
+        if used + len(piece) > budget:
+            remaining = budget - used
+            if remaining > len(title) + 4:
+                selected.append(piece[:remaining])
+            break
+        selected.append(piece)
+        used += len(piece)
+    return "\n\n".join(selected)
+
+
+def _build_structure_digest(text: str, *, limit: int = 14_000) -> str:
+    if len(text) <= limit:
+        return text
+    sections: list[tuple[str, list[str]]] = []
+    title = "章首"
+    body: list[str] = []
+    for paragraph in re.split(r"\n\s*\n", text):
+        stripped = paragraph.strip()
+        if not stripped:
+            continue
+        if re.match(r"^#{1,6}\s+", stripped):
+            if body:
+                sections.append((title, body))
+            title = stripped[:160]
+            body = []
         else:
-            buf.append(para)
-            size += chunk_len
-    if buf:
-        chunks.append("\n\n".join(buf))
+            body.append(stripped)
+    if body:
+        sections.append((title, body))
+    lines = ["以下为长章结构摘要，只用于全章关系判断："]
+    for heading, paragraphs in sections:
+        lines.append(heading)
+        selected = paragraphs[:2] + (paragraphs[-2:] if len(paragraphs) > 2 else [])
+        for paragraph in selected:
+            lines.append(paragraph[:900])
+        if sum(len(line) for line in lines) >= limit:
+            break
+    return "\n\n".join(lines)[:limit]
+
+
+def _extract_fact_claims(text: str, *, limit: int = 120) -> list[dict[str, Any]]:
+    claims: list[dict[str, Any]] = []
+    offset = 0
+    paragraph_index = 0
+    for match in re.finditer(r"[^\n]+(?:\n|$)", text):
+        raw = match.group(0)
+        paragraph = raw.strip()
+        if not paragraph:
+            continue
+        if paragraph.startswith(("#", "```", "|")):
+            offset = match.end()
+            continue
+        if _FACT_SIGNAL_RE.search(paragraph) or _CITATION_SIGNAL_RE.search(paragraph):
+            claims.append(
+                {
+                    "claim_id": f"c{len(claims) + 1}",
+                    "quote": paragraph[:900],
+                    "paragraph_index": paragraph_index,
+                    "char_start": match.start(),
+                    "char_end": min(match.start() + len(paragraph), match.end()),
+                }
+            )
+            if len(claims) >= limit:
+                break
+        paragraph_index += 1
+        offset = match.end()
+    return claims
+
+
+def _batch_items(items: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]:
+    return [items[index : index + size] for index in range(0, len(items), size)]
+
+
+def _split_language_chunks(text: str, *, limit: int = 7000) -> list[str]:
+    units: list[str] = []
+    for paragraph in re.split(r"\n\s*\n", text):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        if len(paragraph) <= limit:
+            units.append(paragraph)
+            continue
+        sentences = [part.strip() for part in re.split(r"(?<=[。！？；!?;])", paragraph) if part.strip()]
+        buffer = ""
+        for sentence in sentences or [paragraph]:
+            if buffer and len(buffer) + len(sentence) > limit:
+                units.append(buffer)
+                buffer = sentence
+            else:
+                buffer += sentence
+        if buffer:
+            units.append(buffer)
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    previous_tail = ""
+    for unit in units:
+        extra = len(unit) + (2 if current else 0)
+        if current and current_len + extra > limit:
+            chunks.append("\n\n".join(current))
+            previous_tail = current[-1]
+            current = [previous_tail, unit] if len(previous_tail) + len(unit) + 2 <= limit else [unit]
+            current_len = sum(len(item) for item in current) + max(0, len(current) - 1) * 2
+        else:
+            current.append(unit)
+            current_len += extra
+    if current:
+        chunks.append("\n\n".join(current))
     return chunks or [text]
 
 
-def _preprocess_code_blocks(text: str) -> str:
-    """代码块括号粗检，供 LLM 参考。"""
-    import re
+def _merge_task_findings(
+    task_results: list[tuple[ReviewTask, list[dict[str, Any]], bool]],
+) -> list[dict[str, Any]]:
+    severity_rank = {"high": 0, "needs_verification": 1, "medium": 2, "low": 3}
+    selected: dict[tuple[str, str], dict[str, Any]] = {}
+    for _, findings, _ in task_results:
+        for item in findings:
+            key = (
+                str(item.get("issue_type") or ""),
+                _normalize_quote(str(item.get("quote") or item.get("title") or ""))[:180],
+            )
+            current = selected.get(key)
+            if current is None or _confidence(item.get("confidence")) > _confidence(current.get("confidence")):
+                selected[key] = item
+    out = list(selected.values())
+    out.sort(
+        key=lambda item: (
+            severity_rank.get(str(item.get("severity") or "medium"), 2),
+            -_confidence(item.get("confidence")),
+        )
+    )
+    return out
 
+
+def _dimensions_from_findings(
+    task_results: list[tuple[ReviewTask, list[dict[str, Any]], bool]],
+) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    for task, findings, ok in task_results:
+        for dimension in _TASK_DIMENSIONS[task]:
+            relevant = [item for item in findings if item.get("dimension") == dimension]
+            penalty = sum(_penalty(item.get("penalty"), item.get("severity")) for item in relevant)
+            rows[dimension] = {
+                "raw_score": max(0, 96 - min(36, penalty)),
+                "summary": f"{task} 专项发现 {len(relevant)} 条候选问题。" if ok else f"{task} 专项结果不可用。",
+                "confidence": round(sum(_confidence(item.get("confidence")) for item in relevant) / max(1, len(relevant)), 3) if relevant else (0.78 if ok else 0.0),
+                "detector": f"review_agent:{task}",
+                "status": "completed" if ok else "partial",
+            }
+    return rows
+
+
+def _preprocess_code_blocks(text: str) -> str:
     notes: list[str] = []
-    for m in re.finditer(r"```(\w+)?\n([\s\S]*?)```", text):
-        body = m.group(2) or ""
+    for match in re.finditer(r"```(\w+)?\n([\s\S]*?)```", text):
+        body = match.group(2) or ""
         if body.count("(") != body.count(")"):
             notes.append("某代码块圆括号可能不匹配")
         if body.count("{") != body.count("}"):
             notes.append("某代码块花括号可能不匹配")
     if notes:
-        return text + "\n\n【程序化代码块提示】" + "；".join(dict.fromkeys(notes))
+        return text + "\n\n【程序预扫描提示】" + "；".join(dict.fromkeys(notes))
     return text
 
 
-def _merge_chunk_reviews(chunk_results: list[tuple[int, dict[str, Any]]], *, max_issues: int = MAX_CHUNK_ISSUES) -> dict[str, Any]:
-    total_len = sum(max(1, length) for length, _ in chunk_results) or 1
-    dim_acc: dict[str, dict[str, Any]] = {}
-    issues: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    summaries: list[str] = []
-    for length, result in chunk_results:
-        weight = max(1, length) / total_len
-        summary = str(result.get("summary") or "").strip()
-        if summary:
-            summaries.append(summary[:240])
-        for key, dim in (result.get("dimensions") or {}).items():
-            if not isinstance(dim, dict):
-                continue
-            acc = dim_acc.setdefault(
-                str(key),
-                {"raw_score": 0.0, "confidence": 0.0, "summary": [], "status": "completed"},
-            )
-            acc["raw_score"] += float(dim.get("raw_score", 70) or 70) * weight
-            acc["confidence"] += float(dim.get("confidence", 0.7) or 0.7) * weight
-            if dim.get("summary"):
-                acc["summary"].append(str(dim.get("summary"))[:180])
-            if str(dim.get("status") or "completed") != "completed":
-                acc["status"] = "partial"
-        for issue in result.get("issues") or []:
-            if not isinstance(issue, dict):
-                continue
-            key = "|".join(
-                [
-                    str(issue.get("dimension") or ""),
-                    str(issue.get("issue_type") or ""),
-                    str(issue.get("quote") or "")[:120],
-                    str(issue.get("title") or "")[:80],
-                ]
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            issues.append(issue)
-    dimensions = {
-        key: {
-            "raw_score": int(round(acc["raw_score"])),
-            "summary": "；".join(acc["summary"][:3]),
-            "confidence": round(float(acc["confidence"]), 3),
-            "detector": "review_agent:chunked",
-            "status": acc["status"],
-        }
-        for key, acc in dim_acc.items()
-    }
-    severity_rank = {"high": 0, "needs_verification": 1, "medium": 2, "low": 3}
-    issues.sort(key=lambda i: (severity_rank.get(str(i.get("severity")), 1), -int(i.get("penalty") or 0)))
-    return {
-        "summary": "长章分块审校完成：" + "；".join(summaries[:4]),
-        "dimensions": dimensions,
-        "issues": issues[:max_issues],
-    }
+def _normalize_quote(text: str) -> str:
+    return re.sub(r"\s+", "", text or "").lower()
 
 
 def _as_str_list(raw: Any) -> list[str]:
-    if raw is None or raw == "":
+    if raw in (None, ""):
         return []
     if isinstance(raw, list):
         return [str(item).strip() for item in raw if str(item).strip()]
     return [str(raw).strip()]
 
 
-def _action_options(raw: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw, list):
-        return []
-    options: list[dict[str, Any]] = []
-    for idx, item in enumerate(raw):
-        if isinstance(item, dict):
-            options.append({str(k): v for k, v in item.items() if v is not None})
-        elif str(item).strip():
-            label = str(item).strip()
-            options.append(
-                {
-                    "id": f"option_{idx + 1}",
-                    "label": label[:40],
-                    "description": label,
-                    "action_type": "choose",
-                }
-            )
-    return options
-
-
-def _quality_evidence(
-    item: dict[str, Any],
-    *,
-    location: dict[str, Any],
-    action_options: list[dict[str, Any]],
-    basis_refs: list[str],
-    basis_rule_ids: list[str],
-    evidence: list[str],
-) -> dict[str, Any]:
+def _quality_evidence(item: dict[str, Any], *, location: dict[str, Any]) -> dict[str, Any]:
     meta: dict[str, Any] = {}
     for key in (
         "product_dimension",
@@ -447,64 +519,24 @@ def _quality_evidence(
         "fix_capability",
         "verification_status",
         "tier",
-        "source_match",
-        "missing_fields",
-        "recommended_search_query",
+        "action_options",
+        "basis_refs",
+        "basis_rule_ids",
+        "evidence",
+        "review_task",
     ):
         value = item.get(key)
         if value not in (None, "", []):
             meta[key] = value
-    if action_options:
-        meta["action_options"] = action_options
-    if basis_refs:
-        meta["basis_refs"] = basis_refs
-    if basis_rule_ids:
-        meta["basis_rule_ids"] = basis_rule_ids
-    if evidence:
-        meta["evidence"] = evidence
-    clean_location = {str(k): v for k, v in location.items() if v not in (None, "", [])}
+    clean_location = {str(key): value for key, value in location.items() if value not in (None, "", [])}
     if clean_location:
         meta["location"] = clean_location
     return meta
 
 
 def _enum_val(raw: Any, allowed: tuple[str, ...], default: str) -> str:
-    s = str(raw or "").strip().lower()
-    return s if s in allowed else default
-
-
-def _infer_action_type(quote: str, suggestion: str) -> str:
-    q = quote.strip()
-    s = suggestion.strip()
-    if q and not s:
-        return "delete"
-    if not q and s:
-        return "insert"
-    if not q:
-        return "revise"
-    instr_markers = (
-        "统一",
-        "建议",
-        "改为",
-        "或改为",
-        "应该",
-        "可以",
-        "不宜",
-        "避免",
-        "增加",
-        "删除",
-        "补充",
-        "勿",
-        "不要",
-    )
-    if len(s) > 100 or "……" in s or "..." in s:
-        if any(m in s for m in instr_markers):
-            return "revise"
-    if any(s.startswith(m) for m in instr_markers):
-        return "revise"
-    if "，或" in s or "；或" in s:
-        return "revise"
-    return "replace"
+    value = str(raw or "").strip().lower()
+    return value if value in allowed else default
 
 
 def _penalty(raw: Any, severity: Any) -> int:
@@ -525,7 +557,7 @@ def _optional_int(raw: Any) -> int | None:
 
 def _confidence(raw: Any) -> float:
     try:
-        val = float(raw)
+        value = float(raw)
     except (TypeError, ValueError):
-        val = 0.7
-    return max(0.0, min(1.0, round(val, 3)))
+        value = 0.7
+    return max(0.0, min(1.0, round(value, 3)))

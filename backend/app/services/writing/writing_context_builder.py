@@ -15,8 +15,6 @@ from app.models.intake import InputUnderstanding, ProjectIntake, WritingPlan, Un
 from app.models.material import MaterialTerm, OutlineConstraint, WritingRequirement
 from app.models.reference import FileLifecycleStatus, ParseStatus, ReferenceFile
 from app.models.writing_basis import WritingBasis, WritingBasisStatus
-from app.models.book_format_strategy import BookFormatStrategy, FormatStrategyStatus
-from app.services.writing.format_strategy_service import FormatStrategyService
 from app.services.writing.writing_basis_service import WritingBasisService
 from app.services.assistant.project_memory_service import ProjectMemoryService
 from app.services.citation_verification import persisted_citation_verification_dict
@@ -31,31 +29,6 @@ from app.services.review.review_rule_evolution import (
 class WritingContextBuilder:
     def __init__(self, db: Session):
         self.db = db
-
-    def _confirmed_format_strategy(self, book_id: UUID) -> BookFormatStrategy | None:
-        return (
-            self.db.query(BookFormatStrategy)
-            .filter(
-                BookFormatStrategy.book_id == book_id,
-                BookFormatStrategy.status == FormatStrategyStatus.confirmed,
-            )
-            .order_by(BookFormatStrategy.version.desc())
-            .first()
-        )
-
-    def _active_format_strategy(self, book_id: UUID) -> BookFormatStrategy | None:
-        confirmed = self._confirmed_format_strategy(book_id)
-        if confirmed:
-            return confirmed
-        return (
-            self.db.query(BookFormatStrategy)
-            .filter(
-                BookFormatStrategy.book_id == book_id,
-                BookFormatStrategy.status == FormatStrategyStatus.draft,
-            )
-            .order_by(BookFormatStrategy.version.desc())
-            .first()
-        )
 
     def _confirmed_basis(self, book_id: UUID) -> WritingBasis | None:
         return (
@@ -200,10 +173,6 @@ class WritingContextBuilder:
             if s and s not in outline_policy:
                 outline_policy.append(s)
 
-        format_strategy = self._active_format_strategy(book_id)
-        format_svc = FormatStrategyService(self.db)
-        format_dict = format_svc.to_dict(format_strategy)
-
         source_materials: dict = {}
         try:
             from app.services.sources.source_outline_bridge import materials_from_outline_contract
@@ -217,8 +186,6 @@ class WritingContextBuilder:
             "book_id": str(book_id),
             "writing_basis_id": str(basis.id) if basis else None,
             "writing_basis": basis_dict,
-            "format_strategy_id": str(format_strategy.id) if format_strategy else None,
-            "format_strategy": format_dict,
             "understanding_id": str(understanding.id) if understanding else None,
             "writing_plan_id": str(plan.id) if plan else None,
             "requirement_ids": [str(r.id) for r in requirements],
@@ -369,38 +336,6 @@ class WritingContextBuilder:
                 "【初稿结构线索】\n"
                 + "\n---\n".join(str(x)[:1200] for x in snap["source_manuscript_blocks"][:2])
             )
-        format_strategy = snap.get("format_strategy") if isinstance(snap.get("format_strategy"), dict) else None
-        if format_strategy:
-            summary_lines: list[str] = []
-            for label, key in (
-                ("书级固定栏目", "book_level_columns"),
-                ("条件栏目", "conditional_columns"),
-            ):
-                cols = format_strategy.get(key) or []
-                if not cols:
-                    continue
-                summary_lines.append(f"{label}：")
-                for col in cols[:6]:
-                    if isinstance(col, dict):
-                        name = col.get("column_name") or ""
-                        purpose = col.get("purpose") or ""
-                        if name:
-                            summary_lines.append(f"  · {name}（{purpose[:80]}）" if purpose else f"  · {name}")
-            forbidden = format_strategy.get("forbidden_patterns") or []
-            if forbidden:
-                summary_lines.append("禁止模板化：" + "；".join(str(x) for x in forbidden[:5]))
-            if summary_lines:
-                parts.append("【全书体例与栏目】\n" + "\n".join(summary_lines))
-        chapter_index = snap.get("chapter_index")
-        if chapter_index is not None and format_strategy:
-            fs_id = snap.get("format_strategy_id")
-            fs_row = None
-            if fs_id:
-                fs_row = self.db.query(BookFormatStrategy).filter(BookFormatStrategy.id == UUID(str(fs_id))).first()
-            if fs_row and fs_row.status == FormatStrategyStatus.confirmed:
-                chapter_block = FormatStrategyService(self.db).chapter_format_block(fs_row, int(chapter_index))
-                if chapter_block:
-                    parts.append(f"【本章栏目策略】\n{chapter_block}")
         reqs = snap.get("requirements") or []
         if reqs:
             parts.append("【写作要求】\n" + "\n".join(f"- ({r['strength']}) {r['content'][:200]}" for r in reqs[:15]))
@@ -431,7 +366,6 @@ class WritingContextBuilder:
             "intent_json": snap.get("intent_json"),
             "impact_map": snap.get("impact_map"),
             "intent_effects": snap.get("intent_effects"),
-            "format_strategy_id": snap.get("format_strategy_id"),
             "chapter_index": snap.get("chapter_index"),
             "citations": snap.get("citations"),
             "review_rule_candidates": snap.get("review_rule_candidates"),
@@ -447,7 +381,6 @@ class WritingContextBuilder:
             understanding_id=UUID(snap["understanding_id"]) if snap.get("understanding_id") else None,
             writing_plan_id=UUID(snap["writing_plan_id"]) if snap.get("writing_plan_id") else None,
             writing_basis_id=UUID(snap["writing_basis_id"]) if snap.get("writing_basis_id") else None,
-            format_strategy_id=UUID(snap["format_strategy_id"]) if snap.get("format_strategy_id") else None,
             requirement_ids=snap.get("requirement_ids") or [],
             outline_constraint_ids=snap.get("outline_constraint_ids") or [],
             source_items=snap.get("source_items") or [],
@@ -474,8 +407,6 @@ class WritingContextBuilder:
             {
                 "writing_basis",
                 "writing_basis_id",
-                "format_strategy",
-                "format_strategy_id",
                 "requirements",
                 "requirement_ids",
                 "outline_constraints",
@@ -500,8 +431,6 @@ class WritingContextBuilder:
             {
                 "writing_basis",
                 "writing_basis_id",
-                "format_strategy",
-                "format_strategy_id",
                 "requirements",
                 "must_keep",
                 "must_avoid",
@@ -519,8 +448,6 @@ class WritingContextBuilder:
             {
                 "writing_basis",
                 "writing_basis_id",
-                "format_strategy",
-                "format_strategy_id",
                 "requirements",
                 "outline_constraints",
                 "must_keep",
@@ -561,7 +488,6 @@ class WritingContextBuilder:
                 "book_id",
                 "chapter_index",
                 "writing_basis_id",
-                "format_strategy_id",
                 "understanding_id",
                 "writing_plan_id",
                 "requirement_ids",
@@ -629,10 +555,6 @@ class WritingContextBuilder:
         )
         self.persist_snapshot(book_id, "review", snap)
         return snap
-
-    def chapter_format_block(self, book_id: UUID, chapter_index: int) -> str:
-        strategy = self._confirmed_format_strategy(book_id)
-        return FormatStrategyService(self.db).chapter_format_block(strategy, chapter_index)
 
     def auto_progress_allowed(self, book_id: UUID) -> bool:
         book = self.db.query(Book).filter(Book.id == book_id).first()

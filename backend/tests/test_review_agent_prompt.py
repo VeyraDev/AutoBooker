@@ -6,51 +6,56 @@ import json
 from typing import Any
 
 from app.agents.review_agent import REVIEW_SYSTEM, ReviewAgent
-from app.prompts.review_quality import build_chapter_review_system_prompt, get_review_prompt_asset
+from app.prompts.review_quality import (
+    build_ai_rewrite_prompt,
+    build_chapter_review_system_prompt,
+    build_review_prompt,
+    get_review_prompt_asset,
+)
 from app.services.review_scoring import standardize_issue
 
 
-def test_chapter_review_system_prompt_is_composed_from_registry():
+def test_review_prompts_are_selected_by_task_instead_of_recombined():
     asset = get_review_prompt_asset("chapter_llm_review_system")
     prompt = build_chapter_review_system_prompt()
 
     assert asset.prompt == prompt
     assert REVIEW_SYSTEM == prompt
-    assert "审校器通用系统提示词" in prompt
-    assert "章节 LLM 综合审校器提示词" in prompt
-    assert "参考文献真实性审校器提示词" in prompt
-    assert "AI 文本风险检测提示词" in prompt
-    assert "一键修复路由器提示词" in prompt
-    assert "不能生成、补造" in prompt
-    assert "fix_capability" in prompt
+    assert "当前任务：内容与论证审校" in prompt
+    assert "当前任务：资料、事实与参考文献审校" not in prompt
+    assert "当前任务：编校语言与 AI 表达风险审校" not in prompt
+    assert "preview_apply 只允许" not in prompt
+
+    reference_prompt = build_review_prompt("reference_evidence", "academic_monograph")
+    language_prompt = build_review_prompt("language_ai", "biography")
+    assert "当前任务：资料、事实与参考文献审校" in reference_prompt
+    assert "学术专著补丁" in reference_prompt
+    assert "人物传记补丁" not in reference_prompt
+    assert "当前任务：编校语言与 AI 表达风险审校" in language_prompt
+    assert "人物传记补丁" in language_prompt
+    assert "本章生成时实际使用的资料" not in language_prompt
+    assert "只输出可直接替换原文" not in language_prompt
+    assert "只输出可直接替换原文" in build_ai_rewrite_prompt("biography")
 
 
 def test_review_agent_preserves_evidence_and_fixability_fields():
     class FakeClient:
         def __init__(self) -> None:
-            self.messages: list[dict[str, str]] = []
+            self.calls: list[list[dict[str, str]]] = []
 
         def chat_completion(self, messages: list[dict[str, str]], **_: Any) -> str:
-            self.messages = messages
+            self.calls.append(messages)
+            if "当前任务：资料、事实与参考文献审校" not in messages[0]["content"]:
+                return json.dumps({"findings": []}, ensure_ascii=False)
             return json.dumps(
                 {
-                    "summary": "发现一处待核验来源问题。",
-                    "dimensions": [
-                        {
-                            "key": "factual_support",
-                            "raw_score": 68,
-                            "confidence": 0.81,
-                            "summary": "部分数据缺少来源。",
-                        }
-                    ],
-                    "issues": [
+                    "findings": [
                         {
                             "id": "src_001",
                             "dimension": "citation_sources",
                             "category": "citation",
                             "issue_type": "missing_citation",
-                            "severity": "needs_verification",
-                            "tier": "needs_verification",
+                            "proposed_severity": "needs_verification",
                             "title": "具体比例缺少来源",
                             "detail": "原文使用了具体比例，但未看到可核验来源。",
                             "why_it_matters": "具体比例会影响读者对论证可信度的判断。",
@@ -62,17 +67,6 @@ def test_review_agent_preserves_evidence_and_fixability_fields():
                             },
                             "evidence": ["包含“研究表明”和“60%”，但没有引用标记。"],
                             "basis_refs": ["原文章节第3段"],
-                            "action_type": "choose",
-                            "action_options": [
-                                {
-                                    "id": "verify_source",
-                                    "label": "补充来源",
-                                    "description": "上传或绑定含摘要的文献来源",
-                                    "action_type": "manual",
-                                }
-                            ],
-                            "fix_capability": "choice_then_apply",
-                            "product_dimension": "evidence_citation",
                             "verification_status": "needs_verification",
                             "confidence": 0.88,
                         }
@@ -91,10 +85,35 @@ def test_review_agent_preserves_evidence_and_fixability_fields():
         book_title="审校测试书",
         book_type="学术专著",
         citation_style="GB/T 7714",
+        narrative_constitution="NARRATIVE_ONLY_TOKEN",
+        approved_citations=["BOUND_REFERENCE_ONLY_TOKEN"],
+        review_instruction="CUSTOM_REVIEW_ONLY_TOKEN",
+        user_material=(
+            "【写作要求】\nWRITING_REQUIREMENT_ONLY_TOKEN\n\n"
+            "【本阶段检索到的资料依据】\nSOURCE_EVIDENCE_ONLY_TOKEN"
+        ),
     )
 
-    assert fake.messages[0]["role"] == "system"
-    assert "章节 LLM 综合审校器提示词" in fake.messages[0]["content"]
+    assert len(fake.calls) == 3
+    system_prompts = [call[0]["content"] for call in fake.calls]
+    assert any("当前任务：内容与论证审校" in prompt for prompt in system_prompts)
+    assert any("当前任务：资料、事实与参考文献审校" in prompt for prompt in system_prompts)
+    assert any("当前任务：编校语言与 AI 表达风险审校" in prompt for prompt in system_prompts)
+    reference_call = next(call for call in fake.calls if "资料、事实与参考文献" in call[0]["content"])
+    content_call = next(call for call in fake.calls if "内容与论证审校" in call[0]["content"])
+    language_call = next(call for call in fake.calls if "编校语言与 AI 表达风险" in call[0]["content"])
+    assert "BOUND_REFERENCE_ONLY_TOKEN" in reference_call[1]["content"]
+    assert "BOUND_REFERENCE_ONLY_TOKEN" not in content_call[1]["content"]
+    assert "BOUND_REFERENCE_ONLY_TOKEN" not in language_call[1]["content"]
+    assert "NARRATIVE_ONLY_TOKEN" in content_call[1]["content"]
+    assert "NARRATIVE_ONLY_TOKEN" not in language_call[1]["content"]
+    assert "WRITING_REQUIREMENT_ONLY_TOKEN" in content_call[1]["content"]
+    assert "WRITING_REQUIREMENT_ONLY_TOKEN" in language_call[1]["content"]
+    assert "WRITING_REQUIREMENT_ONLY_TOKEN" not in reference_call[1]["content"]
+    assert "SOURCE_EVIDENCE_ONLY_TOKEN" in reference_call[1]["content"]
+    assert "SOURCE_EVIDENCE_ONLY_TOKEN" not in content_call[1]["content"]
+    assert "SOURCE_EVIDENCE_ONLY_TOKEN" not in language_call[1]["content"]
+    assert all("CUSTOM_REVIEW_ONLY_TOKEN" in call[1]["content"] for call in fake.calls)
 
     issue = result["issues"][0]
     assert issue["severity"] == "needs_verification"
@@ -103,7 +122,6 @@ def test_review_agent_preserves_evidence_and_fixability_fields():
     assert issue["paragraph_index"] == 2
     assert issue["char_start"] == 5
     assert issue["fix_capability"] == "choice_then_apply"
-    assert issue["product_dimension"] == "evidence_citation"
     assert issue["quality_evidence"]["evidence"] == ["包含“研究表明”和“60%”，但没有引用标记。"]
     assert issue["quality_evidence"]["basis_refs"] == ["原文章节第3段"]
 

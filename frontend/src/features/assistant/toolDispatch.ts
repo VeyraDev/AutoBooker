@@ -24,13 +24,12 @@ export function panelHintToTab(hint: string): RightPanelTab | null {
     case "literature":
       return "literature";
     case "review":
-      return "review";
     case "review_workspace":
-      return "review";
+      return null;
     case "refs":
       return "refs";
     case "memory":
-      return "memory";
+      return null;
     case "ai":
       return "ai";
     case "detail":

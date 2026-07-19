@@ -100,8 +100,10 @@ class CustomReviewService:
                 body=md,
                 book_title=book.title or "",
                 book_type=book.book_type.value if book.book_type else "non_fiction",
+                review_profile=book.style_type or (book.book_type.value if book.book_type else "default"),
                 citation_style=citation_style,
-                user_material=f"{context_block}\n\n{task_block}",
+                review_instruction=task_block,
+                user_material=context_block,
                 narrative_constitution=(book.narrative_constitution or ""),
             )
             for issue in result.get("issues") or []:

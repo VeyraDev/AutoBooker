@@ -37,12 +37,10 @@ OUTLINE_JSON_INSTRUCTION = """
       "sections": [
         {"title": "第一节 离开故乡之前", "summary": "本节摘要（50字）"},
         {"title": "第二节 陌生城市里的第一年", "summary": "本节摘要（50字）"}
-      ],
-      "column_labels": ["操作步骤", "命令示例", "故障排查", "本章小结"]
+      ]
     }
   ]
 }
-每章可选 column_labels（2-6 个短标签）：本章正文建议采用的栏目/呈现块名称，如「操作步骤 · 案例 · 小结」；纯理论章可省略或给 2-3 个即可。
 """.strip()
 
 # 兼容旧代码引用：体裁缺失时的默认系统词 = 泛用编辑 + JSON
@@ -79,11 +77,6 @@ OUTLINE_JSON_SCHEMA: dict = {
                                 "summary": {"type": "string"},
                             },
                         },
-                    },
-                    "column_labels": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "maxItems": 8,
                     },
                 },
             },

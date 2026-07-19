@@ -35,6 +35,7 @@ function readSingleLineInlineDollar(src: string, start: number): { latex: string
   let i = start + 1;
   while (i < src.length) {
     const ch = src[i];
+    if (ch === "\n") return null;
     if (ch === "$" && !isEscaped(src, i)) {
       const latex = normalizeInlineLatexWhitespace(src.slice(start + 1, i).trim());
       if (!latex) return null;
@@ -116,7 +117,6 @@ export function tokenizeMathInMarkdown(markdown: string): MathSegment[] {
 
   const flushText = () => {
     if (!buf) return;
-    // 行内 $...$ 留给段落解析；此处只切 block 级公式。
     out.push({ kind: "text", value: buf });
     buf = "";
   };
@@ -181,6 +181,22 @@ export function tokenizeMathInMarkdown(markdown: string): MathSegment[] {
       flushText();
       out.push({ kind: "block", latex: dblock.latex });
       i = dblock.end;
+      continue;
+    }
+
+    const paren = readParenInline(src, i);
+    if (paren) {
+      flushText();
+      out.push({ kind: "inline", latex: paren.latex });
+      i = paren.end;
+      continue;
+    }
+
+    const dollar = readSingleLineInlineDollar(src, i);
+    if (dollar) {
+      flushText();
+      out.push({ kind: "inline", latex: dollar.latex });
+      i = dollar.end;
       continue;
     }
 
