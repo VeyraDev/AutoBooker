@@ -45,6 +45,7 @@ class BookUpdate(BaseModel):
     topic_tags: list[str] | None = None
     topic_brief: str | None = Field(default=None, max_length=20_000)
     allow_title_optimization: bool | None = None
+    publication_info: dict | None = None
 
     @field_validator("topic_tags")
     @classmethod
@@ -91,6 +92,7 @@ class BookOut(BaseModel):
     topic_brief: str | None = None
     user_material: str | None = None
     bibliography: dict | None = None
+    publication_info: dict | None = None
     constitution_stale: bool = False
     pending_writing_spec: dict | None = None
     created_at: datetime
@@ -102,6 +104,27 @@ class BookOut(BaseModel):
 
 class SetupRecommendIn(BaseModel):
     force: bool = False
+
+
+class ExportPreviewOut(BaseModel):
+    publication_info: dict
+    preface_enabled: bool = False
+    preface_title: str = "前言"
+    preface_html: str = ""
+    toc: list[dict] = Field(default_factory=list)
+    chapters: list[dict] = Field(default_factory=list)
+    bibliography_title: str | None = None
+    bibliography_html: str = ""
+    preview_html: str = ""
+    cover_image_data_url: str = ""
+    page_format: dict = Field(default_factory=dict)
+    page_format_options: list[dict] = Field(default_factory=list)
+
+
+class ExportPreviewIn(BaseModel):
+    publication_info: dict | None = None
+    persist: bool = False
+    regenerate_cover_bg: bool = False
 
 
 class DisciplineCandidateOut(BaseModel):

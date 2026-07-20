@@ -135,13 +135,30 @@ def _detect_bad_figure_layout_ids(pdf_bytes: bytes) -> set[str]:
     return bad
 
 
-def _render_story_html_to_pdf(html_doc: str, archive: fitz.Archive | None = None) -> bytes:
-    story = fitz.Story(html=html_doc, user_css=PUBLICATION_CSS, archive=archive)
+def _render_story_html_to_pdf(
+    html_doc: str,
+    archive: fitz.Archive | None = None,
+    *,
+    page_width_pt: float | None = None,
+    page_height_pt: float | None = None,
+    margin_pt: float | None = None,
+    margins_ltrb_pt: tuple[float, float, float, float] | None = None,
+    user_css: str | None = None,
+) -> bytes:
+    from app.services.publication.publication_styles import PAGE_HEIGHT_PT, PAGE_WIDTH_PT, PUBLICATION_CSS
+
+    story = fitz.Story(html=html_doc, user_css=user_css or PUBLICATION_CSS, archive=archive)
     buf = io.BytesIO()
     writer = fitz.DocumentWriter(buf)
-    mediabox = fitz.paper_rect("a4")
-    margin = PDF_PAGE_MARGIN_PT
-    where = mediabox + (margin, margin, -margin, -margin)
+    w = page_width_pt if page_width_pt is not None else PAGE_WIDTH_PT
+    h = page_height_pt if page_height_pt is not None else PAGE_HEIGHT_PT
+    mediabox = fitz.Rect(0, 0, w, h)
+    if margins_ltrb_pt is not None:
+        left, top, right, bottom = margins_ltrb_pt
+        where = mediabox + (left, top, -right, -bottom)
+    else:
+        margin = margin_pt if margin_pt is not None else PDF_PAGE_MARGIN_PT
+        where = mediabox + (margin, margin, -margin, -margin)
     more = 1
     while more:
         device = writer.begin_page(mediabox)
@@ -192,6 +209,36 @@ def _repair_undersized_pdf_figures(pdf_bytes: bytes) -> bytes:
         out = doc.tobytes()
         doc.close()
     return out
+
+
+def _full_bleed_cover_first_page(pdf_bytes: bytes) -> bytes:
+    """将首页封面图铺满整页（Story 排版带正文边距，封面需出血满版）。"""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        if doc.page_count < 1:
+            return pdf_bytes
+        page = doc[0]
+        best: tuple[float, bytes] | None = None
+        for im in page.get_images(full=True):
+            info = doc.extract_image(im[0])
+            stream = info.get("image")
+            if not stream:
+                continue
+            for rect in page.get_image_rects(im[7]):
+                area = float(rect.width * rect.height)
+                if best is None or area > best[0]:
+                    best = (area, stream)
+        if best is None:
+            return pdf_bytes
+        stream = best[1]
+        rect = fitz.Rect(page.rect)
+        # 用新页替换首页，避免旧图与白边残留在内容流中
+        new_page = doc.new_page(0, width=rect.width, height=rect.height)
+        new_page.insert_image(new_page.rect, stream=stream, keep_proportion=False)
+        doc.delete_page(1)
+        return doc.tobytes()
+    finally:
+        doc.close()
 
 
 def _esc(s: str) -> str:
@@ -307,11 +354,14 @@ def _build_publication_html(
     page_break_figure_ids: set[str],
     archive: fitz.Archive,
     db: Session | None = None,
+    content_width_pt: float | None = None,
+    content_height_pt: float | None = None,
 ) -> str:
     parts = ["<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>"]
     blocks = ast.blocks
     fig_idx = 0
     i = 0
+    page_fresh = True  # 章过渡分页后为 True，避免节标题再插空白页
     while i < len(blocks):
         block = blocks[i]
         role = block.role
@@ -322,7 +372,23 @@ def _build_publication_html(
             fig_idx += 1
             fig_id = f"figgrp-{fig_idx}"
             fig_html = ""
-            if isinstance(node, dict):
+            if block.attrs.get("cover_image"):
+                from app.services.publication.cover_background import render_cover_png
+                from app.services.publication.page_formats import cover_pixel_size, get_page_format_from_publication
+
+                pub = block.attrs.get("publication") if isinstance(block.attrs.get("publication"), dict) else {}
+                png = render_cover_png(pub, fallback_title=block.text, db=db)
+                name = f"cover-{fig_idx}.png"
+                archive.add((png, name))
+                spec = get_page_format_from_publication(pub)
+                cw, ch = cover_pixel_size(spec)
+                use_w = content_width_pt if content_width_pt is not None else PDF_CONTENT_WIDTH_PT
+                use_h = content_height_pt if content_height_pt is not None else PDF_CONTENT_HEIGHT_PT
+                width_px = int(use_w / 72 * 96)
+                height_px = int(width_px * ch / max(1, cw))
+                max_h = int(use_h / 72 * 96)
+                fig_html = _figure_img_html(name, width_px, min(height_px, max_h))
+            elif isinstance(node, dict):
                 merged_attrs = merge_figure_export_attrs(block.attrs, node.get("attrs"))
                 prepared = _prepare_figure_archive_entry(merged_attrs, fig_idx, archive, db=db)
                 if prepared:
@@ -334,7 +400,7 @@ def _build_publication_html(
                 caption_html = f"<p class='caption'>{cap}</p>"
                 i += 1
             if fig_html:
-                if fig_id in page_break_figure_ids:
+                if fig_id in page_break_figure_ids and not block.attrs.get("cover_image"):
                     parts.append("<p style='page-break-before:always;margin:0'></p>")
                 parts.append(
                     f"<div class='figure-group' id='{fig_id}'>"
@@ -349,11 +415,62 @@ def _build_publication_html(
 
         if role == "book_title":
             parts.append(f"<h1 class='book-title'>{t}</h1>")
+            page_fresh = False
         elif role == "preface_title":
             parts.append(f"<h1 class='preface-title'>{t}</h1>")
+            page_fresh = False
+        elif role == "chapter_flyleaf":
+            if block.attrs.get("body_start"):
+                parts.append("<p id='autobook-body-start' style='margin:0;font-size:1pt;color:#fff'>[[BODY_START]]</p>")
+            summary = _esc(str(block.attrs.get("summary") or ""))
+            parts.append("<div class='flyleaf'>")
+            parts.append(f"<div class='flyleaf-title'>{t}</div>")
+            if summary:
+                parts.append(f"<p class='flyleaf-summary'>{summary}</p>")
+            parts.append("</div>")
+            page_fresh = True
+        elif role == "toc_entry":
+            # 字符点线单行：Story 多列表格会吞页码 / 中间列拉不开
+            from app.services.publication.publication_styles import BODY_PT
+            from app.services.publication.toc_format import toc_entry_plain_line
+
+            level = int(block.attrs.get("level") or block.level or 1)
+            page_raw = block.attrs.get("page")
+            try:
+                page_num = None if page_raw is None or page_raw == "" else int(page_raw)
+            except (TypeError, ValueError):
+                page_num = None
+            cw = float(content_width_pt) if content_width_pt is not None else float(PDF_CONTENT_WIDTH_PT)
+            font_size = float(BODY_PT)
+            indent_pt = 12.0 if level > 1 else 0.0
+            left, page_field = toc_entry_plain_line(
+                block.text or "",
+                page_num,
+                content_width_pt=cw,
+                font_size_pt=font_size,
+                indent_pt=indent_pt,
+            )
+            pad = f"padding-left:{indent_pt:.1f}pt;" if indent_pt else ""
+            # 整行同一字体，避免 Courier 槽位被 Story 裁切成末位数字
+            line = f"{left}{page_field}" if page_field else left
+            parts.append(
+                f'<p class="toc-line" style="margin:3pt 0;{pad}white-space:nowrap;'
+                f'font-size:{font_size}pt;text-indent:0;">{_esc(line)}</p>'
+            )
+            page_fresh = False
+        elif role == "section_flyleaf":
+            if not page_fresh:
+                parts.append("<p style='page-break-before:always;margin:0'></p>")
+            parts.append(f"<h2 class='section-title'>{t}</h2>")
+            page_fresh = False
         elif role == "chapter_title":
+            if block.attrs.get("body_start"):
+                parts.append("<p id='autobook-body-start' style='margin:0;font-size:1pt;color:#fff'> </p>")
             parts.append(f"<h1 class='chapter-title'>{t}</h1>")
+            page_fresh = False
         elif role in ("section_title", "subsection_title"):
+            if role == "section_title" and not page_fresh:
+                parts.append("<p style='page-break-before:always;margin:0'></p>")
             if isinstance(node, dict):
                 chunk = _tiptap_node_to_html(node)
                 if chunk:
@@ -362,28 +479,43 @@ def _build_publication_html(
                     parts.append(f"<h2 class='section-title'>{t}</h2>")
             else:
                 parts.append(f"<h2 class='section-title'>{t}</h2>")
+            page_fresh = False
         elif role == "body":
             if block.attrs.get("force_page_break"):
                 parts.append("<p style='page-break-before:always;margin:0'></p>")
+                page_fresh = True
                 if not t and not isinstance(node, dict):
                     i += 1
                     continue
+            if block.attrs.get("colophon_spacer"):
+                # 把版权信息顶到页面下半部（对齐预览 flex-end）
+                parts.append("<p class='colophon-spacer'>&nbsp;</p>")
+                page_fresh = False
+                i += 1
+                continue
+            cls = "body colophon-line" if block.attrs.get("colophon") else "body"
+            if block.attrs.get("colophon_first"):
+                cls = f"{cls} colophon-first"
             if isinstance(node, dict):
                 chunk = _tiptap_node_to_html(node)
                 if chunk:
                     parts.append(chunk)
                 else:
-                    parts.append(f"<p class='body'>{t}</p>")
+                    parts.append(f"<p class='{cls}'>{t}</p>")
             else:
-                parts.append(f"<p class='body'>{t}</p>")
+                indent = "text-indent:0;" if block.attrs.get("colophon") or block.attrs.get("cover_meta") else ""
+                parts.append(f"<p class='{cls}' style='{indent}'>{t}</p>")
+            page_fresh = False
         elif role == "table_caption":
             parts.append(f"<p class='caption'>{t}</p>")
+            page_fresh = False
         elif role == "table" and block.attrs.get("table_node"):
             table_node = block.attrs["table_node"]
             if isinstance(table_node, dict):
                 chunk = _tiptap_node_to_html(table_node)
                 if chunk:
                     parts.append(chunk)
+            page_fresh = False
         elif role == "code":
             if isinstance(node, dict):
                 chunk = _tiptap_node_to_html(node)
@@ -393,11 +525,13 @@ def _build_publication_html(
                     parts.append(f"<pre><code>{t}</code></pre>")
             else:
                 parts.append(f"<pre><code>{t}</code></pre>")
+            page_fresh = False
         elif role == "list":
             if isinstance(node, dict):
                 chunk = _tiptap_node_to_html(node)
                 if chunk:
                     parts.append(chunk)
+            page_fresh = False
         elif role == "blockquote":
             if isinstance(node, dict):
                 chunk = _tiptap_node_to_html(node)
@@ -407,6 +541,7 @@ def _build_publication_html(
                     parts.append(f"<blockquote>{t}</blockquote>")
             else:
                 parts.append(f"<blockquote>{t}</blockquote>")
+            page_fresh = False
         i += 1
 
     parts.append("</body></html>")
@@ -424,9 +559,33 @@ def _export_ast_to_linear_book_ast(export_ast: BookExportAst) -> BookAst:
             return
         blocks.append(AstBlock(role="body", text="", attrs={"force_page_break": True}))
 
+    body_started = False
     for section in export_ast.sections:
         if section.type == "cover":
-            blocks.append(AstBlock(role="book_title", text=section.title))
+            pub = section.publication if isinstance(getattr(section, "publication", None), dict) else {}
+            title = (pub.get("title") or section.title or "").strip() or "未命名"
+            blocks.append(
+                AstBlock(
+                    role="figure",
+                    text=title,
+                    attrs={"cover_image": True, "publication": pub},
+                )
+            )
+            append_page_break_once()
+            # 版权页：字段与导出预览一致；用 spacer 把内容压到下半页
+            from app.services.publication.publication_info import build_colophon_lines
+
+            blocks.append(
+                AstBlock(role="body", text="", attrs={"colophon_spacer": True})
+            )
+            for idx, line in enumerate(build_colophon_lines(pub)):
+                blocks.append(
+                    AstBlock(
+                        role="body",
+                        text=line,
+                        attrs={"colophon": True, "colophon_first": idx == 0},
+                    )
+                )
             if section.page_break_after:
                 append_page_break_once()
         elif section.type == "toc":
@@ -434,7 +593,17 @@ def _export_ast_to_linear_book_ast(export_ast: BookExportAst) -> BookAst:
                 append_page_break_once()
             blocks.append(AstBlock(role="chapter_title", text="目录"))
             for entry in section.entries:
-                blocks.append(AstBlock(role="body", text=entry.title))
+                blocks.append(
+                    AstBlock(
+                        role="toc_entry",
+                        text=entry.title,
+                        level=getattr(entry, "level", 1) or 1,
+                        attrs={
+                            "page": entry.page,
+                            "level": getattr(entry, "level", 1) or 1,
+                        },
+                    )
+                )
             if section.page_break_after:
                 append_page_break_once()
         elif section.type == "preface":
@@ -447,17 +616,21 @@ def _export_ast_to_linear_book_ast(export_ast: BookExportAst) -> BookAst:
         elif section.type == "chapter":
             if section.page_break_before:
                 append_page_break_once()
-            blocks.append(
-                AstBlock(
-                    role="chapter_title",
-                    text=section.title,
-                    attrs={"chapter_index": section.chapter_index},
-                )
-            )
+            attrs: dict = {
+                "chapter_index": section.chapter_index,
+                "summary": getattr(section, "summary", "") or "",
+            }
+            if not body_started:
+                attrs["body_start"] = True
+                body_started = True
+            blocks.append(AstBlock(role="chapter_flyleaf", text=section.title, attrs=attrs))
+            append_page_break_once()
             blocks.extend(section.blocks)
         elif section.type == "bibliography":
             if section.page_break_before:
                 append_page_break_once()
+            if not body_started:
+                body_started = True
             blocks.append(
                 AstBlock(role="chapter_title", text=section.title, attrs={"book_end_matter": True})
             )
@@ -465,20 +638,109 @@ def _export_ast_to_linear_book_ast(export_ast: BookExportAst) -> BookAst:
     return BookAst(title=export_ast.title, blocks=blocks)
 
 
+def _estimate_body_start_page_index(export_ast: BookExportAst) -> int:
+    """估算 PDF 中正文起始页（0-based）：封面+版权+目录+前言。"""
+    pages = 2  # 封面图 + 版权页
+    pages += 1  # 目录至少 1 页
+    for section in export_ast.sections:
+        if section.type == "toc":
+            pages += max(0, (len(section.entries) - 1) // 28)
+        elif section.type == "preface":
+            chars = sum(len(b.text or "") for b in section.blocks)
+            pages += max(1, (chars + 399) // 400)
+    return pages
+
+
 def render_export_ast_to_pdf(export_ast: BookExportAst, db: Session | None = None) -> bytes:
-    return render_ast_to_pdf(_export_ast_to_linear_book_ast(export_ast), db=db)
+    from app.services.publication.page_formats import get_page_format_from_publication
+    from app.services.publication.page_numbers import detect_pdf_body_start_page
+    from app.services.publication.publication_styles import publication_css_for_body_pt, type_scale_for_format
+
+    pub = {}
+    for section in export_ast.sections:
+        if section.type == "cover" and isinstance(getattr(section, "publication", None), dict):
+            pub = section.publication
+            break
+    spec = get_page_format_from_publication(pub)
+    estimate = _estimate_body_start_page_index(export_ast)
+    chapter_titles = [
+        section.title
+        for section in export_ast.sections
+        if section.type == "chapter" and (section.title or "").strip()
+    ]
+    pdf_bytes = render_ast_to_pdf(
+        _export_ast_to_linear_book_ast(export_ast),
+        db=db,
+        body_start_page_index=estimate,  # 先占位，最终用检测结果覆盖
+        page_width_pt=spec.width_pt,
+        page_height_pt=spec.height_pt,
+        margins_ltrb_pt=(
+            spec.margin_inner_pt,
+            spec.margin_top_pt,
+            spec.margin_outer_pt,
+            spec.margin_bottom_pt,
+        ),
+        user_css=publication_css_for_body_pt(type_scale_for_format(spec).body_pt),
+        content_width_pt=spec.content_width_pt,
+        content_height_pt=spec.content_height_pt,
+        skip_page_numbers=True,
+    )
+    body_start = detect_pdf_body_start_page(
+        pdf_bytes,
+        chapter_titles=chapter_titles,
+        fallback=estimate,
+    )
+    from app.services.publication.page_numbers import add_pdf_page_numbers, scrub_pdf_body_marker
+
+    pdf_bytes = scrub_pdf_body_marker(pdf_bytes)
+    return add_pdf_page_numbers(pdf_bytes, body_start_page_index=body_start)
 
 
-def render_ast_to_pdf(ast: BookAst, db: Session | None = None) -> bytes:
+def render_ast_to_pdf(
+    ast: BookAst,
+    db: Session | None = None,
+    *,
+    body_start_page_index: int = 0,
+    page_width_pt: float | None = None,
+    page_height_pt: float | None = None,
+    margin_pt: float | None = None,
+    margins_ltrb_pt: tuple[float, float, float, float] | None = None,
+    user_css: str | None = None,
+    content_width_pt: float | None = None,
+    content_height_pt: float | None = None,
+    skip_page_numbers: bool = False,
+) -> bytes:
     page_break_ids: set[str] = set()
     pdf_bytes = b""
     for _ in range(4):
         archive = fitz.Archive()
-        html_doc = _build_publication_html(ast, page_break_figure_ids=page_break_ids, archive=archive, db=db)
-        pdf_bytes = _render_story_html_to_pdf(html_doc, archive)
+        html_doc = _build_publication_html(
+            ast,
+            page_break_figure_ids=page_break_ids,
+            archive=archive,
+            db=db,
+            content_width_pt=content_width_pt,
+            content_height_pt=content_height_pt,
+        )
+        pdf_bytes = _render_story_html_to_pdf(
+            html_doc,
+            archive,
+            page_width_pt=page_width_pt,
+            page_height_pt=page_height_pt,
+            margin_pt=margin_pt,
+            margins_ltrb_pt=margins_ltrb_pt,
+            user_css=user_css,
+        )
         bad = _detect_bad_figure_layout_ids(pdf_bytes)
         if not bad - page_break_ids:
             break
         page_break_ids |= bad
     pdf_bytes = _repair_undersized_pdf_figures(pdf_bytes)
-    return add_pdf_page_numbers(pdf_bytes)
+    has_cover = any(
+        b.role == "figure" and b.attrs.get("cover_image") for b in ast.blocks[:5]
+    )
+    if has_cover:
+        pdf_bytes = _full_bleed_cover_first_page(pdf_bytes)
+    if skip_page_numbers:
+        return pdf_bytes
+    return add_pdf_page_numbers(pdf_bytes, body_start_page_index=body_start_page_index)

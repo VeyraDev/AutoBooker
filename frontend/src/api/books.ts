@@ -70,6 +70,30 @@ export const EXPORT_EXT: Record<ExportFormat, string> = {
   pdf: "pdf",
 };
 
+export type PageFormatOption = {
+  id: string; label: string; short_label: string; width_mm: number; height_mm: number;
+  type_area_width_mm: number; type_area_height_mm: number; body_pt: number; group: string;
+  hint: string; aka: string; size_text: string; binding_type?: string; margins_text?: string;
+  margin_top_mm?: number; margin_bottom_mm?: number; margin_inner_mm?: number; margin_outer_mm?: number;
+};
+
+export type PublicationInfo = {
+  title?: string; subtitle?: string; author?: string; publisher?: string; publish_year?: string;
+  isbn?: string; edition?: string; series?: string; cip_text?: string; price?: string;
+  editor?: string; proofreader?: string; address?: string; postal_code?: string; print_count?: string;
+  word_count_label?: string; format_label?: string; page_format_id?: string; binding_type?: string;
+  cover_layout?: Record<string, { x: number; y: number }>; cover_theme?: string;
+  cover_bg_seed?: string; cover_bg_asset_id?: string;
+};
+
+export type ExportPreview = {
+  publication_info: PublicationInfo; preface_enabled: boolean; preface_title: string; preface_html: string;
+  toc: Array<{ title: string; section_type: string; chapter_index?: number | null; level?: number; page?: number | null }>;
+  chapters: Array<{ index: number; title: string; html: string }>;
+  bibliography_title: string | null; bibliography_html: string; preview_html: string;
+  cover_image_data_url?: string; page_format?: Partial<PageFormatOption>; page_format_options?: PageFormatOption[];
+};
+
 async function blobErrorMessage(blob: Blob): Promise<string> {
   const text = await blob.text();
   let msg = "导出失败";
@@ -93,6 +117,20 @@ export async function fetchExportNotice(id: string): Promise<{ suggestions: stri
   const suggestions: string[] = [];
   if (data.message) suggestions.push(data.message);
   return { suggestions };
+}
+
+export async function fetchExportPreview(id: string): Promise<ExportPreview> {
+  const { data } = await client.get<ExportPreview>(`/books/${id}/export/preview`, { timeout: 120000 });
+  return data;
+}
+
+export async function refreshExportPreview(
+  id: string,
+  payload: { publication_info?: PublicationInfo; persist?: boolean; regenerate_cover_bg?: boolean },
+): Promise<ExportPreview> {
+  const timeout = payload.regenerate_cover_bg ? 180000 : 120000;
+  const { data } = await client.post<ExportPreview>(`/books/${id}/export/preview`, payload, { timeout });
+  return data;
 }
 
 /** 下载二进制；若服务端返回 JSON 错误体会抛出 Error */

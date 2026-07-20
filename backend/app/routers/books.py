@@ -15,6 +15,8 @@ from app.schemas.book import (
     BookDuplicateOut,
     BookOut,
     BookUpdate,
+    ExportPreviewIn,
+    ExportPreviewOut,
     SetupRecommendIn,
     SetupRecommendOut,
 )
@@ -112,6 +114,65 @@ def export_notice(book_id: UUID, user: User = Depends(get_current_user), db: Ses
             else None
         ),
     }
+
+
+@router.get("/{book_id}/export/preview", response_model=ExportPreviewOut)
+def export_preview(book_id: UUID, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.services.publication.export_preview import build_export_preview
+
+    return ExportPreviewOut(**build_export_preview(book_id, user, db))
+
+
+@router.post("/{book_id}/export/preview", response_model=ExportPreviewOut)
+def export_preview_with_info(
+    book_id: UUID,
+    body: ExportPreviewIn | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """用临时封面信息刷新预览；persist=true 时写入 publication_info。"""
+    from app.services.publication.export_preview import build_export_preview
+    from app.services.publication.publication_info import normalize_publication_info
+
+    payload = body or ExportPreviewIn()
+    pub = payload.publication_info
+    book = book_service.get_book_or_404(book_id, user, db)
+    if isinstance(pub, dict) and payload.regenerate_cover_bg:
+        from app.services.publication.cover_background import regenerate_cover_background_for_book
+
+        pub = regenerate_cover_background_for_book(
+            db,
+            book_id=book.id,
+            owner_user_id=user.id,
+            publication=pub,
+            fallback_title=book.title,
+        )
+        # AI 封面生成成本高，背景 asset 始终落库，避免刷新丢失
+        book_service.update_book(
+            book,
+            {
+                "publication_info": normalize_publication_info(pub, fallback_title=book.title),
+            },
+            db,
+        )
+        db.refresh(book)
+    elif payload.persist and isinstance(pub, dict):
+        book_service.update_book(
+            book,
+            {
+                "publication_info": normalize_publication_info(pub, fallback_title=book.title),
+            },
+            db,
+        )
+        db.refresh(book)
+    return ExportPreviewOut(
+        **build_export_preview(
+            book_id,
+            user,
+            db,
+            publication_info=pub if isinstance(pub, dict) else None,
+        )
+    )
 
 
 @router.get("/{book_id}/export")

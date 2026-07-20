@@ -75,6 +75,7 @@ class Book(Base):
     material_conflicts = Column(JSONB, nullable=True)
     preface = Column(JSONB, nullable=True)
     bibliography = Column(JSONB, nullable=True)
+    publication_info = Column(JSONB, nullable=True)
     status = Column(Enum(BookStatus, name="book_status"), default=BookStatus.setup, nullable=False)
     creation_origin = Column(Enum(CreationOrigin, name="creation_origin"), nullable=True)
     last_literature_query = Column(JSONB, nullable=True)

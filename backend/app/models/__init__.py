@@ -29,6 +29,7 @@ from app.models.optimization import (
 from app.models.figure_batch import FigureBatchItem, FigureBatchRun
 from app.models.figure import Figure, FigureStatus, FigureType
 from app.models.global_literature import GlobalLiterature, GlobalLiteratureSource, GlobalLiteratureStatus
+from app.models.library_shelf import LibraryCategory, LibraryItem, LibraryItemStatus
 from app.models.book_job import BookJob, BookJobStatus, BookJobStep
 from app.models.notification import Notification, NotificationType
 from app.models.feedback import Feedback, FeedbackType, FeedbackStatus
@@ -80,6 +81,9 @@ __all__ = [
     "GlobalLiterature",
     "GlobalLiteratureSource",
     "GlobalLiteratureStatus",
+    "LibraryCategory",
+    "LibraryItem",
+    "LibraryItemStatus",
     "BookJob",
     "BookJobStatus",
     "BookJobStep",

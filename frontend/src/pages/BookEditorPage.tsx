@@ -8,7 +8,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 
 import ProjectAssistantPage from "@/features/assistant/components/ProjectAssistantPage";
 import { useIntake } from "@/features/intake/api/intakeApi";
-import { EXPORT_EXT, exportBook, fetchExportNotice, getBook, updateBook, duplicateBook, type ExportFormat } from "@/api/books";
+import { fetchExportNotice, getBook, updateBook, duplicateBook, type ExportFormat } from "@/api/books";
 import { fetchBookJob, startAutoGenerateForBook } from "@/api/bookJobs";
 import {
   cancelChapterGeneration,
@@ -37,6 +37,7 @@ import AddChapterDialog from "@/components/editor/AddChapterDialog";
 import type { AddChapterFormValues } from "@/components/editor/AddChapterDialog";
 import BookSettingsModal from "@/components/editor/BookSettingsModal";
 import DuplicateBookDialog from "@/components/editor/DuplicateBookDialog";
+import ExportPreviewDialog from "@/components/editor/ExportPreviewDialog";
 import ChapterTiptapEditor, { type ChapterEditorHandle } from "@/components/editor/ChapterTiptapEditor";
 import EditorTopBar from "@/components/editor/EditorTopBar";
 import OutlineDrawer from "@/components/editor/OutlineDrawer";
@@ -216,6 +217,8 @@ export default function BookEditorPage() {
   const [bookSettingsModalOpen, setBookSettingsModalOpen] = useState(false);
   const [duplicateBookOpen, setDuplicateBookOpen] = useState(false);
   const [duplicateBookBusy, setDuplicateBookBusy] = useState(false);
+  const [exportPreviewOpen, setExportPreviewOpen] = useState(false);
+  const [exportPreviewFormat, setExportPreviewFormat] = useState<ExportFormat>("docx");
   const [editorSelectionText, setEditorSelectionText] = useState("");
   const [editorChapterContext, setEditorChapterContext] = useState("");
   const [enteringReviewStage, setEnteringReviewStage] = useState(false);
@@ -589,26 +592,8 @@ export default function BookEditorPage() {
     } catch {
       /* non-blocking */
     }
-    const toastId = toast.loading("正在导出…");
-    try {
-      const blob = await exportBook(bookId, format);
-      const ext = EXPORT_EXT[format];
-      const safe =
-        book.title
-          .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
-          .trim()
-          .slice(0, 80) || "book";
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${safe}.${ext}`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success("导出成功", { id: toastId });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "导出失败";
-      toast.error(msg, { id: toastId });
-    }
+    setExportPreviewFormat(format);
+    setExportPreviewOpen(true);
   }
 
   const nextChapterIndex = useMemo(() => {
@@ -2149,6 +2134,16 @@ export default function BookEditorPage() {
               }
             })();
           }}
+        />
+      ) : null}
+
+      {book ? (
+        <ExportPreviewDialog
+          open={exportPreviewOpen}
+          bookId={bookId}
+          bookTitle={book.title}
+          format={exportPreviewFormat}
+          onClose={() => setExportPreviewOpen(false)}
         />
       ) : null}
 

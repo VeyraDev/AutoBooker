@@ -52,6 +52,7 @@ export interface Book {
     text?: string;
     tiptap_json?: Record<string, unknown>;
   } | null;
+  publication_info?: Record<string, unknown> | null;
   constitution_stale?: boolean;
   pending_writing_spec?: {
     field?: string;
@@ -92,6 +93,7 @@ export interface BookUpdatePayload {
   topic_tags?: string[] | null;
   topic_brief?: string | null;
   allow_title_optimization?: boolean;
+  publication_info?: Record<string, unknown> | null;
 }
 
 export interface SetupRecommendResult {
