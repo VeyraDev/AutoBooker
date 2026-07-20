@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app.models.binary_asset import AssetRole, BinaryAsset, FigureAsset
 from app.models.figure import Figure
+from app.models.figure_batch import FigureBatchRun
 from app.services.assets.asset_resolver import AssetResolver
 from app.services.assets.figure_asset_service import FigureAssetService
 
@@ -137,3 +138,25 @@ def test_materialize_local_path_cleans_db_asset_temp_file():
         captured = path
 
     assert not captured.exists()
+
+
+def test_asset_content_url_matches_mounted_book_router_and_reads_legacy_url():
+    book_id = uuid4()
+    asset_id = uuid4()
+    figure = SimpleNamespace(
+        id=uuid4(),
+        file_path=None,
+        file_url=f"/api/books/{book_id}/assets/{asset_id}/content",
+    )
+    resolver = AssetResolver(_Db())
+
+    assert resolver.asset_content_url(book_id, asset_id) == f"/books/{book_id}/assets/{asset_id}/content"
+    assert resolver.parse_asset_id_from_figure(figure) == asset_id
+
+
+def test_figure_batch_model_maps_worker_lease_columns():
+    columns = FigureBatchRun.__table__.columns
+
+    assert "lease_owner" in columns
+    assert "lease_until" in columns
+    assert "heartbeat_at" in columns

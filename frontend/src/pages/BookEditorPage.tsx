@@ -23,6 +23,7 @@ import { generateOutline, getOutline, putOutline } from "@/api/outline";
 import { getPreface, openPrefaceGenerateStream, putPreface, type PrefaceData } from "@/api/preface";
 import {
   getActiveFigureBatch,
+  listFigures,
   pauseFigureBatch,
   rebuildChapterBodyFromFigures,
   startFigureBatch,
@@ -1155,13 +1156,34 @@ export default function BookEditorPage() {
     }
     const loading = toast.loading("正在生成全书图片…");
     let runId: string | null = null;
+    let terminal = false;
     try {
       const run = await startFigureBatch(bookId);
       runId = run.id;
       setActiveFigureBatch(run);
       locallyPolledFigureBatchRef.current = run.id;
       const done = await waitFigureBatch(bookId, run);
-      await qc.invalidateQueries({ queryKey: ["figures", bookId] });
+      terminal = !["pending", "running"].includes(done.status);
+      if (!terminal) {
+        setActiveFigureBatch(done);
+        toast("全书图片仍在后台生成，可继续编辑或点击按钮暂停", { id: loading });
+        return;
+      }
+      const latest = await listFigures(bookId);
+      qc.setQueryData(["figures", bookId], latest);
+      const currentChapterIndex = chapterIndexRef.current;
+      latest
+        .filter((fig) => fig.chapter === currentChapterIndex && fig.file_url && fig.status !== "pending")
+        .forEach((fig) => editorRef.current?.applyFigureResult({
+          figure_id: fig.id,
+          file_url: fig.file_url,
+          svg_url: fig.svg_url,
+          figure_number: fig.figure_number,
+          status: fig.status,
+          caption: fig.caption,
+          figure_type: fig.type,
+          updated_at: new Date().toISOString(),
+        }, { targetFigureId: fig.id, replaceOnly: true }));
       if (done.status === "paused") {
         toast.success("已暂停全书图片生成", { id: loading });
       } else if (done.failed) {
@@ -1175,7 +1197,9 @@ export default function BookEditorPage() {
       if (locallyPolledFigureBatchRef.current === runId) {
         locallyPolledFigureBatchRef.current = null;
       }
-      setActiveFigureBatch((current) => current?.id === runId ? null : current);
+      if (terminal) {
+        setActiveFigureBatch((current) => current?.id === runId ? null : current);
+      }
     }
   }
 

@@ -10,6 +10,7 @@ import {
   figureGenerationToast,
   formatFigureLabel,
   generateFigure,
+  loadFigureImageBlob,
   resolveFigureUrl,
   uploadFigure,
   type FigureType,
@@ -122,7 +123,8 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
   const cacheKey = imgEpoch || fileVersion || undefined;
   const displayUrl = svgUrl && !svgFailed ? svgUrl : fileUrl;
   const remoteSrc = resolveFigureUrl(displayUrl, cacheKey);
-  const imgSrc = blobSrc ?? remoteSrc;
+  const protectedAsset = /\/(?:api\/)?books\/[0-9a-f-]+\/assets\/[0-9a-f-]+\/content/i.test(displayUrl);
+  const imgSrc = blobSrc ?? (protectedAsset ? "" : remoteSrc);
   const hasFile =
     Boolean(imgSrc) &&
     (status === "generated" || status === "uploaded" || status === "approved");
@@ -143,15 +145,14 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
   const loadFreshImageBlob = useCallback(
     async (url: string, version: number | string) => {
       if (!url) return false;
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
+      const blob = await loadFigureImageBlob(url);
       const key = previewCacheKey(url, version);
       loadedPreviewKeyRef.current = key;
       setBlobSrc((prev) => {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return URL.createObjectURL(blob);
       });
+      setImgFailed(false);
       return true;
     },
     [previewCacheKey],
@@ -199,7 +200,7 @@ export default function FigureBlockView({ node, updateAttributes, selected }: No
         });
         return;
       }
-      /* fetch 失败时不主动清空 blobSrc，防止刚生成的新图被旧缓存顶回 */
+      if (!blobSrc) setImgFailed(true);
     });
     return () => {
       cancelled = true;

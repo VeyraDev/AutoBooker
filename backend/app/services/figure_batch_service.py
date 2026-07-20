@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -14,6 +15,8 @@ from app.models.figure_batch import FigureBatchItem, FigureBatchRun
 from app.services.figures.generation import generate_figure_asset
 
 logger = logging.getLogger(__name__)
+
+FIGURE_BATCH_LEASE_SECONDS = 1800
 
 
 def create_figure_batch(
@@ -25,17 +28,17 @@ def create_figure_batch(
 ) -> FigureBatchRun:
     query = db.query(Figure).filter(
         Figure.book_id == book_id,
-        Figure.status == FigureStatus.pending,
         Figure.figure_type != FigureType.screenshot,
-        Figure.file_path.is_(None),
-        Figure.file_url.is_(None),
+        or_(Figure.status == FigureStatus.pending, Figure.file_url.is_(None)),
     )
     if chapter_index is not None:
         query = query.filter(Figure.chapter_index == chapter_index)
     active_ids = [
         row[0]
         for row in db.query(FigureBatchItem.figure_id)
+        .join(FigureBatchRun, FigureBatchRun.id == FigureBatchItem.run_id)
         .filter(FigureBatchItem.status.in_(("pending", "running")))
+        .filter(FigureBatchRun.status.in_(("pending", "running")))
         .all()
     ]
     if active_ids:
@@ -103,7 +106,7 @@ def _generate_item(item_id: UUID) -> bool:
         db.close()
 
 
-def run_figure_batch(run_id: UUID) -> None:
+def _run_figure_batch(run_id: UUID) -> None:
     import socket
     import uuid as uuid_mod
 
@@ -113,17 +116,13 @@ def run_figure_batch(run_id: UUID) -> None:
         run = db.get(FigureBatchRun, run_id)
         if not run or run.status not in {"pending", "running"}:
             return
-        from app.services.jobs.job_runner import LeaseService
-
         if run.lease_until and run.lease_owner and run.lease_owner != worker_id:
-            from datetime import datetime, timezone
-
             if run.lease_until > datetime.now(timezone.utc):
                 return
         run.lease_owner = worker_id
-        from datetime import datetime, timedelta, timezone
-
-        run.lease_until = datetime.now(timezone.utc) + timedelta(seconds=120)
+        now = datetime.now(timezone.utc)
+        run.lease_until = now + timedelta(seconds=FIGURE_BATCH_LEASE_SECONDS)
+        run.heartbeat_at = now
         run.status = "running"
         db.commit()
         item_ids = [
@@ -149,6 +148,9 @@ def run_figure_batch(run_id: UUID) -> None:
                     ]
                     run.completed = sum(x in {"completed", "skipped"} for x in statuses)
                     run.failed = sum(x == "failed" for x in statuses)
+                    now = datetime.now(timezone.utc)
+                    run.heartbeat_at = now
+                    run.lease_until = now + timedelta(seconds=FIGURE_BATCH_LEASE_SECONDS)
                     progress_db.commit()
             finally:
                 progress_db.close()
@@ -168,9 +170,42 @@ def run_figure_batch(run_id: UUID) -> None:
         run.finished_at = datetime.now(timezone.utc)
         run.lease_owner = None
         run.lease_until = None
+        run.heartbeat_at = datetime.now(timezone.utc)
         db.commit()
     finally:
         db.close()
+
+
+def run_figure_batch(run_id: UUID) -> None:
+    try:
+        _run_figure_batch(run_id)
+    except Exception as exc:
+        logger.exception("figure batch failed run=%s: %s", run_id, exc)
+        db = SessionLocal()
+        try:
+            run = db.get(FigureBatchRun, run_id)
+            if not run or run.status == "paused":
+                return
+            now = datetime.now(timezone.utc)
+            items = db.query(FigureBatchItem).filter(FigureBatchItem.run_id == run_id).all()
+            for item in items:
+                if item.status in {"pending", "running"}:
+                    item.status = "failed"
+                    item.error_message = str(exc)[:1000]
+                    item.finished_at = now
+            run.completed = sum(item.status in {"completed", "skipped"} for item in items)
+            run.failed = sum(item.status == "failed" for item in items)
+            run.status = "completed_with_errors"
+            run.finished_at = now
+            run.lease_owner = None
+            run.lease_until = None
+            run.heartbeat_at = now
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("failed to persist figure batch failure run=%s", run_id)
+        finally:
+            db.close()
 
 
 def pause_figure_batch(db: Session, run: FigureBatchRun) -> FigureBatchRun:
@@ -203,8 +238,15 @@ def _active_batch_query(db: Session, book_id: UUID, chapter_index: int | None = 
         FigureBatchRun.book_id == book_id,
         FigureBatchRun.status.in_(("pending", "running")),
     )
-    if chapter_index is not None:
-        query = query.filter(FigureBatchRun.chapter_index == chapter_index)
+    if chapter_index is None:
+        query = query.filter(FigureBatchRun.chapter_index.is_(None))
+    else:
+        query = query.filter(
+            or_(
+                FigureBatchRun.chapter_index == chapter_index,
+                FigureBatchRun.chapter_index.is_(None),
+            )
+        )
     return query.order_by(FigureBatchRun.created_at.desc())
 
 

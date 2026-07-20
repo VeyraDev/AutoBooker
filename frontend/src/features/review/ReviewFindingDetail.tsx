@@ -173,12 +173,11 @@ export default function ReviewFindingDetail({ bookId, finding, onUpdated, onJump
 
   const fixCapability = finding.fix_capability ?? (actionOptions.length > 0 ? "choice_then_apply" : null);
   const hasLocation =
-    finding.source === "chapter" &&
-    (finding.chapter_index != null ||
+    finding.chapter_index != null ||
       finding.paragraph_index != null ||
       finding.paragraph_id ||
       finding.char_start != null ||
-      finding.quote);
+      Boolean(finding.quote);
   const canApply =
     finding.source === "chapter" &&
     finding.locatable &&

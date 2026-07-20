@@ -47,7 +47,7 @@ class FigureAssetService:
         ).update({"active": False})
         link = FigureAsset(figure_id=figure.id, asset_id=asset.id, role=role, active=True)
         self.db.add(link)
-        url = f"/api/books/{figure.book_id}/assets/{asset.id}/content"
+        url = f"/books/{figure.book_id}/assets/{asset.id}/content"
         if set_primary_url or role == FigureAssetRole.primary:
             figure.file_url = url
             figure.file_path = f"db://binary_assets/{asset.id}"

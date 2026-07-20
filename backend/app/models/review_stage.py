@@ -51,7 +51,7 @@ class BookReviewFinding(Base):
     book_id = Column(UUID(as_uuid=True), ForeignKey("books.id", ondelete="CASCADE"), nullable=False, index=True)
     track = Column(Enum(ReviewTrack, name="review_track"), nullable=False)
     category = Column(String(64), nullable=False)
-    severity = Column(String(16), nullable=False, default="medium")
+    severity = Column(String(32), nullable=False, default="medium")
     status = Column(Enum(ReviewFindingStatus, name="review_finding_status"), nullable=False, default=ReviewFindingStatus.open)
     title = Column(String(500), nullable=False)
     detail = Column(Text, nullable=True)

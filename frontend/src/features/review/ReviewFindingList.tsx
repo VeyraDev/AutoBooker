@@ -145,7 +145,7 @@ function FindingSection({
                 <p className="mt-1 text-[10px] text-slate-500">影响范围：{IMPACT_LABEL[item.impact_scope] ?? item.impact_scope}</p>
               ) : null}
               {item.quote ? <p className="mt-1 line-clamp-2 text-[10px] italic text-slate-600">「{item.quote}」</p> : null}
-              {!item.locatable && item.source === "chapter" ? (
+              {!item.locatable && item.chapter_index != null ? (
                 <p className="mt-1 text-[10px] text-amber-700">需人工复核（无法自动定位）</p>
               ) : null}
             </button>

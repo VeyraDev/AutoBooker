@@ -10,6 +10,9 @@ from app.services.review.review_finding_validator import enrich_finding_metadata
 from app.services.review.review_workspace_service import ReviewWorkspaceService
 from app.services.review.review_workspace_service import _batch_preview_skip_reason
 from app.services.review.title_benchmarks import extract_title_from_document_name, title_benchmark_for_style
+from app.services.review_stage.content_risk_reviewer import ContentRiskReviewer
+from app.services.review_stage.copyediting_scanner import CopyeditingScanner
+from app.services.review_stage.review_finding_service import build_finding_source_ref
 
 
 def _book(book_type: str = "practical_guide"):
@@ -149,6 +152,54 @@ def test_quality_reviewer_metadata_survives_validator():
     assert validated["fix_capability"] == "choice_then_apply"
     assert validated["product_dimension"] == "evidence_citation"
     assert {item["id"] for item in validated["action_options"]} >= {"add_source", "mark_estimate", "remove_number"}
+
+
+def test_book_finding_source_ref_preserves_exact_manuscript_anchor():
+    md = "第一段。\n\n数据显示，90%的团队会优先检查来源。"
+    finding = {
+        "category": "reference_authenticity",
+        "dimension": "citation_sources",
+        "issue_type": "missing_citation",
+        "severity": "needs_verification",
+        "title": "具体比例缺少可核验来源",
+        "detail": "具体比例没有来源。",
+        "quote": "数据显示，90%的团队会优先检查来源。",
+        "chapter_index": 2,
+        "detector": "reference_authenticity_reviewer",
+        "product_dimension": "evidence_citation",
+        "quality_evidence": {"evidence_gap": True},
+    }
+    validated = validate_finding(
+        enrich_finding_metadata(finding, {}, chapter_md=md),
+        chapter_md=md,
+    )
+    assert validated is not None
+
+    ref = build_finding_source_ref(validated, source_ref={"task_id": "task-1"}, chapter_md=md)
+
+    assert ref["chapter_index"] == 2
+    assert ref["quote"] == finding["quote"]
+    assert ref["paragraph_index"] == 1
+    assert ref["char_start"] is not None
+    assert ref["char_end"] > ref["char_start"]
+    assert ref["locatable"] is True
+    assert ref["detector"] == "reference_authenticity_reviewer"
+    assert ref["evidence_gap"] is True
+
+
+def test_objective_scanners_emit_chapter_and_original_quote():
+    chapters = [
+        SimpleNamespace(index=3, content={"text": "城市政治经济学的的讨论需要回到具体制度。"}),
+    ]
+
+    copyediting = CopyeditingScanner().run(chapters)
+    content_risk = ContentRiskReviewer().run(_book(), chapters)
+
+    assert copyediting[0]["chapter_index"] == 3
+    assert copyediting[0]["quote"] == "的的"
+    assert content_risk[0]["chapter_index"] == 3
+    assert "政治" in content_risk[0]["quote"]
+    assert content_risk[0]["paragraph_index"] == 0
 
 
 def test_batch_preview_only_accepts_low_risk_locatable_preview_apply_items():

@@ -259,8 +259,15 @@ class ReviewWorkspaceService:
             "prefer_evidence_binding": bool(meta.get("prefer_evidence_binding")),
         }
 
-    def _book_finding_to_dto(self, row: BookReviewFinding, snap: dict) -> dict:
+    def _book_finding_to_dto(
+        self,
+        row: BookReviewFinding,
+        snap: dict,
+        chapters_by_index: dict[int, Chapter] | None = None,
+    ) -> dict:
         ref = _book_meta(row)
+        chapter_index = ref.get("chapter_index")
+        chapter = (chapters_by_index or {}).get(chapter_index)
         basis = list(ref.get("basis_refs") or [])
         if not basis:
             basis = match_basis_refs(
@@ -270,8 +277,8 @@ class ReviewWorkspaceService:
         return {
             "id": row.id,
             "source": "book",
-            "chapter_index": ref.get("chapter_index"),
-            "chapter_title": None,
+            "chapter_index": chapter_index,
+            "chapter_title": chapter.title if chapter else None,
             "tier": severity_to_tier(
                 row.severity,
                 verification_status=ref.get("verification_status"),
@@ -289,9 +296,9 @@ class ReviewWorkspaceService:
             "char_end": ref.get("char_end"),
             "category": row.category,
             "track": row.track.value if hasattr(row.track, "value") else str(row.track),
-            "detector": None,
-            "dimension": None,
-            "issue_type": row.category,
+            "detector": ref.get("detector"),
+            "dimension": ref.get("dimension"),
+            "issue_type": ref.get("issue_type") or row.category,
             "product_dimension": ref.get("product_dimension"),
             "impact_scope": ref.get("impact_scope") or "book",
             "locatable": bool(ref.get("locatable", False)),
@@ -316,6 +323,7 @@ class ReviewWorkspaceService:
     ) -> list[dict]:
         snap = self._context_snapshot(book_id)
         chapters = self._chapter_map(book_id)
+        chapters_by_index = {chapter.index: chapter for chapter in chapters.values()}
         chapter_ids = [c.id for c in chapters.values() if chapter_index is None or c.index == chapter_index]
 
         chapter_issues = (
@@ -327,11 +335,22 @@ class ReviewWorkspaceService:
             else []
         )
 
+        latest_completed_run = (
+            self.db.query(BookReviewStageRun)
+            .filter(
+                BookReviewStageRun.book_id == book_id,
+                BookReviewStageRun.status == ReviewStageStatus.completed,
+            )
+            .order_by(BookReviewStageRun.created_at.desc())
+            .first()
+        )
         book_findings = (
             self.db.query(BookReviewFinding)
-            .filter(BookReviewFinding.book_id == book_id)
+            .filter(BookReviewFinding.run_id == latest_completed_run.id)
             .order_by(BookReviewFinding.created_at.desc())
             .all()
+            if latest_completed_run
+            else []
         )
 
         rows: list[dict] = []
@@ -342,7 +361,7 @@ class ReviewWorkspaceService:
                 ref_idx = (bf.source_ref_json or {}).get("chapter_index")
                 if ref_idx is not None and ref_idx != chapter_index:
                     continue
-            rows.append(self._book_finding_to_dto(bf, snap))
+            rows.append(self._book_finding_to_dto(bf, snap, chapters_by_index))
 
         if tier:
             rows = [r for r in rows if r["tier"] == tier]

@@ -37,6 +37,7 @@ def _check_empty_sections(chapters: list[Chapter]) -> list[dict]:
             pattern = re.compile(rf"^#+\s*{re.escape(h.strip())}\s*$[\s\S]*?(?=^#+\s|\Z)", re.MULTILINE)
             m = pattern.search(body)
             if m and len(m.group(0).strip().splitlines()) <= 1:
+                heading_quote = m.group(0).strip()
                 findings.append(
                     {
                         "category": "export_structure",
@@ -45,6 +46,7 @@ def _check_empty_sections(chapters: list[Chapter]) -> list[dict]:
                         "detail": f"小节「{h.strip()}」仅有标题无正文。",
                         "suggestion": "补充正文或删除空节标题。",
                         "chapter_index": ch.index,
+                        "quote": heading_quote,
                         "rule_id": "no_empty_sections",
                         "book_level": False,
                     }
@@ -59,6 +61,8 @@ def _check_figure_numbering(chapters: list[Chapter]) -> list[dict]:
         body = _chapter_text(ch)
         nums = fig_re.findall(body)
         if len(nums) >= 2 and len(set(nums)) != len(nums):
+            duplicate = next((num for num in nums if nums.count(num) > 1), nums[0])
+            duplicate_match = re.search(rf"^图\s*{re.escape(duplicate)}.*$", body, re.MULTILINE)
             findings.append(
                 {
                     "category": "export_structure",
@@ -67,6 +71,7 @@ def _check_figure_numbering(chapters: list[Chapter]) -> list[dict]:
                     "detail": "检测到重复的图编号，请核对图题与正文引用。",
                     "rule_id": "figure_table_numbering",
                     "chapter_index": ch.index,
+                    "quote": duplicate_match.group(0).strip() if duplicate_match else f"图{duplicate}",
                 }
             )
     return findings

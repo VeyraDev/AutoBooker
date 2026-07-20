@@ -27,6 +27,6 @@ def get_asset_content(
     content, mime, filename = BinaryAssetService(db).stream_asset(book_id=book_id, asset_id=asset_id)
     headers = {
         "Content-Disposition": f'inline; filename="{filename}"',
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": "private, no-cache",
     }
     return Response(content=content, media_type=mime, headers=headers)

@@ -649,7 +649,7 @@ def repair_figure_file(fig: Figure, db: Session) -> Figure:
         nonlocal changed
         if not getattr(fig, "svg_url", None):
             return False
-        if fig.svg_url.startswith("/api/") or "db://binary_assets/" in str(fig.svg_url or ""):
+        if fig.svg_url.startswith(("/api/books/", "/books/")) or "db://binary_assets/" in str(fig.svg_url or ""):
             return False
         canonical_svg = figure_storage.svg_path(fig.book_id, fig.chapter_index, fig.id)
         if canonical_svg.is_file():

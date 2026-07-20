@@ -62,7 +62,8 @@ export function resolveFigureUrl(
   fileVersion?: number | string | null,
 ): string {
   if (!fileUrl) return "";
-  let url = fileUrl;
+  // 兼容旧资产记录中曾写入、但应用并未挂载的 /api 前缀。
+  let url = fileUrl.replace(/^\/api(?=\/books\/)/, "");
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
     const path = url.startsWith("/") ? url : `/${url}`;
     const base = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
@@ -72,6 +73,21 @@ export function resolveFigureUrl(
   if (!v) return url;
   const sep = url.includes("?") ? "&" : "?";
   return `${url}${sep}v=${encodeURIComponent(v)}`;
+}
+
+/** 受保护的图片先通过 API 客户端携带登录令牌读取，再交给 img 显示。 */
+export async function loadFigureImageBlob(
+  fileUrl: string | null | undefined,
+  fileVersion?: number | string | null,
+): Promise<Blob> {
+  const url = resolveFigureUrl(fileUrl, fileVersion);
+  if (!url) throw new Error("图片地址为空");
+  const { data } = await client.get<Blob>(url, {
+    responseType: "blob",
+    timeout: FIGURE_GENERATE_TIMEOUT_MS,
+    headers: { "Cache-Control": "no-cache" },
+  });
+  return data;
 }
 
 export function formatFigureLabel(figureNumber: string | null | undefined, isTable = false): string {
@@ -162,7 +178,7 @@ export async function pauseFigureBatch(bookId: string, runId: string): Promise<F
 
 export async function waitFigureBatch(bookId: string, run: FigureBatch): Promise<FigureBatch> {
   let current = run;
-  for (let i = 0; i < 240 && ["pending", "running"].includes(current.status); i += 1) {
+  for (let i = 0; i < 1200 && ["pending", "running"].includes(current.status); i += 1) {
     await new Promise((resolve) => window.setTimeout(resolve, 1500));
     current = await getFigureBatch(bookId, run.id);
   }

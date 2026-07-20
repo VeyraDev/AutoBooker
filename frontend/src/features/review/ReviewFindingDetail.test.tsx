@@ -85,4 +85,28 @@ describe("ReviewFindingDetail", () => {
     fireEvent.click(screen.getByRole("button", { name: "跳转到正文" }));
     expect(jump).toHaveBeenCalledWith(finding);
   });
+
+  it("allows a chapter-scoped full-book finding to jump to its manuscript anchor", async () => {
+    api.get.mockResolvedValue({ data: [] });
+    const jump = vi.fn();
+    const bookFinding = {
+      ...finding,
+      id: "book-finding-1",
+      source: "book" as const,
+      status: "open",
+      paragraph_index: 4,
+      char_start: 90,
+      char_end: 100,
+      locatable: true,
+    };
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReviewFindingDetail bookId="book-1" finding={bookFinding} onUpdated={vi.fn()} onJumpToSource={jump} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "跳转到正文" }));
+    expect(jump).toHaveBeenCalledWith(bookFinding);
+    expect(screen.getByText(/段落 5/)).toBeTruthy();
+  });
 });

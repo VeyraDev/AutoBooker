@@ -17,6 +17,9 @@ class FigureBatchRun(Base):
     total = Column(Integer, nullable=False, default=0)
     completed = Column(Integer, nullable=False, default=0)
     failed = Column(Integer, nullable=False, default=0)
+    lease_owner = Column(String(128), nullable=True)
+    lease_until = Column(DateTime(timezone=True), nullable=True)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     finished_at = Column(DateTime(timezone=True), nullable=True)
 

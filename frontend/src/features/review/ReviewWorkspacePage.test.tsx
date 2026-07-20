@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
-import ReviewWorkspacePage from "@/features/review/ReviewWorkspacePage";
+import ReviewWorkspacePage, { reviewErrorMessage } from "@/features/review/ReviewWorkspacePage";
 
 const api = vi.hoisted(() => ({
   get: vi.fn(),
@@ -46,6 +46,18 @@ afterEach(() => {
 });
 
 describe("ReviewWorkspacePage", () => {
+  it("shows the backend review failure detail", () => {
+    expect(
+      reviewErrorMessage(
+        {
+          isAxiosError: true,
+          response: { data: { detail: "审校结果保存失败" } },
+        },
+        "审校失败",
+      ),
+    ).toBe("审校结果保存失败");
+  });
+
   it("renders three columns and must_fix count", async () => {
     api.get.mockImplementation((url: string) => {
       if (url.endsWith("/books/book-1")) {

@@ -133,7 +133,7 @@ def _walk_tiptap(
                     except Exception:
                         asset_id = None
                 if asset_id:
-                    attrs["fileUrl"] = f"/api/books/{book_id}/assets/{asset_id}/content"
+                    attrs["fileUrl"] = f"/books/{book_id}/assets/{asset_id}/content"
                 elif fig.file_url:
                     attrs["fileUrl"] = _strip_url_query(fig.file_url)
                 if getattr(fig, "svg_url", None):

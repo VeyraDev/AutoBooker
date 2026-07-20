@@ -21,13 +21,19 @@ class CopyeditingScanner:
             if isinstance(ch.content, dict):
                 text = str(ch.content.get("text") or "")
             for pattern, label in _COPY_PATTERNS:
-                if pattern.search(text):
+                match = pattern.search(text)
+                if match:
                     findings.append(
                         {
                             "category": "copyediting",
                             "severity": "low",
                             "title": f"第{ch.index}章可能存在排版问题",
                             "detail": label,
+                            "chapter_index": ch.index,
+                            "quote": match.group(0),
+                            "char_start": match.start(),
+                            "char_end": match.end(),
+                            "detector": "copyediting_scanner",
                         }
                     )
                     break

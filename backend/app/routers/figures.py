@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -91,6 +92,9 @@ def start_figure_batch(
     book_service.get_book_or_404(book_id, user, db)
     active = _active_batch_query(db, book_id, chapter_index).first()
     if active:
+        lease_expired = not active.lease_until or active.lease_until <= datetime.now(timezone.utc)
+        if lease_expired:
+            background_tasks.add_task(run_figure_batch, active.id)
         return _batch_out(active)
     run = create_figure_batch(db, book_id, chapter_index=chapter_index, trigger="manual")
     if run.total:

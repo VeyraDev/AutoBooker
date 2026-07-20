@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import axios from "axios";
 import { Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
@@ -19,6 +20,19 @@ import {
   type ProductDimension,
   type WorkspaceFinding,
 } from "@/features/review/reviewWorkspaceApi";
+
+export function reviewErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError(error)) {
+    if (error.code === "ECONNABORTED") return "审校超时，请稍后重试";
+    const raw = error.response?.data;
+    if (raw && typeof raw === "object" && "detail" in raw) {
+      const detail = (raw as { detail: unknown }).detail;
+      if (typeof detail === "string" && detail.trim()) return detail;
+    }
+    if (!error.response) return "无法连接审校服务，请确认后端已启动";
+  }
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 export default function ReviewWorkspacePage() {
   const { bookId } = useParams();
@@ -71,7 +85,7 @@ export default function ReviewWorkspacePage() {
       void qc.invalidateQueries({ queryKey: ["reviewWorkspaceSummary", bookId] });
       void qc.invalidateQueries({ queryKey: ["reviewWorkspaceFindings", bookId] });
     },
-    onError: () => toast.error("审校失败"),
+    onError: (error) => toast.error(reviewErrorMessage(error, "审校失败")),
   });
 
   const customMut = useMutation({
@@ -85,7 +99,7 @@ export default function ReviewWorkspacePage() {
       void qc.invalidateQueries({ queryKey: ["reviewWorkspaceSummary", bookId] });
       void qc.invalidateQueries({ queryKey: ["reviewWorkspaceFindings", bookId] });
     },
-    onError: () => toast.error("专项审校失败"),
+    onError: (error) => toast.error(reviewErrorMessage(error, "专项审校失败")),
   });
 
   const batchPreviewMut = useMutation({
@@ -146,7 +160,7 @@ export default function ReviewWorkspacePage() {
   }
 
   function handleJumpToSource(finding: WorkspaceFinding) {
-    if (finding.source !== "chapter" || finding.chapter_index == null) {
+    if (finding.chapter_index == null) {
       toast.error("该问题暂无可跳转章节定位");
       return;
     }

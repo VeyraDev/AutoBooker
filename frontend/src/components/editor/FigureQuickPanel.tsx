@@ -8,6 +8,7 @@ import {
   figureGenerationToast,
   generateFigure,
   listFigures,
+  loadFigureImageBlob,
   normalizeChapterFiguresTables,
   patchChapterOverviewCaptions,
   resolveFigureUrl,
@@ -60,28 +61,57 @@ function figureStatusLabel(status: FigureListItem["status"]): string {
 
 function FigureThumbnail({ fig }: { fig: FigureListItem }) {
   const [preferSvg, setPreferSvg] = useState(Boolean(fig.svg_url));
+  const [blobUrl, setBlobUrl] = useState("");
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     setPreferSvg(Boolean(fig.svg_url));
   }, [fig.id, fig.file_url, fig.svg_url]);
 
   const url = resolveFigureUrl(preferSvg && fig.svg_url ? fig.svg_url : fig.file_url);
-  if (!url) {
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = "";
+    setBlobUrl("");
+    setFailed(false);
+    if (!url) return;
+    void loadFigureImageBlob(url)
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setBlobUrl(objectUrl);
+      })
+      .catch(() => {
+        if (preferSvg && fig.file_url && fig.file_url !== fig.svg_url) {
+          setPreferSvg(false);
+        } else {
+          setFailed(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [fig.file_url, fig.svg_url, preferSvg, url]);
+
+  if (!url || !blobUrl) {
     return (
       <div className="flex h-14 w-20 shrink-0 items-center justify-center rounded border border-dashed border-slate-200 bg-slate-50 text-[10px] text-slate-400">
-        待生成
+        {failed ? "加载失败" : url ? "加载中" : "待生成"}
       </div>
     );
   }
 
   return (
     <img
-      src={url}
+      src={blobUrl}
       alt=""
       className="h-14 w-20 shrink-0 rounded border border-slate-100 bg-white object-contain"
       onError={() => {
         if (preferSvg && fig.file_url) {
           setPreferSvg(false);
+        } else {
+          setFailed(true);
         }
       }}
     />
@@ -175,8 +205,39 @@ export default function FigureQuickPanel({
     const loading = toast.loading("正在生成本章图片…");
     try {
       const run = await startFigureBatch(bookId, chapterIndex ?? undefined);
+      if (run.chapter_index == null && chapterIndex != null && ["pending", "running"].includes(run.status)) {
+        toast("全书图片任务正在处理，本章图片已包含在该任务中", { id: loading });
+        return;
+      }
+      if (run.total === 0) {
+        toast("本章图片已在其他任务中处理，请稍后刷新", { id: loading });
+        return;
+      }
       const done = await waitFigureBatch(bookId, run);
-      await invalidate();
+      if (["pending", "running"].includes(done.status)) {
+        toast("图片仍在后台生成，完成后刷新列表即可查看", { id: loading });
+        return;
+      }
+      const latest = await listFigures(bookId);
+      qc.setQueryData(["figures", bookId], latest);
+      latest
+        .filter((fig) => fig.chapter === chapterIndex && fig.file_url && fig.status !== "pending")
+        .forEach((fig) => applyFigureToEditor({
+          id: fig.id,
+          book_id: bookId,
+          chapter_index: fig.chapter,
+          figure_number: fig.figure_number,
+          figure_type: fig.type,
+          status: fig.status,
+          caption: fig.caption,
+          raw_annotation: fig.raw_annotation,
+          file_url: fig.file_url,
+          svg_url: fig.svg_url,
+          position_hint: fig.position_hint,
+          sort_order: null,
+          quality_report: fig.quality_report,
+        }));
+      onFiguresChanged?.();
       if (done.failed) {
         toast(`本章图片已生成 ${done.completed}/${done.total} 张`, { id: loading, icon: "⚠️" });
       } else {

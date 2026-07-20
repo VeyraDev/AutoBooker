@@ -45,7 +45,7 @@ class ChapterReviewIssue(Base):
     snapshot_hash = Column(String(80), nullable=False, index=True)
     dimension = Column(String(64), nullable=False, index=True)
     issue_type = Column(String(80), nullable=False, index=True)
-    severity = Column(String(16), default="medium", nullable=False, index=True)
+    severity = Column(String(32), default="medium", nullable=False, index=True)
     penalty = Column(Integer, default=0, nullable=False)
     status = Column(String(24), default="open", nullable=False, index=True)
     title = Column(String(240), nullable=False, default="")

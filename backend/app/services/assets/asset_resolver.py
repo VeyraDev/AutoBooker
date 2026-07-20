@@ -18,7 +18,7 @@ from app.services.figures.storage.manager import figure_storage
 from app.services.storage_policy import local_business_storage_allowed
 
 _DB_ASSET_RE = re.compile(r"db://binary_assets/([0-9a-f-]+)", re.I)
-_API_ASSET_RE = re.compile(r"/books/([0-9a-f-]+)/assets/([0-9a-f-]+)/content", re.I)
+_API_ASSET_RE = re.compile(r"/(?:api/)?books/([0-9a-f-]+)/assets/([0-9a-f-]+)/content", re.I)
 
 
 def _new_temp_path(*, suffix: str) -> Path:
@@ -39,7 +39,7 @@ class AssetResolver:
 
     @staticmethod
     def asset_content_url(book_id: UUID, asset_id: UUID) -> str:
-        return f"/api/books/{book_id}/assets/{asset_id}/content"
+        return f"/books/{book_id}/assets/{asset_id}/content"
 
     def parse_asset_id_from_figure(self, fig: Figure) -> UUID | None:
         raw = str(fig.file_path or fig.file_url or "")

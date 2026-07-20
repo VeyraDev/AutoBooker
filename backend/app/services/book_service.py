@@ -9,10 +9,12 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.constants.style_types import DEFAULT_TARGET_WORDS, coerce_style
-from app.models.book import Book, BookStatus, BookType, CitationStyle
+from app.models.book import Book, BookStatus, BookType, CitationStyle, CreationOrigin
 from app.models.chapter import Chapter, ChapterStatus
+from app.models.intake import IntakeStatus, ProjectIntake
 from app.models.reference import ReferenceFile
 from app.models.user import User
+from app.models.writing_basis import WritingBasis, WritingBasisStatus
 from app.services.heading_formatter import normalize_outline_sections
 from app.services.preface_service import DEFAULT_PREFACE, get_preface
 
@@ -214,6 +216,84 @@ def _duplicate_result_message(*, copy_outline: bool, copied_chapters: int) -> st
     return "已基于原书创建新书，设定与用户资料已复制，大纲与正文未复制。"
 
 
+def _latest_active_intake(db: Session, book_id: UUID) -> ProjectIntake | None:
+    return (
+        db.query(ProjectIntake)
+        .filter(
+            ProjectIntake.book_id == book_id,
+            ProjectIntake.status != IntakeStatus.superseded,
+        )
+        .order_by(ProjectIntake.created_at.desc())
+        .first()
+    )
+
+
+def _bootstrap_duplicated_intake(
+    db: Session,
+    *,
+    source: Book,
+    new_book: Book,
+    origin: CreationOrigin,
+    outline_copied: bool,
+) -> ProjectIntake:
+    """为副本建立 intake，并尽量带上写作依据，避免落到旧设定页后丢失助手补齐内容。"""
+    src_intake = _latest_active_intake(db, source.id)
+    raw_goal = (src_intake.raw_goal_text if src_intake else None) or source.topic_brief
+    negative = src_intake.negative_constraints_text if src_intake else None
+
+    # 未复制大纲时保持未确认，前端会进入启动助手（正式设定入口），而不是 PlanningWizard Step1 旧页。
+    # 已复制大纲时标记 confirmed，避免挡住大纲预览。
+    intake_status = IntakeStatus.confirmed if outline_copied else IntakeStatus.collecting
+
+    intake = ProjectIntake(
+        book_id=new_book.id,
+        creation_origin=origin,
+        status=intake_status,
+        raw_goal_text=(str(raw_goal).strip()[:20000] if raw_goal else None),
+        negative_constraints_text=(str(negative).strip()[:20000] if negative else None),
+    )
+    db.add(intake)
+    db.flush()
+
+    src_basis = (
+        db.query(WritingBasis)
+        .filter(
+            WritingBasis.book_id == source.id,
+            WritingBasis.status != WritingBasisStatus.superseded,
+        )
+        .order_by(WritingBasis.created_at.desc())
+        .first()
+    )
+    if src_basis:
+        new_basis = WritingBasis(
+            book_id=new_book.id,
+            version=1,
+            status=src_basis.status
+            if src_basis.status != WritingBasisStatus.superseded
+            else WritingBasisStatus.draft,
+            direction=src_basis.direction,
+            book_promise=src_basis.book_promise,
+            target_readers=src_basis.target_readers,
+            reader_outcome=src_basis.reader_outcome,
+            scope=src_basis.scope,
+            depth=src_basis.depth,
+            voice=src_basis.voice,
+            material_policy=list(src_basis.material_policy or []),
+            outline_policy=list(src_basis.outline_policy or []),
+            citation_policy=list(src_basis.citation_policy or []),
+            figure_policy=list(src_basis.figure_policy or []),
+            must_keep=list(src_basis.must_keep or []),
+            must_avoid=list(src_basis.must_avoid or []),
+            open_questions=list(src_basis.open_questions or []),
+        )
+        db.add(new_basis)
+        db.flush()
+        if new_basis.status == WritingBasisStatus.confirmed:
+            intake.confirmed_writing_basis_id = new_basis.id
+
+    return intake
+
+
 def duplicate_book(
     source: Book,
     user: User,
@@ -229,25 +309,35 @@ def duplicate_book(
     if not new_title.endswith("（副本）"):
         new_title = f"{new_title}（副本）"
 
+    origin = source.creation_origin or CreationOrigin.idea_only
+    inferred = (
+        dict(source.ai_inferred_settings)
+        if isinstance(source.ai_inferred_settings, dict)
+        else source.ai_inferred_settings
+    )
+
     new_book = Book(
         user_id=user.id,
         title=new_title[:500],
         original_title=(source.original_title or source.title)[:500],
         allow_title_optimization=bool(source.allow_title_optimization),
+        workflow_mode=source.workflow_mode,
         book_type=source.book_type,
         discipline=source.discipline,
         disciplines=source.disciplines,
         target_audience=source.target_audience,
         citation_style=source.citation_style,
+        structured_citations=bool(getattr(source, "structured_citations", False)),
         target_words=source.target_words,
         style_type=source.style_type,
         topic_tags=source.topic_tags,
         topic_brief=source.topic_brief,
         user_material=source.user_material,
-        ai_inferred_settings=None,
+        ai_inferred_settings=inferred,
         setup_recommendation_cache=source.setup_recommendation_cache,
         material_conflicts=source.material_conflicts,
         status=BookStatus.setup,
+        creation_origin=origin,
         last_literature_query=source.last_literature_query,
     )
     db.add(new_book)
@@ -337,6 +427,14 @@ def duplicate_book(
         preface_outline = _preface_outline_from_source(source)
         if preface_outline is not None:
             new_book.preface = preface_outline
+
+    _bootstrap_duplicated_intake(
+        db,
+        source=source,
+        new_book=new_book,
+        origin=origin,
+        outline_copied=copied_chapters > 0,
+    )
 
     db.commit()
     db.refresh(new_book)

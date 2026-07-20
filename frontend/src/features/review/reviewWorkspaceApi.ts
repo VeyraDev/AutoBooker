@@ -210,7 +210,7 @@ export async function runReviewWorkspace(
   bookId: string,
   body: { scope: "book" | "chapter"; chapter_index?: number },
 ): Promise<{ task_id: string | null; run_id: string | null; status: string; message: string; summary_text?: string }> {
-  const { data } = await client.post(`/books/${bookId}/review-workspace/run`, body);
+  const { data } = await client.post(`/books/${bookId}/review-workspace/run`, body, { timeout: 120_000 });
   return data;
 }
 
@@ -218,7 +218,7 @@ export async function runCustomReview(
   bookId: string,
   body: { prompt: string; chapter_index?: number },
 ): Promise<{ task_id: string | null; run_id: string | null; status: string; message: string; summary_text?: string }> {
-  const { data } = await client.post(`/books/${bookId}/review-workspace/custom`, body);
+  const { data } = await client.post(`/books/${bookId}/review-workspace/custom`, body, { timeout: 120_000 });
   return data;
 }
 
